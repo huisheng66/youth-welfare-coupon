@@ -1,0 +1,52 @@
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import auth, coupons, export, merchants, points, stats, users
+from app.core.config import get_settings
+from app.core.database import Base, SessionLocal, engine
+from app.core.migrate import ensure_schema
+from app.seed import seed_if_empty
+
+settings = get_settings()
+
+# Ensure SQLite directory exists
+if settings.database_url.startswith("sqlite:///./"):
+    db_path = settings.database_url.replace("sqlite:///./", "")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title=settings.app_name, version="1.0.0")
+
+origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(merchants.router, prefix="/api")
+app.include_router(coupons.router, prefix="/api")
+app.include_router(stats.router, prefix="/api")
+app.include_router(points.router, prefix="/api")
+app.include_router(export.router, prefix="/api")
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    Base.metadata.create_all(bind=engine)
+    ensure_schema(engine)
+    db = SessionLocal()
+    try:
+        seed_if_empty(db)
+    finally:
+        db.close()
+
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"status": "ok", "app": settings.app_name}

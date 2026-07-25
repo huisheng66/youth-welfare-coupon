@@ -1,0 +1,173 @@
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.deps import require_roles
+from app.models.entities import (
+    Account,
+    AuditLog,
+    CouponInstance,
+    CouponStatus,
+    CouponTemplate,
+    Merchant,
+    RedemptionLog,
+    Role,
+    UserProfile,
+    UserVerification,
+    VerifyStatus,
+)
+from app.schemas.common import DashboardActivityItem, DashboardOut, MerchantDashboardOut, Page
+from app.schemas.coupon import AuditLogOut
+
+router = APIRouter(tags=["统计审计"])
+
+
+def _recent_activity(db: Session, limit: int = 8) -> list[DashboardActivityItem]:
+    items: list[DashboardActivityItem] = []
+
+    redemptions = (
+        db.query(RedemptionLog)
+        .filter(RedemptionLog.result == "success")
+        .order_by(RedemptionLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for r in redemptions:
+        merchant = db.get(Merchant, r.merchant_id) if r.merchant_id else None
+        user = db.get(Account, r.user_id) if r.user_id else None
+        items.append(
+            DashboardActivityItem(
+                time=r.created_at,
+                kind="redeem",
+                title="核销成功",
+                detail=f"{merchant.name if merchant else '商家'} · {user.username if user else r.code}",
+            )
+        )
+
+    pending = (
+        db.query(UserVerification)
+        .filter(UserVerification.status == VerifyStatus.pending)
+        .order_by(UserVerification.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for v in pending:
+        profile = db.get(UserProfile, v.profile_id)
+        acc = db.get(Account, profile.account_id) if profile else None
+        items.append(
+            DashboardActivityItem(
+                time=v.created_at,
+                kind="verify",
+                title="待审核申请",
+                detail=f"{acc.username if acc else '用户'} · {(v.material_note or '')[:40]}",
+            )
+        )
+
+    def _ts(item: DashboardActivityItem) -> datetime:
+        t = item.time
+        if t is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if t.tzinfo is None:
+            return t.replace(tzinfo=timezone.utc)
+        return t
+
+    items.sort(key=_ts, reverse=True)
+    return items[:limit]
+
+
+@router.get("/dashboard", response_model=DashboardOut)
+def dashboard(
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> DashboardOut:
+    return DashboardOut(
+        users=db.query(Account).filter(Account.role == Role.user).count(),
+        pending_verifications=db.query(UserProfile).filter(UserProfile.verify_status == VerifyStatus.pending).count(),
+        merchants=db.query(Merchant).count(),
+        coupons_issued=db.query(CouponInstance).count(),
+        coupons_used=db.query(CouponInstance).filter(CouponInstance.status == CouponStatus.used).count(),
+        templates=db.query(CouponTemplate).count(),
+        unused_coupons=db.query(CouponInstance).filter(CouponInstance.status == CouponStatus.unused).count(),
+        approved_users=db.query(UserProfile).filter(UserProfile.verify_status == VerifyStatus.approved).count(),
+        recent_activity=_recent_activity(db),
+    )
+
+
+@router.get("/merchant-dashboard", response_model=MerchantDashboardOut)
+def merchant_dashboard(
+    db: Session = Depends(get_db),
+    account: Account = Depends(require_roles(Role.merchant)),
+) -> MerchantDashboardOut:
+    if not account.merchant_id:
+        raise HTTPException(status_code=400, detail="商家账号未绑定门店")
+    merchant = db.get(Merchant, account.merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_success = (
+        db.query(func.count(RedemptionLog.id))
+        .filter(
+            RedemptionLog.merchant_id == account.merchant_id,
+            RedemptionLog.result == "success",
+            RedemptionLog.created_at >= today_start,
+        )
+        .scalar()
+        or 0
+    )
+    total_success = (
+        db.query(func.count(RedemptionLog.id))
+        .filter(RedemptionLog.merchant_id == account.merchant_id, RedemptionLog.result == "success")
+        .scalar()
+        or 0
+    )
+    unused_for_store = (
+        db.query(func.count(CouponInstance.id))
+        .filter(CouponInstance.merchant_id == account.merchant_id, CouponInstance.status == CouponStatus.unused)
+        .scalar()
+        or 0
+    )
+    used_for_store = (
+        db.query(func.count(CouponInstance.id))
+        .filter(CouponInstance.merchant_id == account.merchant_id, CouponInstance.status == CouponStatus.used)
+        .scalar()
+        or 0
+    )
+    return MerchantDashboardOut(
+        merchant_id=merchant.id,
+        merchant_name=merchant.name,
+        today_success=int(today_success),
+        total_success=int(total_success),
+        unused_for_store=int(unused_for_store),
+        used_for_store=int(used_for_store),
+    )
+
+
+@router.get("/audit-logs", response_model=Page[AuditLogOut])
+def audit_logs(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin)),
+) -> Page[AuditLogOut]:
+    query = db.query(AuditLog).order_by(AuditLog.created_at.desc())
+    total = query.count()
+    rows = query.offset(skip).limit(limit).all()
+    items: list[AuditLogOut] = []
+    for r in rows:
+        actor = db.get(Account, r.actor_id) if r.actor_id else None
+        items.append(
+            AuditLogOut(
+                id=r.id,
+                actor_id=r.actor_id,
+                actor_name=actor.display_name if actor else None,
+                action=r.action,
+                target_type=r.target_type,
+                target_id=r.target_id,
+                detail=r.detail,
+                created_at=r.created_at,
+            )
+        )
+    return Page(total=total, items=items)
