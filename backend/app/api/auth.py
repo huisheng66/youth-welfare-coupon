@@ -17,9 +17,11 @@ from app.schemas.auth import (
     RegisterIn,
     ResetPasswordIn,
     SetActiveIn,
+    UpdateEmailIn,
 )
 from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
+import re
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -67,6 +69,7 @@ def account_to_out(account: Account) -> AccountOut:
     return AccountOut(
         id=account.id,
         username=account.username,
+        email=account.email,
         role=account.role,
         display_name=account.display_name,
         phone=account.phone,
@@ -76,33 +79,74 @@ def account_to_out(account: Account) -> AccountOut:
     )
 
 
+def _find_by_login(db: Session, login: str) -> Account | None:
+    key = (login or "").strip()
+    if not key:
+        return None
+    # 邮箱优先（含 @）
+    if "@" in key:
+        return db.query(Account).filter(Account.email == key.lower()).first()
+    account = db.query(Account).filter(Account.username == key).first()
+    if account:
+        return account
+    # 也允许无 @ 时按邮箱再试（少见）
+    return db.query(Account).filter(Account.email == key.lower()).first()
+
+
+def _unique_username_from_email(db: Session, email: str, preferred: str | None = None) -> str:
+    if preferred and preferred.strip():
+        base = re.sub(r"[^a-zA-Z0-9_\u4e00-\u9fff]", "", preferred.strip())[:32] or "user"
+    else:
+        local = email.split("@", 1)[0]
+        base = re.sub(r"[^a-zA-Z0-9_]", "", local)[:24] or "user"
+    if not base:
+        base = "user"
+    candidate = base
+    n = 0
+    while db.query(Account).filter(Account.username == candidate).first():
+        n += 1
+        candidate = f"{base}{n}"
+        if n > 9999:
+            raise HTTPException(status_code=400, detail="无法生成唯一用户名，请指定用户名")
+    return candidate
+
+
 @router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> TokenOut:
     ip = _client_ip(request)
-    _check_login_rate(ip, body.username)
-    account = db.query(Account).filter(Account.username == body.username).first()
+    login_id = body.username.strip()
+    _check_login_rate(ip, login_id)
+    account = _find_by_login(db, login_id)
     if not account or not verify_password(body.password, account.password_hash):
-        _record_login_fail(ip, body.username)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名或密码错误")
+        _record_login_fail(ip, login_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱/用户名或密码错误")
     if not account.is_active:
-        _record_login_fail(ip, body.username)
+        _record_login_fail(ip, login_id)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号已停用")
-    _clear_login_fail(ip, body.username)
+    _clear_login_fail(ip, login_id)
     token = create_access_token(account.id, {"role": account.role.value})
     return TokenOut(access_token=token)
 
 
 @router.post("/register", response_model=AccountOut)
 def register(body: RegisterIn, db: Session = Depends(get_db)) -> AccountOut:
-    if db.query(Account).filter(Account.username == body.username).first():
-        raise HTTPException(status_code=400, detail="用户名已存在")
+    email = body.email
+    if db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=400, detail="该邮箱已注册")
     if body.phone and db.query(Account).filter(Account.phone == body.phone).first():
         raise HTTPException(status_code=400, detail="手机号已注册")
+    if body.username and body.username.strip():
+        if db.query(Account).filter(Account.username == body.username.strip()).first():
+            raise HTTPException(status_code=400, detail="用户名已存在")
+        username = body.username.strip()
+    else:
+        username = _unique_username_from_email(db, email)
     account = Account(
-        username=body.username,
+        username=username,
+        email=email,
         password_hash=hash_password(body.password),
         role=Role.user,
-        display_name=body.display_name or body.username,
+        display_name=body.display_name or username,
         phone=body.phone,
     )
     db.add(account)
@@ -135,8 +179,12 @@ def create_merchant_account(
     merchant = db.get(Merchant, body.merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="商家不存在")
+    email = str(body.email).strip().lower() if body.email else None
+    if email and db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=400, detail="该邮箱已被占用")
     account = Account(
         username=body.username,
+        email=email,
         password_hash=hash_password(body.password),
         role=Role.merchant,
         display_name=body.display_name or body.username,
@@ -164,8 +212,12 @@ def create_issue_admin(
 ) -> AccountOut:
     if db.query(Account).filter(Account.username == body.username).first():
         raise HTTPException(status_code=400, detail="用户名已存在")
+    email = str(body.email).strip().lower() if body.email else None
+    if email and db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=400, detail="该邮箱已被占用")
     account = Account(
         username=body.username,
+        email=email,
         password_hash=hash_password(body.password),
         role=Role.issue_admin,
         display_name=body.display_name or body.username,
@@ -187,6 +239,8 @@ def change_password(
         raise HTTPException(status_code=400, detail="原密码不正确")
     if body.old_password == body.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码至少 6 位")
     account.password_hash = hash_password(body.new_password)
     write_audit(
         db,
@@ -197,6 +251,30 @@ def change_password(
     )
     db.commit()
     return MessageOut(message="密码已修改，请使用新密码登录")
+
+
+@router.put("/me/email", response_model=AccountOut)
+def update_my_email(
+    body: UpdateEmailIn,
+    db: Session = Depends(get_db),
+    account: Account = Depends(get_current_account),
+) -> AccountOut:
+    email = body.email
+    exists = db.query(Account).filter(Account.email == email, Account.id != account.id).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="该邮箱已被占用")
+    account.email = email
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="update_email",
+        target_type="account",
+        target_id=account.id,
+        detail=email,
+    )
+    db.commit()
+    db.refresh(account)
+    return account_to_out(account)
 
 
 @router.get("/accounts", response_model=Page[AccountOut])
@@ -217,6 +295,7 @@ def list_accounts(
             (Account.username.ilike(like))
             | (Account.display_name.ilike(like))
             | (Account.phone.ilike(like))
+            | (Account.email.ilike(like))
         )
     total = query.count()
     rows = query.offset(skip).limit(limit).all()

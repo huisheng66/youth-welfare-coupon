@@ -5,37 +5,52 @@
         <span class="mark">福</span>
         <div>
           <h1>青年福利券系统</h1>
-          <p class="page-desc" style="margin:0">身份核验、指定商家发券、到店核销</p>
+          <p class="page-desc" style="margin:0">支持邮箱注册 / 登录，也可使用用户名</p>
         </div>
       </div>
 
       <el-tabs v-model="tab">
         <el-tab-pane label="登录" name="login">
           <el-form label-position="top" @submit.prevent="onLogin">
-            <el-form-item label="用户名">
-              <el-input v-model="form.username" autocomplete="username" size="large" clearable />
+            <el-form-item label="邮箱 / 用户名">
+              <el-input
+                v-model="form.username"
+                autocomplete="username"
+                size="large"
+                clearable
+                placeholder="邮箱或用户名"
+              />
             </el-form-item>
             <el-form-item label="密码">
-              <el-input v-model="form.password" type="password" show-password autocomplete="current-password" size="large" />
+              <el-input
+                v-model="form.password"
+                type="password"
+                show-password
+                autocomplete="current-password"
+                size="large"
+              />
             </el-form-item>
             <el-button type="primary" size="large" style="width:100%" :loading="loading" native-type="submit">
               登录
             </el-button>
           </el-form>
         </el-tab-pane>
-        <el-tab-pane label="青年用户注册" name="register">
+        <el-tab-pane label="邮箱注册" name="register">
           <el-form label-position="top" @submit.prevent="onRegister">
-            <el-form-item label="用户名">
-              <el-input v-model="reg.username" size="large" />
+            <el-form-item label="邮箱" required>
+              <el-input v-model="reg.email" type="email" autocomplete="email" size="large" placeholder="用于登录" />
             </el-form-item>
-            <el-form-item label="密码">
-              <el-input v-model="reg.password" type="password" show-password size="large" />
+            <el-form-item label="密码" required>
+              <el-input v-model="reg.password" type="password" show-password size="large" placeholder="至少 6 位" />
+            </el-form-item>
+            <el-form-item label="确认密码" required>
+              <el-input v-model="reg.confirm" type="password" show-password size="large" />
             </el-form-item>
             <el-form-item label="昵称">
-              <el-input v-model="reg.display_name" size="large" />
+              <el-input v-model="reg.display_name" size="large" placeholder="选填" />
             </el-form-item>
             <el-form-item label="手机号">
-              <el-input v-model="reg.phone" size="large" />
+              <el-input v-model="reg.phone" size="large" placeholder="选填" />
             </el-form-item>
             <el-button type="primary" size="large" style="width:100%" :loading="loading" native-type="submit">
               注册并登录
@@ -45,7 +60,7 @@
       </el-tabs>
 
       <div class="demo">
-        <div class="demo-title muted">演示账号（点击填入）</div>
+        <div class="demo-title muted">演示账号（点击填入，可用用户名或邮箱登录）</div>
         <div class="demo-list">
           <button
             v-for="item in demos"
@@ -73,18 +88,18 @@ const route = useRoute()
 const tab = ref('login')
 const loading = ref(false)
 const form = reactive({ username: '', password: '' })
-const reg = reactive({ username: '', password: '', display_name: '', phone: '' })
+const reg = reactive({ email: '', password: '', confirm: '', display_name: '', phone: '' })
 
 const demos = [
-  { label: '超管 admin', username: 'admin', password: 'admin123' },
-  { label: '发券 issuer', username: 'issuer', password: 'issuer123' },
-  { label: '商家 merchant1', username: 'merchant1', password: 'merchant123' },
-  { label: '用户 youth1', username: 'youth1', password: 'youth123' },
+  { label: '超管', username: 'admin', email: 'admin@demo.local', password: 'admin123' },
+  { label: '发券', username: 'issuer', email: 'issuer@demo.local', password: 'issuer123' },
+  { label: '商家', username: 'merchant1', email: 'merchant1@demo.local', password: 'merchant123' },
+  { label: '用户', username: 'youth1', email: 'youth1@demo.local', password: 'youth123' },
 ]
 
 function fillDemo(item) {
   tab.value = 'login'
-  form.username = item.username
+  form.username = item.email || item.username
   form.password = item.password
 }
 
@@ -99,7 +114,7 @@ async function goAfter(account) {
 
 async function onLogin() {
   if (!form.username || !form.password) {
-    ElMessage.warning('请输入用户名和密码')
+    ElMessage.warning('请输入邮箱/用户名和密码')
     return
   }
   loading.value = true
@@ -112,18 +127,39 @@ async function onLogin() {
   }
 }
 
+function validEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
 async function onRegister() {
-  if (!reg.username || !reg.password) {
-    ElMessage.warning('请填写用户名和密码')
+  if (!reg.email.trim()) {
+    ElMessage.warning('请填写邮箱')
+    return
+  }
+  if (!validEmail(reg.email.trim())) {
+    ElMessage.warning('邮箱格式不正确')
+    return
+  }
+  if (!reg.password) {
+    ElMessage.warning('请填写密码')
     return
   }
   if (reg.password.length < 6) {
     ElMessage.warning('密码至少 6 位')
     return
   }
+  if (reg.password !== reg.confirm) {
+    ElMessage.warning('两次密码不一致')
+    return
+  }
   loading.value = true
   try {
-    const account = await register(reg)
+    const account = await register({
+      email: reg.email.trim(),
+      password: reg.password,
+      display_name: reg.display_name,
+      phone: reg.phone || null,
+    })
     ElMessage.success('注册成功')
     await goAfter(account)
   } finally {

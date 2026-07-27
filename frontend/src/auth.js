@@ -22,7 +22,8 @@ export async function login(username, password) {
 
 export async function register(payload) {
   await api.post('/auth/register', payload)
-  return login(payload.username, payload.password)
+  // 注册后用邮箱登录
+  return login(payload.email, payload.password)
 }
 
 export function logout() {

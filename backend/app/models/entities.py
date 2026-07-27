@@ -42,6 +42,7 @@ class Account(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role), index=True)
     display_name: Mapped[str] = mapped_column(String(64), default="")

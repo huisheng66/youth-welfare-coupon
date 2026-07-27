@@ -59,6 +59,28 @@ def ensure_demo_coupon(db: Session) -> None:
     )
 
 
+def ensure_demo_emails(db: Session) -> None:
+    """Attach demo emails for username/email login demos."""
+    mapping = {
+        "admin": "admin@demo.local",
+        "issuer": "issuer@demo.local",
+        "merchant1": "merchant1@demo.local",
+        "merchant2": "merchant2@demo.local",
+        "youth1": "youth1@demo.local",
+        "youth2": "youth2@demo.local",
+    }
+    for username, email in mapping.items():
+        acc = db.query(Account).filter(Account.username == username).first()
+        if not acc:
+            continue
+        if acc.email:
+            continue
+        # skip if email taken by another account
+        if db.query(Account).filter(Account.email == email).first():
+            continue
+        acc.email = email
+
+
 def ensure_extra_demo(db: Session) -> None:
     """Second merchant + pending youth for richer demos (idempotent)."""
     bookstore = db.query(Merchant).filter(Merchant.name == "示例书店").first()
@@ -87,6 +109,7 @@ def ensure_extra_demo(db: Session) -> None:
         db.add(
             Account(
                 username="merchant2",
+                email="merchant2@demo.local",
                 password_hash=hash_password("merchant123"),
                 role=Role.merchant,
                 display_name="示例书店核销员",
@@ -97,6 +120,7 @@ def ensure_extra_demo(db: Session) -> None:
     if not youth2:
         youth2 = Account(
             username="youth2",
+            email="youth2@demo.local",
             password_hash=hash_password("youth123"),
             role=Role.user,
             display_name="待审青年",
@@ -144,6 +168,7 @@ def patch_existing_demo(db: Session) -> None:
             t.cost_points = 2
     ensure_demo_coupon(db)
     ensure_extra_demo(db)
+    ensure_demo_emails(db)
     db.commit()
 
 
@@ -164,18 +189,21 @@ def seed_if_empty(db: Session) -> None:
 
     admin = Account(
         username="admin",
+        email="admin@demo.local",
         password_hash=hash_password("admin123"),
         role=Role.super_admin,
         display_name="超级管理员",
     )
     issuer = Account(
         username="issuer",
+        email="issuer@demo.local",
         password_hash=hash_password("issuer123"),
         role=Role.issue_admin,
         display_name="发券管理员",
     )
     merchant_acc = Account(
         username="merchant1",
+        email="merchant1@demo.local",
         password_hash=hash_password("merchant123"),
         role=Role.merchant,
         display_name="示例餐饮店核销员",
@@ -183,6 +211,7 @@ def seed_if_empty(db: Session) -> None:
     )
     demo_user = Account(
         username="youth1",
+        email="youth1@demo.local",
         password_hash=hash_password("youth123"),
         role=Role.user,
         display_name="演示青年",
@@ -223,4 +252,5 @@ def seed_if_empty(db: Session) -> None:
     )
     ensure_demo_coupon(db)
     ensure_extra_demo(db)
+    ensure_demo_emails(db)
     db.commit()

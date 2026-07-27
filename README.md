@@ -54,14 +54,16 @@ npm run dev
 
 ### 演示账号
 
-| 角色 | 用户名 | 密码 |
-|------|--------|------|
-| 超级管理员 | admin | admin123 |
-| 发券管理员 | issuer | issuer123 |
-| 商家（餐饮） | merchant1 | merchant123 |
-| 商家（书店） | merchant2 | merchant123 |
-| 青年用户（已核验） | youth1 | youth123 |
-| 青年用户（待审核） | youth2 | youth123 |
+| 角色 | 用户名 | 邮箱（也可登录） | 密码 |
+|------|--------|------------------|------|
+| 超级管理员 | admin | admin@demo.local | admin123 |
+| 发券管理员 | issuer | issuer@demo.local | issuer123 |
+| 商家（餐饮） | merchant1 | merchant1@demo.local | merchant123 |
+| 商家（书店） | merchant2 | merchant2@demo.local | merchant123 |
+| 青年用户（已核验） | youth1 | youth1@demo.local | youth123 |
+| 青年用户（待审核） | youth2 | youth2@demo.local | youth123 |
+
+青年用户支持**邮箱注册**；登录可用邮箱或用户名。各角色可在「账号设置」中**改密 / 绑定邮箱**。
 
 ## 推荐演示路径
 

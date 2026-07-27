@@ -26,6 +26,7 @@
 
       <el-table v-loading="loading" :data="items" stripe empty-text="暂无账号">
         <el-table-column prop="username" label="用户名" min-width="120" />
+        <el-table-column prop="email" label="邮箱" min-width="160" show-overflow-tooltip />
         <el-table-column prop="display_name" label="昵称" min-width="120" />
         <el-table-column label="角色" width="120">
           <template #default="{ row }">{{ roleLabel(row.role) }}</template>

@@ -20,3 +20,4 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "point_ledgers", "operator_id", "operator_id VARCHAR(36)")
     _add_column_if_missing(engine, "point_ledgers", "ref_type", "ref_type VARCHAR(32) DEFAULT ''")
     _add_column_if_missing(engine, "point_ledgers", "ref_id", "ref_id VARCHAR(36) DEFAULT ''")
+    _add_column_if_missing(engine, "accounts", "email", "email VARCHAR(128)")
