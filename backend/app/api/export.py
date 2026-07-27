@@ -35,12 +35,18 @@ def _fmt(dt: datetime | None) -> str:
 
 @router.get("/redemptions")
 def export_redemptions(
+    result: str | None = Query(default=None),
+    merchant_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
 ) -> StreamingResponse:
     query = db.query(RedemptionLog).order_by(RedemptionLog.created_at.desc())
     if account.role == Role.merchant:
         query = query.filter(RedemptionLog.merchant_id == account.merchant_id)
+    elif merchant_id:
+        query = query.filter(RedemptionLog.merchant_id == merchant_id)
+    if result in ("success", "failed"):
+        query = query.filter(RedemptionLog.result == result)
     rows = query.limit(5000).all()
     out: list[list] = [["时间", "券码", "结果", "说明", "商家", "用户", "操作员", "券ID"]]
     for r in rows:
@@ -65,12 +71,15 @@ def export_redemptions(
 @router.get("/coupons")
 def export_coupons(
     status: CouponStatus | None = Query(default=None),
+    merchant_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> StreamingResponse:
     query = db.query(CouponInstance).order_by(CouponInstance.issued_at.desc())
     if status:
         query = query.filter(CouponInstance.status == status)
+    if merchant_id:
+        query = query.filter(CouponInstance.merchant_id == merchant_id)
     rows = query.limit(5000).all()
     out: list[list] = [
         ["券码", "状态", "用户", "模板", "商家", "发放时间", "过期时间", "核销时间", "作废原因"]

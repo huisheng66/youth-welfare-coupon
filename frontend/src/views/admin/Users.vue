@@ -20,14 +20,55 @@
       </div>
     </div>
 
-    <el-alert
-      v-if="pendingList.length"
-      type="warning"
-      show-icon
-      :closable="false"
-      style="margin-bottom: 12px"
-      :title="`有 ${pendingList.length} 条待审核申请，请优先处理`"
-    />
+    <div v-if="pendingList.length" class="pending-box">
+      <div class="pending-head">
+        <div>
+          <strong>待审核申请（{{ pendingList.length }}）</strong>
+          <span class="muted" style="margin-left:8px">可批量通过 / 驳回</span>
+        </div>
+        <div class="filters">
+          <el-button
+            type="success"
+            size="small"
+            :disabled="!selectedPending.length"
+            :loading="batchReviewing"
+            @click="doBatchReview(true)"
+          >
+            批量通过 ({{ selectedPending.length }})
+          </el-button>
+          <el-button
+            type="danger"
+            size="small"
+            plain
+            :disabled="!selectedPending.length"
+            :loading="batchReviewing"
+            @click="openBatchReject"
+          >
+            批量驳回 ({{ selectedPending.length }})
+          </el-button>
+        </div>
+      </div>
+      <el-table
+        :data="pendingList"
+        size="small"
+        stripe
+        max-height="280"
+        @selection-change="onPendingSelect"
+      >
+        <el-table-column type="selection" width="48" />
+        <el-table-column prop="username" label="用户" width="120" />
+        <el-table-column prop="real_name" label="姓名" width="100" />
+        <el-table-column prop="material_note" label="核验材料" min-width="180" show-overflow-tooltip />
+        <el-table-column label="提交时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openReviewByPending(row)">审核</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
     <el-table v-loading="loading" :data="items" stripe empty-text="暂无用户" @selection-change="onSelect">
       <el-table-column type="selection" width="48" :selectable="(row) => row.verify_status === 'approved'" />
@@ -127,10 +168,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
-import { verifyStatusText, verifyStatusType } from '../../utils/format'
+import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
 
 const items = ref([])
 const loading = ref(false)
@@ -148,10 +189,16 @@ const issueForm = reactive({ template_id: '', quantity: 1 })
 const pendingMap = ref({})
 const pendingList = ref([])
 const selected = ref([])
+const selectedPending = ref([])
+const batchReviewing = ref(false)
 const selectedApproved = computed(() => selected.value.filter((r) => r.verify_status === 'approved'))
 
 function onSelect(rows) {
   selected.value = rows
+}
+
+function onPendingSelect(rows) {
+  selectedPending.value = rows
 }
 
 async function load() {
@@ -193,16 +240,65 @@ async function openReview(row) {
   reviewVisible.value = true
 }
 
+function openReviewByPending(row) {
+  current.value = {
+    id: row.user_id,
+    username: row.username,
+    real_name: row.real_name,
+    organization: row.organization,
+  }
+  reviewNote.value = ''
+  pendingMap.value[row.user_id] = row.id
+  reviewMaterial.value = row.material_note || ''
+  reviewVisible.value = true
+}
+
 async function doReview(approve) {
   if (!approve && !reviewNote.value.trim()) {
     ElMessage.warning('驳回时请填写原因，方便用户修改后重提')
     return
   }
   const vid = pendingMap.value[current.value.id]
+  if (!vid) {
+    ElMessage.warning('未找到待审记录')
+    return
+  }
   await api.post(`/users/verifications/${vid}/review`, { approve, review_note: reviewNote.value })
   ElMessage.success(approve ? '已通过' : '已驳回')
   reviewVisible.value = false
   load()
+}
+
+async function doBatchReview(approve, note = '') {
+  if (!selectedPending.value.length) return
+  if (!approve && !note.trim()) {
+    ElMessage.warning('批量驳回请填写原因')
+    return
+  }
+  batchReviewing.value = true
+  try {
+    const res = await api.post('/users/verifications/batch-review', {
+      verification_ids: selectedPending.value.map((p) => p.id),
+      approve,
+      review_note: note,
+    })
+    ElMessage.success(res.data.message || '批量处理完成')
+    selectedPending.value = []
+    load()
+  } finally {
+    batchReviewing.value = false
+  }
+}
+
+async function openBatchReject() {
+  const { value } = await ElMessageBox.prompt('请填写驳回原因（用户可见）', '批量驳回', {
+    inputPlaceholder: '原因',
+    confirmButtonText: '确认驳回',
+    cancelButtonText: '取消',
+    inputValidator: (v) => !!(v && v.trim()) || '请填写原因',
+  }).catch(() => ({ value: null }))
+  if (value === null) return
+  await doBatchReview(false, value.trim())
 }
 
 function openIssue(row) {
@@ -252,3 +348,21 @@ onMounted(async () => {
   await Promise.all([load(), loadTemplates()])
 })
 </script>
+
+<style scoped>
+.pending-box {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  background: #fffbeb;
+  border-radius: 10px;
+}
+.pending-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+</style>

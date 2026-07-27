@@ -83,6 +83,19 @@ def dashboard(
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> DashboardOut:
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_redemptions = (
+        db.query(func.count(RedemptionLog.id))
+        .filter(RedemptionLog.result == "success", RedemptionLog.created_at >= today_start)
+        .scalar()
+        or 0
+    )
+    today_issued = (
+        db.query(func.count(CouponInstance.id))
+        .filter(CouponInstance.issued_at >= today_start)
+        .scalar()
+        or 0
+    )
     return DashboardOut(
         users=db.query(Account).filter(Account.role == Role.user).count(),
         pending_verifications=db.query(UserProfile).filter(UserProfile.verify_status == VerifyStatus.pending).count(),
@@ -92,6 +105,8 @@ def dashboard(
         templates=db.query(CouponTemplate).count(),
         unused_coupons=db.query(CouponInstance).filter(CouponInstance.status == CouponStatus.unused).count(),
         approved_users=db.query(UserProfile).filter(UserProfile.verify_status == VerifyStatus.approved).count(),
+        today_redemptions=int(today_redemptions),
+        today_issued=int(today_issued),
         recent_activity=_recent_activity(db),
     )
 

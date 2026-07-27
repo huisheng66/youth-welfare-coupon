@@ -92,6 +92,23 @@ def update_my_profile(
     return my_profile(account, db)
 
 
+@router.get("/me/verifications", response_model=list[VerificationOut])
+def my_verifications(
+    account: Account = Depends(require_roles(Role.user)),
+    db: Session = Depends(get_db),
+) -> list[VerificationOut]:
+    profile = db.query(UserProfile).filter(UserProfile.account_id == account.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    rows = (
+        db.query(UserVerification)
+        .filter(UserVerification.profile_id == profile.id)
+        .order_by(UserVerification.created_at.desc())
+        .all()
+    )
+    return [_enrich_verification(db, r) for r in rows]
+
+
 @router.post("/me/verifications", response_model=VerificationOut)
 def submit_verification(
     body: SubmitVerificationIn,

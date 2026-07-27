@@ -62,11 +62,13 @@ const cards = computed(() => {
   const d = data.value || {}
   return [
     { label: '待审核', value: d.pending_verifications ?? '-', accent: true },
+    { label: '今日核销', value: d.today_redemptions ?? '-' },
+    { label: '今日发券', value: d.today_issued ?? '-' },
     { label: '已通过用户', value: d.approved_users ?? '-' },
     { label: '青年用户', value: d.users ?? '-' },
     { label: '未使用券', value: d.unused_coupons ?? '-' },
-    { label: '已核销', value: d.coupons_used ?? '-' },
-    { label: '已发券', value: d.coupons_issued ?? '-' },
+    { label: '累计核销', value: d.coupons_used ?? '-' },
+    { label: '累计发券', value: d.coupons_issued ?? '-' },
     { label: '商家', value: d.merchants ?? '-' },
     { label: '券模板', value: d.templates ?? '-' },
   ]

@@ -356,6 +356,7 @@ def list_instances(
     status: CouponStatus | None = None,
     user_id: str | None = None,
     merchant_id: str | None = None,
+    q: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -379,6 +380,17 @@ def list_instances(
     db.commit()
     if status:
         rows = [r for r in rows if r.status == status]
+    if q and q.strip():
+        keyword = q.strip().lower()
+        filtered: list[CouponInstance] = []
+        for r in rows:
+            user = db.get(Account, r.user_id)
+            uname = (user.username if user else "") or ""
+            dname = (user.display_name if user else "") or ""
+            code = (r.code or "").lower()
+            if keyword in code or keyword in uname.lower() or keyword in dname.lower():
+                filtered.append(r)
+        rows = filtered
     total = len(rows)
     page = rows[skip : skip + limit]
     return Page(total=total, items=[coupon_to_out(r, db) for r in page])
@@ -545,6 +557,9 @@ def redeem(
 
 @router.get("/redemptions", response_model=Page[RedemptionLogOut])
 def list_redemptions(
+    result: str | None = Query(default=None, description="success / failed"),
+    merchant_id: str | None = None,
+    q: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -553,6 +568,13 @@ def list_redemptions(
     query = db.query(RedemptionLog).order_by(RedemptionLog.created_at.desc())
     if account.role == Role.merchant:
         query = query.filter(RedemptionLog.merchant_id == account.merchant_id)
+    elif merchant_id:
+        query = query.filter(RedemptionLog.merchant_id == merchant_id)
+    if result in ("success", "failed"):
+        query = query.filter(RedemptionLog.result == result)
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(RedemptionLog.code.ilike(like) | RedemptionLog.message.ilike(like))
     total = query.count()
     rows = query.offset(skip).limit(limit).all()
     items: list[RedemptionLogOut] = []

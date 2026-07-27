@@ -1,8 +1,61 @@
+from datetime import datetime, timedelta, timezone
+import secrets
+import string
+
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
-from app.models.entities import Account, CouponTemplate, Merchant, PointAccount, Role, UserProfile, VerifyStatus
+from app.models.entities import (
+    Account,
+    CouponInstance,
+    CouponStatus,
+    CouponTemplate,
+    Merchant,
+    PointAccount,
+    Role,
+    UserProfile,
+    VerifyStatus,
+)
 from app.services.points import apply_points, get_or_create_account
+
+
+def _gen_code(length: int = 10) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def ensure_demo_coupon(db: Session) -> None:
+    """Ensure youth1 has at least one unused coupon for scan demo."""
+    youth = db.query(Account).filter(Account.username == "youth1").first()
+    if not youth:
+        return
+    unused = (
+        db.query(CouponInstance)
+        .filter(CouponInstance.user_id == youth.id, CouponInstance.status == CouponStatus.unused)
+        .count()
+    )
+    if unused > 0:
+        return
+    template = db.query(CouponTemplate).filter(CouponTemplate.is_active.is_(True)).first()
+    admin = db.query(Account).filter(Account.username == "admin").first()
+    if not template or not admin:
+        return
+    code = _gen_code()
+    while db.query(CouponInstance).filter(CouponInstance.code == code).first():
+        code = _gen_code()
+    now = datetime.now(timezone.utc)
+    db.add(
+        CouponInstance(
+            code=code,
+            user_id=youth.id,
+            template_id=template.id,
+            merchant_id=template.merchant_id,
+            status=CouponStatus.unused,
+            issued_by=admin.id,
+            issued_at=now,
+            expires_at=now + timedelta(days=template.valid_days or 90),
+        )
+    )
 
 
 def patch_existing_demo(db: Session) -> None:
@@ -23,6 +76,7 @@ def patch_existing_demo(db: Session) -> None:
     for t in templates:
         if "餐饮" in (t.name or "") or "演示" in (t.description or ""):
             t.cost_points = 2
+    ensure_demo_coupon(db)
     db.commit()
 
 
@@ -100,4 +154,5 @@ def seed_if_empty(db: Session) -> None:
         operator_id=admin.id,
         ref_type="seed",
     )
+    ensure_demo_coupon(db)
     db.commit()

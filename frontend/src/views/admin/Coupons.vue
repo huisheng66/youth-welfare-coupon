@@ -6,12 +6,24 @@
         <p class="page-desc">查看已发放券，可作废未使用券或导出</p>
       </div>
       <div class="filters">
-        <el-select v-model="status" clearable placeholder="状态" style="width:140px" @change="load">
+        <el-select v-model="status" clearable placeholder="状态" style="width:120px" @change="onFilter">
           <el-option label="未使用" value="unused" />
           <el-option label="已使用" value="used" />
           <el-option label="已作废" value="void" />
           <el-option label="已过期" value="expired" />
         </el-select>
+        <el-select v-model="merchantId" clearable filterable placeholder="商家" style="width:160px" @change="onFilter">
+          <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+        </el-select>
+        <el-input
+          v-model="q"
+          clearable
+          placeholder="券码 / 用户名"
+          style="width:180px"
+          @keyup.enter="onFilter"
+          @clear="onFilter"
+        />
+        <el-button type="primary" @click="onFilter">查询</el-button>
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
     </div>
@@ -34,6 +46,18 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <span class="muted">共 {{ total }} 条</span>
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        layout="prev, pager, next, sizes"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        @current-change="load"
+        @size-change="onFilter"
+      />
+    </div>
   </div>
 </template>
 
@@ -45,22 +69,45 @@ import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'
 
 const items = ref([])
+const merchants = ref([])
 const status = ref()
+const merchantId = ref()
+const q = ref('')
 const loading = ref(false)
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
 
 async function load() {
   loading.value = true
   try {
-    const res = await api.get('/coupons/instances', { params: { status: status.value || undefined, limit: 100 } })
+    const res = await api.get('/coupons/instances', {
+      params: {
+        status: status.value || undefined,
+        merchant_id: merchantId.value || undefined,
+        q: q.value || undefined,
+        skip: (page.value - 1) * pageSize.value,
+        limit: pageSize.value,
+      },
+    })
     items.value = res.data.items
+    total.value = res.data.total
   } finally {
     loading.value = false
   }
 }
 
+function onFilter() {
+  page.value = 1
+  load()
+}
+
 async function onExport() {
-  const q = status.value ? `?status=${status.value}` : ''
-  await downloadFile(`/export/coupons${q}`, 'coupons.csv')
+  const params = new URLSearchParams()
+  if (status.value) params.set('status', status.value)
+  if (merchantId.value) params.set('merchant_id', merchantId.value)
+  const qs = params.toString()
+  await downloadFile(`/export/coupons${qs ? `?${qs}` : ''}`, 'coupons.csv')
   ElMessage.success('已开始下载')
 }
 
@@ -76,5 +123,20 @@ async function voidCoupon(row) {
   load()
 }
 
-onMounted(load)
+onMounted(async () => {
+  const m = await api.get('/merchants', { params: { limit: 100 } })
+  merchants.value = m.data.items
+  load()
+})
 </script>
+
+<style scoped>
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+</style>

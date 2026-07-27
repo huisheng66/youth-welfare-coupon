@@ -98,6 +98,22 @@ def user_points(
     return PointAccountOut(user_id=acc.user_id, balance=acc.balance, updated_at=acc.updated_at)
 
 
+@router.get("/ledger", response_model=Page[PointLedgerOut])
+def admin_ledger(
+    user_id: str | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> Page[PointLedgerOut]:
+    q = db.query(PointLedger).order_by(PointLedger.created_at.desc())
+    if user_id:
+        q = q.filter(PointLedger.user_id == user_id)
+    total = q.count()
+    rows = q.offset(skip).limit(limit).all()
+    return Page(total=total, items=[PointLedgerOut.model_validate(r) for r in rows])
+
+
 @router.post("/grant", response_model=PointAccountOut)
 def grant_points(
     body: GrantPointsIn,
