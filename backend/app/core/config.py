@@ -17,15 +17,16 @@ class Settings(BaseSettings):
     )
     live_code_expire_seconds: int = 30
 
-    # SMTP（留空则控制台模式：验证码写入后端日志，开发接口可返回 debug_code）
+    # SMTP（mail_server 与 mail_password 都填才启用真实发信；否则控制台模式）
+    # 腾讯企业邮示例: smtp.exmail.qq.com / 465 / SSL
     mail_server: str = ""
-    mail_port: int = 587
+    mail_port: int = 465
     mail_username: str = ""
     mail_password: str = ""
-    mail_from: str = "noreply@localhost"
+    mail_from: str = ""
     mail_from_name: str = "青年福利券系统"
-    mail_starttls: bool = True
-    mail_ssl_tls: bool = False
+    mail_starttls: bool = False
+    mail_ssl_tls: bool = True
     mail_console: bool = True
     email_code_expire_minutes: int = 10
     email_code_cooldown_seconds: int = 60
@@ -33,9 +34,22 @@ class Settings(BaseSettings):
 
     @property
     def smtp_configured(self) -> bool:
-        return bool(self.mail_server and self.mail_server.strip())
+        return bool(
+            (self.mail_server or "").strip()
+            and (self.mail_password or "").strip()
+            and (self.mail_username or self.mail_from or "").strip()
+        )
+
+    @property
+    def mail_sender(self) -> str:
+        """发件人地址：优先 MAIL_FROM，否则用登录账号。"""
+        return (self.mail_from or self.mail_username or "").strip()
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def clear_settings_cache() -> None:
+    get_settings.cache_clear()

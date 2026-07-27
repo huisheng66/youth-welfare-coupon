@@ -65,25 +65,37 @@ npm run dev
 
 青年用户支持**邮箱注册（需验证码）**；登录可用邮箱或用户名；支持**忘记密码**。各角色可在「账号设置」中**改密 / 验证码绑定邮箱**。
 
-### 邮箱验证码 / SMTP
+### 邮箱验证码 / SMTP（腾讯企业邮）
 
 默认 **未配置 SMTP** 时走控制台模式：验证码写入后端日志，接口响应里带 `debug_code`，前端会直接展示，便于本地联调。
 
-配置真实 SMTP 时，在 `backend/.env` 中设置（参考 `.env.example`）：
+**腾讯企业邮 / 企业微信邮箱**（推荐）在 `backend/.env` 配置：
 
 ```env
-MAIL_SERVER=smtp.example.com
-MAIL_PORT=587
-MAIL_USERNAME=your@example.com
-MAIL_PASSWORD=app-password
-MAIL_FROM=noreply@example.com
+MAIL_SERVER=smtp.exmail.qq.com
+MAIL_PORT=465
+MAIL_SSL_TLS=true
+MAIL_STARTTLS=false
+MAIL_USERNAME=noreply@your-company.com
+MAIL_PASSWORD=邮箱密码或客户端专用密码
+MAIL_FROM=noreply@your-company.com
 MAIL_FROM_NAME=青年福利券系统
-MAIL_STARTTLS=true
-MAIL_SSL_TLS=false
 MAIL_CONSOLE=false
 ```
 
-相关接口：`POST /api/auth/email/send-code`、`POST /api/auth/forgot-password`、`POST /api/auth/reset-password-by-email`。注册与绑邮箱均需先获取验证码。
+1. 登录 [exmail.qq.com](https://exmail.qq.com/) 或企业微信管理后台，确认该账号已开启 **SMTP**  
+2. 若管理员强制「客户端专用密码」，请用专用密码填 `MAIL_PASSWORD`  
+3. 改完 `.env` 后**重启后端**  
+4. 测通：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe scripts\test_smtp.py 你的收件邮箱@xx.com
+```
+
+或超管登录后：`GET /api/auth/email/smtp-status`、`POST /api/auth/email/test` `{"to":"..."}`。
+
+相关接口：`POST /api/auth/email/send-code`、`POST /api/auth/forgot-password`、`POST /api/auth/reset-password-by-email`。注册与绑邮箱均需验证码。真实 SMTP 开启后**不会**再返回 `debug_code`。
 
 ## 推荐演示路径
 

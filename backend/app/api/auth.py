@@ -23,11 +23,13 @@ from app.schemas.auth import (
     SendEmailCodeIn,
     SendEmailCodeOut,
     SetActiveIn,
+    SmtpStatusOut,
+    TestSmtpIn,
     UpdateEmailIn,
 )
 from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
-from app.services.mail import consume_email_code, issue_email_code
+from app.services.mail import consume_email_code, issue_email_code, send_test_email
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -115,6 +117,49 @@ def _unique_username_from_email(db: Session, email: str, preferred: str | None =
         if n > 9999:
             raise HTTPException(status_code=400, detail="无法生成唯一用户名，请指定用户名")
     return candidate
+
+
+@router.get("/email/smtp-status", response_model=SmtpStatusOut)
+def smtp_status(
+    _: Account = Depends(require_roles(Role.super_admin)),
+) -> SmtpStatusOut:
+    """超级管理员查看 SMTP 是否已配置（不返回密码）。"""
+    s = get_settings()
+    user = s.mail_username or ""
+    # 脱敏：只显示前 2 与域名
+    masked = user
+    if "@" in user:
+        local, domain = user.split("@", 1)
+        masked = (local[:2] + "***@" + domain) if local else "***@" + domain
+    return SmtpStatusOut(
+        smtp_configured=s.smtp_configured,
+        mail_server=s.mail_server or "",
+        mail_port=s.mail_port,
+        mail_username=masked,
+        mail_from=s.mail_sender,
+        mail_ssl_tls=s.mail_ssl_tls,
+        mail_starttls=s.mail_starttls and not s.mail_ssl_tls,
+        mail_console=s.mail_console and not s.smtp_configured,
+    )
+
+
+@router.post("/email/test", response_model=MessageOut)
+async def test_smtp(
+    body: TestSmtpIn,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin)),
+) -> MessageOut:
+    """超级管理员：向指定邮箱发送一封测试邮件，验证腾讯企业邮等 SMTP。"""
+    await send_test_email(to=body.to)
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="test_smtp",
+        target_type="email",
+        target_id=body.to,
+    )
+    db.commit()
+    return MessageOut(message=f"测试邮件已发送至 {body.to}，请查收（含垃圾箱）")
 
 
 @router.post("/email/send-code", response_model=SendEmailCodeOut)

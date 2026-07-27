@@ -73,6 +73,28 @@ class ResetPasswordByEmailIn(BaseModel):
         return v.strip()
 
 
+class TestSmtpIn(BaseModel):
+    """超级管理员：向指定邮箱发一封连通测试信。"""
+
+    to: EmailStr
+
+    @field_validator("to")
+    @classmethod
+    def normalize_to(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+
+class SmtpStatusOut(BaseModel):
+    smtp_configured: bool
+    mail_server: str = ""
+    mail_port: int = 0
+    mail_username: str = ""
+    mail_from: str = ""
+    mail_ssl_tls: bool = False
+    mail_starttls: bool = False
+    mail_console: bool = True
+
+
 class AccountOut(ORMModel):
     id: str
     username: str

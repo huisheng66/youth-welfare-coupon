@@ -31,27 +31,47 @@ def _aware(dt: datetime) -> datetime:
     return dt
 
 
+def build_mail_config(settings: Settings | None = None):
+    """Build fastapi-mail ConnectionConfig (only when SMTP is configured)."""
+    settings = settings or get_settings()
+    if not settings.smtp_configured:
+        raise RuntimeError("SMTP 未配置完整（需要 MAIL_SERVER / 账号 / 密码）")
+
+    from fastapi_mail import ConnectionConfig
+    from pydantic import SecretStr
+
+    sender = settings.mail_sender
+    if not sender or "@" not in sender:
+        raise RuntimeError("MAIL_FROM 或 MAIL_USERNAME 必须是有效邮箱地址")
+
+    # 465 + SSL 与 587 + STARTTLS 互斥，避免两边同时 true
+    ssl_tls = bool(settings.mail_ssl_tls)
+    starttls = bool(settings.mail_starttls) and not ssl_tls
+
+    return ConnectionConfig(
+        MAIL_USERNAME=settings.mail_username or sender,
+        MAIL_PASSWORD=SecretStr(settings.mail_password or ""),
+        MAIL_FROM=sender,
+        MAIL_FROM_NAME=settings.mail_from_name or settings.app_name,
+        MAIL_PORT=settings.mail_port,
+        MAIL_SERVER=settings.mail_server.strip(),
+        MAIL_STARTTLS=starttls,
+        MAIL_SSL_TLS=ssl_tls,
+        USE_CREDENTIALS=True,
+        VALIDATE_CERTS=True,
+        TIMEOUT=30,
+    )
+
+
 async def send_email_html(*, to: str, subject: str, html: str, settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     if not settings.smtp_configured:
         logger.info("[mail:console] to=%s subject=%s\n%s", to, subject, html)
         return
 
-    from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
-    from pydantic import SecretStr
+    from fastapi_mail import FastMail, MessageSchema, MessageType
 
-    conf = ConnectionConfig(
-        MAIL_USERNAME=settings.mail_username or settings.mail_from,
-        MAIL_PASSWORD=SecretStr(settings.mail_password or ""),
-        MAIL_FROM=settings.mail_from,
-        MAIL_FROM_NAME=settings.mail_from_name,
-        MAIL_PORT=settings.mail_port,
-        MAIL_SERVER=settings.mail_server,
-        MAIL_STARTTLS=settings.mail_starttls,
-        MAIL_SSL_TLS=settings.mail_ssl_tls,
-        USE_CREDENTIALS=bool(settings.mail_username or settings.mail_password),
-        VALIDATE_CERTS=True,
-    )
+    conf = build_mail_config(settings)
     message = MessageSchema(
         subject=subject,
         recipients=[to],
@@ -109,6 +129,20 @@ def _html_code_body(app_name: str, purpose: EmailCodePurpose, code: str, minutes
     """
 
 
+def _friendly_smtp_error(exc: BaseException) -> str:
+    text = str(exc) or exc.__class__.__name__
+    low = text.lower()
+    if "authentication" in low or "535" in text or "auth" in low:
+        return "SMTP 认证失败：请检查企业邮账号与密码/客户端专用密码是否正确，以及是否已开启 SMTP"
+    if "certificate" in low or "ssl" in low or "tls" in low:
+        return "SMTP SSL/TLS 握手失败：腾讯企业邮请用 465+SSL 或 587+STARTTLS"
+    if "timed out" in low or "timeout" in low:
+        return "连接 SMTP 超时：请检查网络/防火墙是否放行 smtp.exmail.qq.com:465"
+    if "getaddrinfo" in low or "name or service" in low or "nodename" in low:
+        return "无法解析 SMTP 主机名，请检查 MAIL_SERVER"
+    return f"邮件发送失败：{text[:180]}"
+
+
 async def issue_email_code(
     db: Session,
     *,
@@ -136,14 +170,17 @@ async def issue_email_code(
 
     try:
         await send_email_html(to=email, subject=subject, html=html, settings=settings)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("send mail failed: %s", exc)
-        raise HTTPException(status_code=502, detail="邮件发送失败，请稍后重试或检查 SMTP 配置") from exc
+        raise HTTPException(status_code=502, detail=_friendly_smtp_error(exc)) from exc
 
     if not settings.smtp_configured:
         logger.warning("[mail:console] purpose=%s email=%s code=%s", purpose.value, email, code)
 
     debug: str | None = None
+    # 真实 SMTP 开启后绝不回传验证码；仅纯控制台模式返回
     if settings.mail_console and not settings.smtp_configured:
         debug = code
     return row, debug
@@ -190,3 +227,24 @@ def consume_email_code(
 
     row.used_at = utcnow()
     db.flush()
+
+
+async def send_test_email(*, to: str, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    if not settings.smtp_configured:
+        raise HTTPException(status_code=400, detail="尚未配置 SMTP（MAIL_SERVER / 账号 / 密码）")
+    subject = f"【{settings.app_name}】SMTP 连通测试"
+    html = f"""
+    <div style="font-family:sans-serif;line-height:1.6">
+      <p>这是一封测试邮件。</p>
+      <p>若你收到本信，说明 <strong>{settings.app_name}</strong> 的腾讯企业邮 / SMTP 配置正常。</p>
+      <p style="color:#888;font-size:12px">发件服务器：{settings.mail_server}:{settings.mail_port}</p>
+    </div>
+    """
+    try:
+        await send_email_html(to=to, subject=subject, html=html, settings=settings)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("test mail failed: %s", exc)
+        raise HTTPException(status_code=502, detail=_friendly_smtp_error(exc)) from exc
