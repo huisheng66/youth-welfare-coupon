@@ -5,7 +5,7 @@ $BackendPort = 19001
 $FrontendPort = 5173
 
 Write-Host "==> Backend port: $BackendPort (127.0.0.1, proxied by Vite)"
-Write-Host "==> Frontend port: $FrontendPort (0.0.0.0, LAN accessible)"
+Write-Host "==> Frontend port: $FrontendPort (HTTPS + 0.0.0.0, LAN / camera)"
 
 # Ensure backend venv
 if (-not (Test-Path "$Root\backend\.venv\Scripts\python.exe")) {
@@ -53,7 +53,20 @@ Start-Process -FilePath "$Root\backend\.venv\Scripts\python.exe" `
   -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","$BackendPort" `
   -WorkingDirectory "$Root\backend" -WindowStyle Minimized
 
-Start-Sleep -Seconds 2
+# Wait for health
+$healthy = $false
+for ($i = 0; $i -lt 30; $i++) {
+  try {
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:$BackendPort/api/health" -UseBasicParsing -TimeoutSec 1
+    if ($r.StatusCode -eq 200) { $healthy = $true; break }
+  } catch { }
+  Start-Sleep -Milliseconds 500
+}
+if ($healthy) {
+  Write-Host "Backend health OK"
+} else {
+  Write-Host "WARNING: Backend health not ready yet; frontend may retry via proxy"
+}
 
 Write-Host "Starting frontend (HTTPS + LAN, for phone camera)..."
 Start-Process -FilePath "npm" `
@@ -68,8 +81,7 @@ if ($lan) {
   Write-Host "Phone: https://<电脑WLAN-IP>:$FrontendPort/"
 }
 Write-Host "API:   http://127.0.0.1:$BackendPort/docs"
-Write-Host "Demo:  admin/admin123  merchant1/merchant123  youth1/youth123"
+Write-Host "Demo:  admin/admin123  issuer/issuer123  merchant1|merchant2/merchant123  youth1|youth2/youth123"
 Write-Host ""
 Write-Host "Phone: same Wi-Fi; first open may warn about certificate -> Advanced -> Proceed"
 Write-Host "If camera still blocked: use 拍照识别 / 相册选图"
-

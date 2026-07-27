@@ -40,12 +40,31 @@ export async function downloadFile(path, fallbackName = 'export.csv') {
   const dispo = res.headers['content-disposition'] || ''
   const match = /filename="?([^"]+)"?/i.exec(dispo)
   const name = match?.[1] || fallbackName
+  if (res.headers['x-export-truncated'] === '1') {
+    ElMessage.warning('导出已截断为最多 5000 条，请缩小筛选范围')
+  }
   const url = URL.createObjectURL(res.data)
   const a = document.createElement('a')
   a.href = url
   a.download = name
   a.click()
   URL.revokeObjectURL(url)
+}
+
+/** 将日期区间转为 API 的 date_from / date_to (YYYY-MM-DD) */
+export function dateRangeParams(range) {
+  if (!range || range.length !== 2) return {}
+  const fmt = (d) => {
+    if (!d) return undefined
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10)
+    const x = d instanceof Date ? d : new Date(d)
+    if (Number.isNaN(x.getTime())) return undefined
+    const y = x.getFullYear()
+    const m = String(x.getMonth() + 1).padStart(2, '0')
+    const day = String(x.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  return { date_from: fmt(range[0]), date_to: fmt(range[1]) }
 }
 
 export default api

@@ -64,7 +64,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 
@@ -146,8 +146,20 @@ async function save() {
 }
 
 async function toggle(row) {
-  await api.put(`/merchants/${row.id}`, { is_active: !row.is_active })
-  ElMessage.success(row.is_active ? '已停用' : '已启用')
+  const next = !row.is_active
+  try {
+    await ElMessageBox.confirm(
+      next
+        ? `确认启用商家「${row.name}」？`
+        : `确认停用商家「${row.name}」？停用后不可再发该店券，已发未用券仍可能被核销。`,
+      '提示',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  await api.put(`/merchants/${row.id}`, { is_active: next })
+  ElMessage.success(next ? '已启用' : '已停用')
   load()
 }
 

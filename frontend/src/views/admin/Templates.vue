@@ -64,7 +64,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 
@@ -158,7 +158,17 @@ async function save() {
 }
 
 async function toggle(row) {
-  await api.put(`/coupons/templates/${row.id}`, { is_active: !row.is_active })
+  const next = !row.is_active
+  try {
+    await ElMessageBox.confirm(
+      next ? `确认启用模板「${row.name}」？` : `确认停用模板「${row.name}」？停用后不可新发/兑换该券。`,
+      '提示',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  await api.put(`/coupons/templates/${row.id}`, { is_active: next })
   ElMessage.success('已更新')
   load()
 }

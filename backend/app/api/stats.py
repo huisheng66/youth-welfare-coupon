@@ -1,3 +1,4 @@
+from datetime import date as date_cls
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -167,6 +168,8 @@ def merchant_dashboard(
 def audit_logs(
     action: str | None = None,
     q: str | None = None,
+    date_from: date_cls | None = None,
+    date_to: date_cls | None = None,
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
@@ -183,6 +186,12 @@ def audit_logs(
             | AuditLog.target_id.ilike(like)
             | AuditLog.detail.ilike(like)
         )
+    if date_from:
+        start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+        query = query.filter(AuditLog.created_at >= start)
+    if date_to:
+        end = datetime.combine(date_to, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc)
+        query = query.filter(AuditLog.created_at <= end)
     total = query.count()
     rows = query.offset(skip).limit(limit).all()
     items: list[AuditLogOut] = []

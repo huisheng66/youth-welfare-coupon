@@ -44,6 +44,15 @@
       </template>
     </div>
 
+    <el-alert
+      v-if="!loading && expiringList.length"
+      type="warning"
+      show-icon
+      :closable="false"
+      style="margin-bottom:16px"
+      :title="`有 ${expiringList.length} 张券将在 7 天内过期，请尽快使用`"
+    />
+
     <div v-if="!loading && unusedList.length" class="page-card">
       <div class="page-header">
         <div>
@@ -55,6 +64,7 @@
       <div v-for="c in unusedList" :key="c.id" class="coupon-row">
         <div>
           <strong>{{ c.template_name }}</strong>
+          <el-tag v-if="isExpiring(c)" size="small" type="warning" effect="light" style="margin-left:6px">即将过期</el-tag>
           <div class="muted">指定商家：{{ c.merchant_name }}</div>
           <div class="muted">过期 {{ formatTime(c.expires_at) }}</div>
         </div>
@@ -80,7 +90,25 @@ const coupons = ref([])
 const loading = ref(true)
 const statusText = computed(() => verifyStatusText(profile.value?.verify_status))
 const statusType = computed(() => verifyStatusType(profile.value?.verify_status))
-const unusedList = computed(() => coupons.value.filter((c) => c.status === 'unused').slice(0, 5))
+
+function isExpiring(c) {
+  if (!c?.expires_at || c.status !== 'unused') return false
+  const exp = new Date(c.expires_at).getTime()
+  const now = Date.now()
+  return exp > now && exp - now <= 7 * 24 * 3600 * 1000
+}
+
+const unusedList = computed(() => {
+  const list = coupons.value.filter((c) => c.status === 'unused')
+  list.sort((a, b) => {
+    const ae = isExpiring(a) ? 0 : 1
+    const be = isExpiring(b) ? 0 : 1
+    if (ae !== be) return ae - be
+    return new Date(a.expires_at) - new Date(b.expires_at)
+  })
+  return list.slice(0, 5)
+})
+const expiringList = computed(() => coupons.value.filter((c) => isExpiring(c)))
 const unusedCount = computed(() => coupons.value.filter((c) => c.status === 'unused').length)
 const usedCount = computed(() => coupons.value.filter((c) => c.status === 'used').length)
 

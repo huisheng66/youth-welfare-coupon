@@ -9,6 +9,8 @@
         <el-radio-button label="">全部</el-radio-button>
         <el-radio-button label="unused">未使用</el-radio-button>
         <el-radio-button label="used">已使用</el-radio-button>
+        <el-radio-button label="void">已作废</el-radio-button>
+        <el-radio-button label="expired">已过期</el-radio-button>
       </el-radio-group>
     </div>
 

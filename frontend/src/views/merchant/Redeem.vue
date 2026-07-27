@@ -110,7 +110,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import QrScanner from '../../components/QrScanner.vue'
 import StatusTag from '../../components/StatusTag.vue'
@@ -203,6 +203,17 @@ async function onPreview() {
 async function onRedeem() {
   if (!code.value.trim()) {
     ElMessage.warning('请输入券码')
+    return
+  }
+  try {
+    const who = preview.value
+      ? `${preview.value.template_name || '优惠券'} · ${preview.value.username || ''}`
+      : '该券'
+    await ElMessageBox.confirm(`确认核销「${who}」？核销后不可撤销。`, '确认核销', {
+      type: 'warning',
+      confirmButtonText: '确认核销',
+    })
+  } catch {
     return
   }
   loading.value = true

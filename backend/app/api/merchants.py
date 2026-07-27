@@ -34,7 +34,7 @@ def list_merchants(
 def create_merchant(
     body: MerchantCreate,
     db: Session = Depends(get_db),
-    admin: Account = Depends(require_roles(Role.super_admin)),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> MerchantOut:
     if db.query(Merchant).filter(Merchant.name == body.name).first():
         raise HTTPException(status_code=400, detail="商家名称已存在")
@@ -51,7 +51,7 @@ def update_merchant(
     merchant_id: str,
     body: MerchantUpdate,
     db: Session = Depends(get_db),
-    admin: Account = Depends(require_roles(Role.super_admin)),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> MerchantOut:
     merchant = db.get(Merchant, merchant_id)
     if not merchant:

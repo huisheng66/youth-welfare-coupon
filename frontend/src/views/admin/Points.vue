@@ -4,13 +4,21 @@
       <div class="page-header">
         <div>
           <h2 class="page-title">志愿服务时长</h2>
-          <p class="page-desc">为已核验用户入账时长（小时），用户可在前端自助兑换优惠券</p>
+          <p class="page-desc">为正入账、为负扣减；可对多名已通过用户批量调整</p>
         </div>
       </div>
 
-      <el-form label-width="100px" style="max-width:520px" @submit.prevent="grant">
+      <el-form label-width="100px" style="max-width:560px" @submit.prevent="grant">
         <el-form-item label="用户">
-          <el-select v-model="form.user_id" filterable style="width:100%" placeholder="选择已通过用户">
+          <el-select
+            v-model="form.user_ids"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            style="width:100%"
+            placeholder="选择已通过用户（可多选）"
+          >
             <el-option
               v-for="u in users"
               :key="u.id"
@@ -20,14 +28,16 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时长(小时)">
-          <el-input-number v-model="form.amount" :min="1" :max="1000" />
+          <el-input-number v-model="form.amount" :min="-1000" :max="1000" />
+          <span class="muted" style="margin-left:8px">正数入账，负数扣减</span>
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.reason" placeholder="如：社区志愿服务 2026-07-26" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" native-type="submit" :loading="loading">确认入账</el-button>
-          <el-button @click="queryBalance" :disabled="!form.user_id">查询余额</el-button>
+          <el-button type="primary" native-type="submit" :loading="loading">确认调整</el-button>
+          <el-button @click="queryBalance" :disabled="form.user_ids.length !== 1">查询余额</el-button>
+          <el-button @click="onExportLedger">导出流水</el-button>
         </el-form-item>
       </el-form>
 
@@ -36,7 +46,7 @@
         type="success"
         :closable="false"
         :title="balanceText"
-        style="max-width:520px"
+        style="max-width:560px"
       />
     </div>
 
@@ -44,12 +54,12 @@
       <div class="page-header">
         <div>
           <h2 class="page-title">最近时长流水</h2>
-          <p class="page-desc">入账、兑换等变动记录</p>
+          <p class="page-desc">入账、扣减、兑换等变动</p>
         </div>
         <el-button @click="loadLedger" :loading="ledgerLoading">刷新</el-button>
       </div>
       <el-table v-loading="ledgerLoading" :data="ledger" stripe empty-text="暂无流水">
-        <el-table-column prop="user_id" label="用户ID" min-width="120" show-overflow-tooltip>
+        <el-table-column label="用户" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ usernameOf(row.user_id) }}</template>
         </el-table-column>
         <el-table-column prop="change" label="变动" width="100">
@@ -66,22 +76,35 @@
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
       </el-table>
+      <div class="pager">
+        <span class="muted">共 {{ ledgerTotal }} 条</span>
+        <el-pagination
+          v-model:current-page="ledgerPage"
+          layout="prev, pager, next"
+          :page-size="ledgerPageSize"
+          :total="ledgerTotal"
+          @current-change="loadLedger"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import api from '../../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import api, { downloadFile } from '../../api'
 import { formatTime } from '../../utils/format'
 
 const users = ref([])
 const loading = ref(false)
 const balanceText = ref('')
-const form = reactive({ user_id: '', amount: 2, reason: '志愿服务时长入账' })
+const form = reactive({ user_ids: [], amount: 2, reason: '志愿服务时长入账' })
 const ledger = ref([])
 const ledgerLoading = ref(false)
+const ledgerTotal = ref(0)
+const ledgerPage = ref(1)
+const ledgerPageSize = 20
 const userMap = ref({})
 
 function usernameOf(id) {
@@ -96,28 +119,56 @@ async function loadUsers() {
     map[u.id] = `${u.username}${u.real_name ? ' / ' + u.real_name : ''}`
   }
   userMap.value = map
-  if (!form.user_id && users.value[0]) form.user_id = users.value[0].id
 }
 
 async function queryBalance() {
-  const res = await api.get(`/points/users/${form.user_id}`)
+  if (form.user_ids.length !== 1) return
+  const res = await api.get(`/points/users/${form.user_ids[0]}`)
   balanceText.value = `当前余额：${res.data.balance} 小时`
 }
 
 async function grant() {
-  if (!form.user_id) {
+  if (!form.user_ids.length) {
     ElMessage.warning('请选择用户')
     return
   }
+  if (!form.amount || form.amount === 0) {
+    ElMessage.warning('请填写非零时长')
+    return
+  }
   if (!form.reason.trim()) {
-    ElMessage.warning('请填写入账说明')
+    ElMessage.warning('请填写说明')
+    return
+  }
+  const sign = form.amount > 0 ? `+${form.amount}` : String(form.amount)
+  try {
+    await ElMessageBox.confirm(
+      `对 ${form.user_ids.length} 人调整 ${sign} 小时，确认？`,
+      '时长调整确认',
+      { type: 'warning' },
+    )
+  } catch {
     return
   }
   loading.value = true
   try {
-    const res = await api.post('/points/grant', form)
-    balanceText.value = `入账成功，当前余额：${res.data.balance} 小时`
-    ElMessage.success('已入账')
+    if (form.user_ids.length === 1) {
+      const res = await api.post('/points/grant', {
+        user_id: form.user_ids[0],
+        amount: form.amount,
+        reason: form.reason,
+      })
+      balanceText.value = `调整成功，当前余额：${res.data.balance} 小时`
+      ElMessage.success('已调整')
+    } else {
+      const res = await api.post('/points/grant-batch', {
+        user_ids: form.user_ids,
+        amount: form.amount,
+        reason: form.reason,
+      })
+      balanceText.value = res.data.message
+      ElMessage.success(res.data.message)
+    }
     loadLedger()
   } finally {
     loading.value = false
@@ -127,11 +178,19 @@ async function grant() {
 async function loadLedger() {
   ledgerLoading.value = true
   try {
-    const res = await api.get('/points/ledger', { params: { limit: 50 } })
+    const res = await api.get('/points/ledger', {
+      params: { skip: (ledgerPage.value - 1) * ledgerPageSize, limit: ledgerPageSize },
+    })
     ledger.value = res.data.items
+    ledgerTotal.value = res.data.total
   } finally {
     ledgerLoading.value = false
   }
+}
+
+async function onExportLedger() {
+  await downloadFile('/export/points-ledger', 'points_ledger.csv')
+  ElMessage.success('已开始下载')
 }
 
 onMounted(async () => {
@@ -139,3 +198,14 @@ onMounted(async () => {
   loadLedger()
 })
 </script>
+
+<style scoped>
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+</style>

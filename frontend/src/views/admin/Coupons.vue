@@ -23,6 +23,16 @@
           @keyup.enter="onFilter"
           @clear="onFilter"
         />
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="发放起"
+          end-placeholder="发放止"
+          value-format="YYYY-MM-DD"
+          style="width:260px"
+          @change="onFilter"
+        />
         <el-button type="primary" @click="onFilter">查询</el-button>
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
@@ -64,7 +74,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import api, { downloadFile } from '../../api'
+import api, { dateRangeParams, downloadFile } from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'
 
@@ -73,6 +83,7 @@ const merchants = ref([])
 const status = ref()
 const merchantId = ref()
 const q = ref('')
+const dateRange = ref(null)
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
@@ -86,6 +97,7 @@ async function load() {
         status: status.value || undefined,
         merchant_id: merchantId.value || undefined,
         q: q.value || undefined,
+        ...dateRangeParams(dateRange.value),
         skip: (page.value - 1) * pageSize.value,
         limit: pageSize.value,
       },
@@ -106,6 +118,9 @@ async function onExport() {
   const params = new URLSearchParams()
   if (status.value) params.set('status', status.value)
   if (merchantId.value) params.set('merchant_id', merchantId.value)
+  const dr = dateRangeParams(dateRange.value)
+  if (dr.date_from) params.set('date_from', dr.date_from)
+  if (dr.date_to) params.set('date_to', dr.date_to)
   const qs = params.toString()
   await downloadFile(`/export/coupons${qs ? `?${qs}` : ''}`, 'coupons.csv')
   ElMessage.success('已开始下载')

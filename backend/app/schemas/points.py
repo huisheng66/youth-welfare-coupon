@@ -26,7 +26,14 @@ class PointLedgerOut(ORMModel):
 
 class GrantPointsIn(BaseModel):
     user_id: str
-    amount: int = Field(gt=0, le=100000)
+    # 正数入账，负数扣减（调整）
+    amount: int = Field(ne=0, ge=-100000, le=100000)
+    reason: str = Field(default="志愿服务时长入账", max_length=255)
+
+
+class BatchGrantPointsIn(BaseModel):
+    user_ids: list[str] = Field(min_length=1, max_length=100)
+    amount: int = Field(ne=0, ge=-100000, le=100000)
     reason: str = Field(default="志愿服务时长入账", max_length=255)
 
 

@@ -1,5 +1,6 @@
 import secrets
 import string
+from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -351,12 +352,20 @@ def get_live_code(
     )
 
 
+def _day_bounds(date_from: date_cls | None, date_to: date_cls | None) -> tuple[datetime | None, datetime | None]:
+    start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc) if date_from else None
+    end = datetime.combine(date_to, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) if date_to else None
+    return start, end
+
+
 @router.get("/instances", response_model=Page[CouponOut])
 def list_instances(
     status: CouponStatus | None = None,
     user_id: str | None = None,
     merchant_id: str | None = None,
     q: str | None = None,
+    date_from: date_cls | None = None,
+    date_to: date_cls | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -374,10 +383,18 @@ def list_instances(
             query = query.filter(CouponInstance.user_id == user_id)
         if merchant_id:
             query = query.filter(CouponInstance.merchant_id == merchant_id)
+    start, end = _day_bounds(date_from, date_to)
+    if start:
+        query = query.filter(CouponInstance.issued_at >= start)
+    if end:
+        query = query.filter(CouponInstance.issued_at <= end)
+    if status:
+        query = query.filter(CouponInstance.status == status)
     rows = query.all()
     for r in rows:
         _maybe_expire(r)
     db.commit()
+    # re-filter status after expire
     if status:
         rows = [r for r in rows if r.status == status]
     if q and q.strip():
@@ -560,6 +577,8 @@ def list_redemptions(
     result: str | None = Query(default=None, description="success / failed"),
     merchant_id: str | None = None,
     q: str | None = None,
+    date_from: date_cls | None = None,
+    date_to: date_cls | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -572,6 +591,11 @@ def list_redemptions(
         query = query.filter(RedemptionLog.merchant_id == merchant_id)
     if result in ("success", "failed"):
         query = query.filter(RedemptionLog.result == result)
+    start, end = _day_bounds(date_from, date_to)
+    if start:
+        query = query.filter(RedemptionLog.created_at >= start)
+    if end:
+        query = query.filter(RedemptionLog.created_at <= end)
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(RedemptionLog.code.ilike(like) | RedemptionLog.message.ilike(like))

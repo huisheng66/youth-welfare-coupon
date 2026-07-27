@@ -17,6 +17,16 @@
           @keyup.enter="onFilter"
           @clear="onFilter"
         />
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="起"
+          end-placeholder="止"
+          value-format="YYYY-MM-DD"
+          style="width:260px"
+          @change="onFilter"
+        />
         <el-button type="primary" @click="onFilter">查询</el-button>
       </div>
     </div>
@@ -45,13 +55,14 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import api from '../../api'
+import api, { dateRangeParams } from '../../api'
 import { formatTime } from '../../utils/format'
 
 const items = ref([])
 const loading = ref(false)
 const action = ref()
 const q = ref('')
+const dateRange = ref(null)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 50
@@ -63,13 +74,17 @@ const actionOptions = [
   'create_template',
   'update_template',
   'issue_coupon',
+  'void_coupon',
   'redeem_coupon',
   'grant_points',
+  'adjust_points',
   'change_password',
   'reset_password',
   'set_account_active',
   'create_merchant',
   'update_merchant',
+  'create_merchant_account',
+  'create_issue_admin',
 ]
 
 async function load() {
@@ -79,6 +94,7 @@ async function load() {
       params: {
         action: action.value || undefined,
         q: q.value || undefined,
+        ...dateRangeParams(dateRange.value),
         skip: (page.value - 1) * pageSize,
         limit: pageSize,
       },

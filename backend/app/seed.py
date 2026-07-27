@@ -14,6 +14,7 @@ from app.models.entities import (
     PointAccount,
     Role,
     UserProfile,
+    UserVerification,
     VerifyStatus,
 )
 from app.services.points import apply_points, get_or_create_account
@@ -58,6 +59,71 @@ def ensure_demo_coupon(db: Session) -> None:
     )
 
 
+def ensure_extra_demo(db: Session) -> None:
+    """Second merchant + pending youth for richer demos (idempotent)."""
+    bookstore = db.query(Merchant).filter(Merchant.name == "示例书店").first()
+    if not bookstore:
+        bookstore = Merchant(
+            name="示例书店",
+            contact_name="王店长",
+            contact_phone="13800000002",
+            address="示例路 2 号",
+            description="青年福利合作书店（演示）",
+        )
+        db.add(bookstore)
+        db.flush()
+    if not db.query(CouponTemplate).filter(CouponTemplate.merchant_id == bookstore.id).first():
+        db.add(
+            CouponTemplate(
+                name="图书优惠券",
+                description="购书可用（演示）；可用时长兑换",
+                merchant_id=bookstore.id,
+                valid_days=60,
+                cost_points=3,
+                is_active=True,
+            )
+        )
+    if not db.query(Account).filter(Account.username == "merchant2").first():
+        db.add(
+            Account(
+                username="merchant2",
+                password_hash=hash_password("merchant123"),
+                role=Role.merchant,
+                display_name="示例书店核销员",
+                merchant_id=bookstore.id,
+            )
+        )
+    youth2 = db.query(Account).filter(Account.username == "youth2").first()
+    if not youth2:
+        youth2 = Account(
+            username="youth2",
+            password_hash=hash_password("youth123"),
+            role=Role.user,
+            display_name="待审青年",
+            phone="13900000002",
+        )
+        db.add(youth2)
+        db.flush()
+        profile = UserProfile(
+            account_id=youth2.id,
+            real_name="王青年",
+            organization="示例社区",
+            id_number_masked="110***********5678",
+            verify_status=VerifyStatus.pending,
+            remark="演示：待审核用户",
+        )
+        db.add(profile)
+        db.flush()
+        db.add(
+            UserVerification(
+                profile_id=profile.id,
+                material_note="社区青年名单第 28 号（演示待审）",
+                status=VerifyStatus.pending,
+            )
+        )
+        db.add(PointAccount(user_id=youth2.id, balance=0))
+
+
 def patch_existing_demo(db: Session) -> None:
     """Upgrade older demo DBs with points/exchange fields without wiping data."""
     youth = db.query(Account).filter(Account.username == "youth1").first()
@@ -77,6 +143,7 @@ def patch_existing_demo(db: Session) -> None:
         if "餐饮" in (t.name or "") or "演示" in (t.description or ""):
             t.cost_points = 2
     ensure_demo_coupon(db)
+    ensure_extra_demo(db)
     db.commit()
 
 
@@ -155,4 +222,5 @@ def seed_if_empty(db: Session) -> None:
         ref_type="seed",
     )
     ensure_demo_coupon(db)
+    ensure_extra_demo(db)
     db.commit()

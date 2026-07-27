@@ -16,9 +16,10 @@ from app.models.entities import (
     UserProfile,
     VerifyStatus,
 )
-from app.schemas.common import Page
+from app.schemas.common import MessageOut, Page
 from app.schemas.coupon import CouponOut
 from app.schemas.points import (
+    BatchGrantPointsIn,
     ExchangeIn,
     ExchangeOut,
     GrantPointsIn,
@@ -114,37 +115,83 @@ def admin_ledger(
     return Page(total=total, items=[PointLedgerOut.model_validate(r) for r in rows])
 
 
+def _grant_one(
+    db: Session,
+    *,
+    user_id: str,
+    amount: int,
+    reason: str,
+    admin: Account,
+) -> PointAccountOut:
+    user = db.get(Account, user_id)
+    if not user or user.role != Role.user:
+        raise ValueError("目标用户无效")
+    profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).first()
+    if not profile or profile.verify_status != VerifyStatus.approved:
+        raise ValueError("仅可为已核验用户调整时长")
+    ref_type = "grant" if amount > 0 else "adjust"
+    try:
+        acc = apply_points(
+            db,
+            user_id=user.id,
+            change=amount,
+            reason=reason,
+            operator_id=admin.id,
+            ref_type=ref_type,
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    sign = f"+{amount}" if amount > 0 else str(amount)
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="grant_points" if amount > 0 else "adjust_points",
+        target_type="user",
+        target_id=user.id,
+        detail=f"{sign} {reason}",
+    )
+    return PointAccountOut(user_id=acc.user_id, balance=acc.balance, updated_at=acc.updated_at)
+
+
 @router.post("/grant", response_model=PointAccountOut)
 def grant_points(
     body: GrantPointsIn,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> PointAccountOut:
-    user = db.get(Account, body.user_id)
-    if not user or user.role != Role.user:
-        raise HTTPException(status_code=400, detail="目标用户无效")
-    profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).first()
-    if not profile or profile.verify_status != VerifyStatus.approved:
-        raise HTTPException(status_code=400, detail="仅可为已核验用户发放时长")
-    acc = apply_points(
-        db,
-        user_id=user.id,
-        change=body.amount,
-        reason=body.reason,
-        operator_id=admin.id,
-        ref_type="grant",
-    )
-    write_audit(
-        db,
-        actor_id=admin.id,
-        action="grant_points",
-        target_type="user",
-        target_id=user.id,
-        detail=f"+{body.amount} {body.reason}",
-    )
+    try:
+        out = _grant_one(
+            db,
+            user_id=body.user_id,
+            amount=body.amount,
+            reason=body.reason,
+            admin=admin,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    db.refresh(acc)
-    return PointAccountOut(user_id=acc.user_id, balance=acc.balance, updated_at=acc.updated_at)
+    return out
+
+
+@router.post("/grant-batch", response_model=MessageOut)
+def grant_points_batch(
+    body: BatchGrantPointsIn,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> MessageOut:
+    ok = 0
+    failed: list[str] = []
+    for uid in body.user_ids:
+        try:
+            _grant_one(db, user_id=uid, amount=body.amount, reason=body.reason, admin=admin)
+            ok += 1
+        except ValueError as exc:
+            failed.append(f"{uid[:8]}:{exc}")
+    db.commit()
+    msg = f"成功 {ok} 人"
+    if failed:
+        msg += f"，失败 {len(failed)}：{'; '.join(failed[:5])}"
+    return MessageOut(message=msg)
 
 
 @router.get("/catalog")

@@ -21,7 +21,7 @@
           <span>用户核验</span>
           <el-badge v-if="pendingCount > 0 && !collapsed" :value="pendingCount" class="badge" />
         </el-menu-item>
-        <el-menu-item v-if="isSuper" index="/admin/merchants">商家管理</el-menu-item>
+        <el-menu-item index="/admin/merchants">商家管理</el-menu-item>
         <el-menu-item index="/admin/templates">券模板</el-menu-item>
         <el-menu-item index="/admin/coupons">券列表</el-menu-item>
         <el-menu-item index="/admin/redemptions">核销流水</el-menu-item>

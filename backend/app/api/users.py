@@ -148,28 +148,25 @@ def list_users(
 ) -> Page[UserListItem]:
     query = (
         db.query(Account)
+        .join(UserProfile, UserProfile.account_id == Account.id)
         .options(joinedload(Account.profile))
         .filter(Account.role == Role.user)
         .order_by(Account.created_at.desc())
     )
-    if q:
-        like = f"%{q}%"
+    if verify_status:
+        query = query.filter(UserProfile.verify_status == verify_status)
+    if q and q.strip():
+        like = f"%{q.strip()}%"
         query = query.filter(
             (Account.username.ilike(like))
             | (Account.display_name.ilike(like))
             | (Account.phone.ilike(like))
+            | (UserProfile.real_name.ilike(like))
         )
-    accounts = query.all()
-    items: list[UserListItem] = []
-    for acc in accounts:
-        profile = acc.profile
-        if not profile:
-            continue
-        if verify_status and profile.verify_status != verify_status:
-            continue
-        items.append(_user_item(acc, profile, db))
-    total = len(items)
-    return Page(total=total, items=items[skip : skip + limit])
+    total = query.count()
+    accounts = query.offset(skip).limit(limit).all()
+    items = [_user_item(acc, acc.profile, db) for acc in accounts if acc.profile]
+    return Page(total=total, items=items)
 
 
 @router.get("/pending-verifications", response_model=list[VerificationOut])

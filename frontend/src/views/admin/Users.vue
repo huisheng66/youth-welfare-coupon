@@ -6,14 +6,14 @@
         <p class="page-desc">审核身份材料，通过后可发券或入账志愿时长</p>
       </div>
       <div class="filters">
-        <el-select v-model="status" clearable placeholder="核验状态" style="width:140px" @change="load">
+        <el-select v-model="status" clearable placeholder="核验状态" style="width:140px" @change="onFilter">
           <el-option label="未提交" value="draft" />
           <el-option label="待审核" value="pending" />
           <el-option label="已通过" value="approved" />
           <el-option label="已驳回" value="rejected" />
         </el-select>
-        <el-input v-model="q" placeholder="用户名 / 昵称 / 手机" clearable style="width:200px" @keyup.enter="load" />
-        <el-button type="primary" @click="load">查询</el-button>
+        <el-input v-model="q" placeholder="用户名 / 昵称 / 手机" clearable style="width:200px" @keyup.enter="onFilter" />
+        <el-button type="primary" @click="onFilter">查询</el-button>
         <el-button type="success" :disabled="!selectedApproved.length" @click="openBatchIssue">
           批量发券 ({{ selectedApproved.length }})
         </el-button>
@@ -90,8 +90,20 @@
         </template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <span class="muted">共 {{ total }} 人</span>
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        layout="prev, pager, next, sizes"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        @current-change="load"
+        @size-change="() => { page = 1; load() }"
+      />
+    </div>
 
-    <el-dialog v-model="detailVisible" title="用户详情" width="560px">
+    <el-dialog v-model="detailVisible" title="用户详情" width="640px">
       <el-descriptions v-if="current" :column="1" border>
         <el-descriptions-item label="用户名">{{ current.username }}</el-descriptions-item>
         <el-descriptions-item label="姓名">{{ current.real_name || '-' }}</el-descriptions-item>
@@ -104,6 +116,19 @@
         </el-descriptions-item>
         <el-descriptions-item label="最近材料">{{ current.latest_material_note || '-' }}</el-descriptions-item>
       </el-descriptions>
+      <h3 style="margin:16px 0 8px;font-size:1rem">核验历史</h3>
+      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240">
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="material_note" label="材料" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="review_note" label="审核备注" min-width="100" show-overflow-tooltip />
+        <el-table-column label="提交" width="150">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
 
     <el-dialog v-model="reviewVisible" title="审核用户" width="520px">
@@ -192,6 +217,10 @@ const pendingList = ref([])
 const selected = ref([])
 const selectedPending = ref([])
 const batchReviewing = ref(false)
+const detailHistory = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
 const selectedApproved = computed(() => selected.value.filter((r) => r.verify_status === 'approved'))
 
 function onSelect(rows) {
@@ -206,14 +235,27 @@ async function load() {
   loading.value = true
   try {
     const [usersRes, pendingRes] = await Promise.all([
-      api.get('/users', { params: { verify_status: status.value || undefined, q: q.value || undefined, limit: 100 } }),
+      api.get('/users', {
+        params: {
+          verify_status: status.value || undefined,
+          q: q.value || undefined,
+          skip: (page.value - 1) * pageSize.value,
+          limit: pageSize.value,
+        },
+      }),
       api.get('/users/pending-verifications'),
     ])
     items.value = usersRes.data.items
+    total.value = usersRes.data.total
     pendingList.value = pendingRes.data
   } finally {
     loading.value = false
   }
+}
+
+function onFilter() {
+  page.value = 1
+  load()
 }
 
 async function onExportUsers() {
@@ -230,6 +272,12 @@ async function loadTemplates() {
 async function openDetail(row) {
   const res = await api.get(`/users/${row.id}`)
   current.value = res.data
+  try {
+    const h = await api.get(`/users/${row.id}/verifications`)
+    detailHistory.value = h.data || []
+  } catch {
+    detailHistory.value = []
+  }
   detailVisible.value = true
 }
 
@@ -282,6 +330,17 @@ async function doBatchReview(approve, note = '') {
     ElMessage.warning('批量驳回请填写原因')
     return
   }
+  if (approve) {
+    try {
+      await ElMessageBox.confirm(
+        `确认批量通过 ${selectedPending.value.length} 条待审申请？`,
+        '批量通过',
+        { type: 'warning', confirmButtonText: '确认通过' },
+      )
+    } catch {
+      return
+    }
+  }
   batchReviewing.value = true
   try {
     const res = await api.post('/users/verifications/batch-review', {
@@ -320,6 +379,16 @@ async function doIssue() {
     ElMessage.warning('请选择模板')
     return
   }
+  const t = templates.value.find((x) => x.id === issueForm.template_id)
+  try {
+    await ElMessageBox.confirm(
+      `向「${current.value?.username}」发放 ${issueForm.quantity} 张「${t?.name || '券'}」？`,
+      '确认发券',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
   await api.post('/coupons/issue', {
     user_id: current.value.id,
     template_id: issueForm.template_id,
@@ -338,6 +407,17 @@ function openBatchIssue() {
 async function doBatchIssue() {
   if (!issueForm.template_id) {
     ElMessage.warning('请选择模板')
+    return
+  }
+  const n = selectedApproved.value.length
+  const totalQty = n * issueForm.quantity
+  try {
+    await ElMessageBox.confirm(
+      `向 ${n} 人各发 ${issueForm.quantity} 张，共约 ${totalQty} 张券，确认？`,
+      '批量发券确认',
+      { type: 'warning' },
+    )
+  } catch {
     return
   }
   const res = await api.post('/coupons/issue-batch', {
@@ -371,5 +451,13 @@ onMounted(async () => {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 </style>
