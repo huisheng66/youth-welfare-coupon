@@ -1,0 +1,22 @@
+[Unit]
+Description=Youth Welfare Coupon API (FastAPI)
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/welfare/backend
+Environment=PATH=/opt/welfare/backend/.venv/bin
+EnvironmentFile=/opt/welfare/backend/.env
+ExecStart=/opt/welfare/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 19001 --workers 2
+Restart=always
+RestartSec=3
+
+# 安全加固（可按需调整）
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

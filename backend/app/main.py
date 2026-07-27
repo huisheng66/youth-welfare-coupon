@@ -54,11 +54,21 @@ def on_startup() -> None:
 
 @app.get("/api/health")
 def health() -> dict:
+    url = settings.database_url
+    if url.startswith("sqlite"):
+        db_engine = "sqlite"
+    elif "mysql" in url:
+        db_engine = "mysql"
+    elif "postgres" in url:
+        db_engine = "postgresql"
+    else:
+        db_engine = "other"
     return {
         "status": "ok",
         "app": settings.app_name,
-        "version": "1.2.0",
+        "version": "1.3.0",
         "live_code_expire_seconds": settings.live_code_expire_seconds,
         "smtp_configured": settings.smtp_configured,
         "mail_console": settings.mail_console and not settings.smtp_configured,
+        "database": db_engine,
     }

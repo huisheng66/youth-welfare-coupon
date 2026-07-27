@@ -16,6 +16,16 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _str_enum(enum_cls: type[enum.Enum]):
+    """VARCHAR 存枚举值，兼容 SQLite / MySQL，避免原生 ENUM 迁移麻烦。"""
+    return Enum(
+        enum_cls,
+        values_callable=lambda obj: [e.value for e in obj],
+        native_enum=False,
+        length=32,
+    )
+
+
 class Role(str, enum.Enum):
     super_admin = "super_admin"
     issue_admin = "issue_admin"
@@ -44,7 +54,7 @@ class Account(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    role: Mapped[Role] = mapped_column(Enum(Role), index=True)
+    role: Mapped[Role] = mapped_column(_str_enum(Role), index=True)
     display_name: Mapped[str] = mapped_column(String(64), default="")
     phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -81,7 +91,7 @@ class UserProfile(Base):
     student_no: Mapped[str] = mapped_column(String(64), default="")  # 学号
     organization: Mapped[str] = mapped_column(String(128), default="")
     remark: Mapped[str] = mapped_column(Text, default="")
-    verify_status: Mapped[VerifyStatus] = mapped_column(Enum(VerifyStatus), default=VerifyStatus.draft, index=True)
+    verify_status: Mapped[VerifyStatus] = mapped_column(_str_enum(VerifyStatus), default=VerifyStatus.draft, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     account = relationship("Account", back_populates="profile")
@@ -94,7 +104,7 @@ class UserVerification(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     profile_id: Mapped[str] = mapped_column(String(36), ForeignKey("user_profiles.id"), index=True)
     material_note: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[VerifyStatus] = mapped_column(Enum(VerifyStatus), default=VerifyStatus.pending)
+    status: Mapped[VerifyStatus] = mapped_column(_str_enum(VerifyStatus), default=VerifyStatus.pending)
     reviewer_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id"), nullable=True)
     review_note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -128,7 +138,7 @@ class CouponInstance(Base):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
     template_id: Mapped[str] = mapped_column(String(36), ForeignKey("coupon_templates.id"), index=True)
     merchant_id: Mapped[str] = mapped_column(String(36), ForeignKey("merchants.id"), index=True)
-    status: Mapped[CouponStatus] = mapped_column(Enum(CouponStatus), default=CouponStatus.unused, index=True)
+    status: Mapped[CouponStatus] = mapped_column(_str_enum(CouponStatus), default=CouponStatus.unused, index=True)
     issued_by: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"))
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -208,7 +218,7 @@ class EmailCode(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(128), index=True)
     code: Mapped[str] = mapped_column(String(16))
-    purpose: Mapped[EmailCodePurpose] = mapped_column(Enum(EmailCodePurpose), index=True)
+    purpose: Mapped[EmailCodePurpose] = mapped_column(_str_enum(EmailCodePurpose), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)

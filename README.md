@@ -2,9 +2,13 @@
 
 身份核验 → **指定商家**优惠券发放 → 商家 Web 核销。
 
-- 后端：Python FastAPI + SQLAlchemy + SQLite（可切云数据库）
-- 前端：Vue 3 + Vite + Element Plus
-- **不含**微信小程序、**不采集**银行卡
+- 后端：Python FastAPI + SQLAlchemy  
+  - 开发默认 **SQLite**（`backend/data/app.db`）  
+  - 生产推荐 **MySQL 8**（`mysql+pymysql://...`）  
+- 前端：Vue 3 + Vite + Element Plus  
+- **不含**微信小程序、**不采集**银行卡  
+
+**Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
 
 ## 目录
 
@@ -31,9 +35,17 @@ python -m venv .venv
 
 # Windows
 .venv\Scripts\activate
+# Ubuntu
+# source .venv/bin/activate
 
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 19001
+```
+
+数据库：复制 `backend/.env.example` 为 `.env`。开发保持 SQLite；生产改为：
+
+```env
+DATABASE_URL=mysql+pymysql://welfare:密码@127.0.0.1:3306/welfare?charset=utf8mb4
 ```
 
 - API 文档：http://127.0.0.1:19001/docs  
