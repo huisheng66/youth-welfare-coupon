@@ -21,8 +21,8 @@
         <el-form-item label="真实姓名" required>
           <el-input v-model="form.real_name" placeholder="提交核验前必填" />
         </el-form-item>
-        <el-form-item label="证件脱敏">
-          <el-input v-model="form.id_number_masked" placeholder="如 110***********1234" />
+        <el-form-item label="学号">
+          <el-input v-model="form.student_no" placeholder="请填写学号" />
         </el-form-item>
         <el-form-item label="单位/组织"><el-input v-model="form.organization" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" /></el-form-item>
@@ -86,7 +86,7 @@ const form = reactive({
   display_name: '',
   phone: '',
   real_name: '',
-  id_number_masked: '',
+  student_no: '',
   organization: '',
   remark: '',
 })
@@ -129,7 +129,7 @@ async function load() {
     display_name: profileRes.data.display_name || '',
     phone: profileRes.data.phone || '',
     real_name: profileRes.data.real_name || '',
-    id_number_masked: profileRes.data.id_number_masked || '',
+    student_no: profileRes.data.student_no || '',
     organization: profileRes.data.organization || '',
     remark: profileRes.data.remark || '',
   })

@@ -12,7 +12,7 @@
           <el-option label="已通过" value="approved" />
           <el-option label="已驳回" value="rejected" />
         </el-select>
-        <el-input v-model="q" placeholder="用户名 / 昵称 / 手机" clearable style="width:200px" @keyup.enter="onFilter" />
+        <el-input v-model="q" placeholder="用户名 / 昵称 / 手机 / 学号" clearable style="width:220px" @keyup.enter="onFilter" />
         <el-button type="primary" @click="onFilter">查询</el-button>
         <el-button type="success" :disabled="!selectedApproved.length" @click="openBatchIssue">
           批量发券 ({{ selectedApproved.length }})
@@ -75,6 +75,7 @@
       <el-table-column type="selection" width="48" :selectable="(row) => row.verify_status === 'approved'" />
       <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="real_name" label="姓名" width="100" />
+      <el-table-column prop="student_no" label="学号" width="120" show-overflow-tooltip />
       <el-table-column prop="phone" label="手机" width="130" />
       <el-table-column prop="organization" label="单位/组织" min-width="140" />
       <el-table-column label="状态" width="100">
@@ -108,7 +109,7 @@
         <el-descriptions-item label="用户名">{{ current.username }}</el-descriptions-item>
         <el-descriptions-item label="姓名">{{ current.real_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="手机">{{ current.phone || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="证件脱敏">{{ current.id_number_masked || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="学号">{{ current.student_no || '-' }}</el-descriptions-item>
         <el-descriptions-item label="组织">{{ current.organization || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ current.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="核验状态">

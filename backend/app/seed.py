@@ -132,7 +132,7 @@ def ensure_extra_demo(db: Session) -> None:
             account_id=youth2.id,
             real_name="王青年",
             organization="示例社区",
-            id_number_masked="110***********5678",
+            student_no="2024001002",
             verify_status=VerifyStatus.pending,
             remark="演示：待审核用户",
         )
@@ -225,7 +225,7 @@ def seed_if_empty(db: Session) -> None:
             account_id=demo_user.id,
             real_name="李青年",
             organization="示例社区",
-            id_number_masked="110***********1234",
+            student_no="2024001001",
             verify_status=VerifyStatus.approved,
             remark="种子演示用户，已通过核验",
         )

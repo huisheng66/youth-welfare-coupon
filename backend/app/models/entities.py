@@ -78,7 +78,7 @@ class UserProfile(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     account_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), unique=True)
     real_name: Mapped[str] = mapped_column(String(64), default="")
-    id_number_masked: Mapped[str] = mapped_column(String(32), default="")
+    student_no: Mapped[str] = mapped_column(String(64), default="")  # 学号
     organization: Mapped[str] = mapped_column(String(128), default="")
     remark: Mapped[str] = mapped_column(Text, default="")
     verify_status: Mapped[VerifyStatus] = mapped_column(Enum(VerifyStatus), default=VerifyStatus.draft, index=True)

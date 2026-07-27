@@ -21,3 +21,5 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "point_ledgers", "ref_type", "ref_type VARCHAR(32) DEFAULT ''")
     _add_column_if_missing(engine, "point_ledgers", "ref_id", "ref_id VARCHAR(36) DEFAULT ''")
     _add_column_if_missing(engine, "accounts", "email", "email VARCHAR(128)")
+    _add_column_if_missing(engine, "user_profiles", "student_no", "student_no VARCHAR(64) DEFAULT ''")
+    # 旧字段 id_number_masked 保留在库中（SQLite 不便删列），业务已改用 student_no

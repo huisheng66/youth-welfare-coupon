@@ -10,7 +10,7 @@ class ProfileUpdateIn(BaseModel):
     real_name: str = Field(default="", max_length=64)
     phone: str | None = Field(default=None, max_length=20)
     display_name: str | None = Field(default=None, max_length=64)
-    id_number_masked: str = Field(default="", max_length=32)
+    student_no: str = Field(default="", max_length=64, description="学号")
     organization: str = Field(default="", max_length=128)
     remark: str = ""
 
@@ -50,7 +50,7 @@ class UserListItem(ORMModel):
     organization: str
     verify_status: VerifyStatus
     created_at: datetime
-    id_number_masked: str | None = None
+    student_no: str | None = None
     remark: str | None = None
     latest_material_note: str | None = None
 

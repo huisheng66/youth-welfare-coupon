@@ -162,7 +162,7 @@ def export_users(
         .order_by(Account.created_at.desc())
     )
     accounts = query.limit(EXPORT_LIMIT).all()
-    out: list[list] = [["用户名", "昵称", "手机", "姓名", "组织", "核验状态", "注册时间", "备注"]]
+    out: list[list] = [["用户名", "昵称", "手机", "姓名", "学号", "组织", "核验状态", "注册时间", "备注"]]
     for acc in accounts:
         profile = db.query(UserProfile).filter(UserProfile.account_id == acc.id).first()
         if not profile:
@@ -175,6 +175,7 @@ def export_users(
                 acc.display_name or "",
                 acc.phone or "",
                 profile.real_name or "",
+                profile.student_no or "",
                 profile.organization or "",
                 profile.verify_status.value if profile.verify_status else "",
                 _fmt(acc.created_at),

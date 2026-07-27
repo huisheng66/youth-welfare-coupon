@@ -40,7 +40,7 @@ def _user_item(acc: Account, profile: UserProfile, db: Session) -> UserListItem:
         organization=profile.organization,
         verify_status=profile.verify_status,
         created_at=acc.created_at,
-        id_number_masked=profile.id_number_masked,
+        student_no=profile.student_no,
         remark=profile.remark,
         latest_material_note=_latest_material(db, profile.id),
     )
@@ -85,7 +85,7 @@ def update_my_profile(
             raise HTTPException(status_code=400, detail="手机号已被占用")
         account.phone = body.phone
     profile.real_name = body.real_name
-    profile.id_number_masked = body.id_number_masked
+    profile.student_no = (body.student_no or "").strip()
     profile.organization = body.organization
     profile.remark = body.remark
     db.commit()
@@ -162,6 +162,7 @@ def list_users(
             | (Account.display_name.ilike(like))
             | (Account.phone.ilike(like))
             | (UserProfile.real_name.ilike(like))
+            | (UserProfile.student_no.ilike(like))
         )
     total = query.count()
     accounts = query.offset(skip).limit(limit).all()

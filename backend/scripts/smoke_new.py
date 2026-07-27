@@ -36,7 +36,7 @@ def main() -> None:
     red = req("POST", "/coupons/redeem", {"code": code}, mtok)
     print("redeem", red["message"])
     detail = req("GET", f"/users/{youth['id']}", token=tok)
-    print("detail", detail["verify_status"], detail.get("id_number_masked"))
+    print("detail", detail["verify_status"], detail.get("student_no"))
     print("ALL_OK")
 
 
