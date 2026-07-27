@@ -57,6 +57,8 @@ def health() -> dict:
     return {
         "status": "ok",
         "app": settings.app_name,
-        "version": "1.1.0",
+        "version": "1.2.0",
         "live_code_expire_seconds": settings.live_code_expire_seconds,
+        "smtp_configured": settings.smtp_configured,
+        "mail_console": settings.mail_console and not settings.smtp_configured,
     }

@@ -1,27 +1,33 @@
+import re
 import time
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.deps import get_current_account, require_roles
+from app.core.deps import get_current_account, get_current_account_optional, require_roles
 from app.core.security import create_access_token, hash_password, verify_password
-from app.models.entities import Account, Role, UserProfile, VerifyStatus
+from app.models.entities import Account, EmailCodePurpose, Role, UserProfile, VerifyStatus
 from app.schemas.auth import (
     AccountOut,
     ChangePasswordIn,
     CreateIssueAdminIn,
     CreateMerchantAccountIn,
+    ForgotPasswordIn,
     LoginIn,
     RegisterIn,
+    ResetPasswordByEmailIn,
     ResetPasswordIn,
+    SendEmailCodeIn,
+    SendEmailCodeOut,
     SetActiveIn,
     UpdateEmailIn,
 )
 from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
-import re
+from app.services.mail import consume_email_code, issue_email_code
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -111,6 +117,114 @@ def _unique_username_from_email(db: Session, email: str, preferred: str | None =
     return candidate
 
 
+@router.post("/email/send-code", response_model=SendEmailCodeOut)
+async def send_email_code(
+    body: SendEmailCodeIn,
+    db: Session = Depends(get_db),
+    account: Account | None = Depends(get_current_account_optional),
+) -> SendEmailCodeOut:
+    """发送邮箱验证码。purpose: register | reset_password | bind_email"""
+    settings = get_settings()
+    email = body.email
+    purpose = body.purpose
+
+    if purpose == EmailCodePurpose.register:
+        if db.query(Account).filter(Account.email == email).first():
+            raise HTTPException(status_code=400, detail="该邮箱已注册")
+    elif purpose == EmailCodePurpose.reset_password:
+        # 不泄露是否注册：无账号也假装成功（不发真码）
+        target = db.query(Account).filter(Account.email == email).first()
+        if not target or not target.is_active:
+            return SendEmailCodeOut(
+                message="若该邮箱已注册，将收到验证码邮件",
+                expire_minutes=settings.email_code_expire_minutes,
+                debug_code=None,
+            )
+    elif purpose == EmailCodePurpose.bind_email:
+        if account is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        exists = db.query(Account).filter(Account.email == email, Account.id != account.id).first()
+        if exists:
+            raise HTTPException(status_code=400, detail="该邮箱已被占用")
+    else:
+        raise HTTPException(status_code=400, detail="不支持的验证码用途")
+
+    _, debug = await issue_email_code(db, email=email, purpose=purpose, settings=settings)
+    write_audit(
+        db,
+        actor_id=account.id if account else None,
+        action="send_email_code",
+        target_type="email",
+        target_id=email,
+        detail=purpose.value,
+    )
+    db.commit()
+
+    if settings.smtp_configured:
+        msg = "验证码已发送，请查收邮件"
+    else:
+        msg = "验证码已生成（未配置 SMTP，请使用界面/日志中的开发验证码）"
+    return SendEmailCodeOut(
+        message=msg,
+        expire_minutes=settings.email_code_expire_minutes,
+        debug_code=debug,
+    )
+
+
+@router.post("/forgot-password", response_model=SendEmailCodeOut)
+async def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db)) -> SendEmailCodeOut:
+    """忘记密码：向已注册邮箱发送重置验证码（未注册不暴露）。"""
+    settings = get_settings()
+    email = body.email
+    target = db.query(Account).filter(Account.email == email).first()
+    debug: str | None = None
+    if target and target.is_active:
+        _, debug = await issue_email_code(
+            db, email=email, purpose=EmailCodePurpose.reset_password, settings=settings
+        )
+        write_audit(
+            db,
+            actor_id=target.id,
+            action="forgot_password_code",
+            target_type="account",
+            target_id=target.id,
+        )
+        db.commit()
+    if settings.smtp_configured:
+        msg = "若该邮箱已注册，将收到验证码邮件"
+    else:
+        msg = "若该邮箱已注册，验证码已生成（开发模式可返回 debug_code）"
+    return SendEmailCodeOut(
+        message=msg,
+        expire_minutes=settings.email_code_expire_minutes,
+        debug_code=debug,
+    )
+
+
+@router.post("/reset-password-by-email", response_model=MessageOut)
+def reset_password_by_email(body: ResetPasswordByEmailIn, db: Session = Depends(get_db)) -> MessageOut:
+    """用邮箱验证码重置密码（无需登录）。"""
+    account = db.query(Account).filter(Account.email == body.email).first()
+    if not account or not account.is_active:
+        raise HTTPException(status_code=400, detail="验证码无效或账号不存在")
+    consume_email_code(
+        db,
+        email=body.email,
+        code=body.code,
+        purpose=EmailCodePurpose.reset_password,
+    )
+    account.password_hash = hash_password(body.new_password)
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="reset_password_by_email",
+        target_type="account",
+        target_id=account.id,
+    )
+    db.commit()
+    return MessageOut(message="密码已重置，请使用新密码登录")
+
+
 @router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> TokenOut:
     ip = _client_ip(request)
@@ -133,6 +247,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db)) -> AccountOut:
     email = body.email
     if db.query(Account).filter(Account.email == email).first():
         raise HTTPException(status_code=400, detail="该邮箱已注册")
+    consume_email_code(db, email=email, code=body.code, purpose=EmailCodePurpose.register)
     if body.phone and db.query(Account).filter(Account.phone == body.phone).first():
         raise HTTPException(status_code=400, detail="手机号已注册")
     if body.username and body.username.strip():
@@ -263,6 +378,7 @@ def update_my_email(
     exists = db.query(Account).filter(Account.email == email, Account.id != account.id).first()
     if exists:
         raise HTTPException(status_code=400, detail="该邮箱已被占用")
+    consume_email_code(db, email=email, code=body.code, purpose=EmailCodePurpose.bind_email)
     account.email = email
     write_audit(
         db,

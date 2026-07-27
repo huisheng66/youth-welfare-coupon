@@ -17,6 +17,24 @@ class Settings(BaseSettings):
     )
     live_code_expire_seconds: int = 30
 
+    # SMTP（留空则控制台模式：验证码写入后端日志，开发接口可返回 debug_code）
+    mail_server: str = ""
+    mail_port: int = 587
+    mail_username: str = ""
+    mail_password: str = ""
+    mail_from: str = "noreply@localhost"
+    mail_from_name: str = "青年福利券系统"
+    mail_starttls: bool = True
+    mail_ssl_tls: bool = False
+    mail_console: bool = True
+    email_code_expire_minutes: int = 10
+    email_code_cooldown_seconds: int = 60
+    email_code_max_per_hour: int = 8
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.mail_server and self.mail_server.strip())
+
 
 @lru_cache
 def get_settings() -> Settings:

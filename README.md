@@ -63,7 +63,27 @@ npm run dev
 | 青年用户（已核验） | youth1 | youth1@demo.local | youth123 |
 | 青年用户（待审核） | youth2 | youth2@demo.local | youth123 |
 
-青年用户支持**邮箱注册**；登录可用邮箱或用户名。各角色可在「账号设置」中**改密 / 绑定邮箱**。
+青年用户支持**邮箱注册（需验证码）**；登录可用邮箱或用户名；支持**忘记密码**。各角色可在「账号设置」中**改密 / 验证码绑定邮箱**。
+
+### 邮箱验证码 / SMTP
+
+默认 **未配置 SMTP** 时走控制台模式：验证码写入后端日志，接口响应里带 `debug_code`，前端会直接展示，便于本地联调。
+
+配置真实 SMTP 时，在 `backend/.env` 中设置（参考 `.env.example`）：
+
+```env
+MAIL_SERVER=smtp.example.com
+MAIL_PORT=587
+MAIL_USERNAME=your@example.com
+MAIL_PASSWORD=app-password
+MAIL_FROM=noreply@example.com
+MAIL_FROM_NAME=青年福利券系统
+MAIL_STARTTLS=true
+MAIL_SSL_TLS=false
+MAIL_CONSOLE=false
+```
+
+相关接口：`POST /api/auth/email/send-code`、`POST /api/auth/forgot-password`、`POST /api/auth/reset-password-by-email`。注册与绑邮箱均需先获取验证码。
 
 ## 推荐演示路径
 

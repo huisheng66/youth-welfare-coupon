@@ -192,3 +192,25 @@ class PointLedger(Base):
     ref_type: Mapped[str] = mapped_column(String(32), default="")
     ref_id: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmailCodePurpose(str, enum.Enum):
+    register = "register"
+    reset_password = "reset_password"
+    bind_email = "bind_email"
+
+
+class EmailCode(Base):
+    """One-time email verification codes (register / reset / bind)."""
+
+    __tablename__ = "email_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(128), index=True)
+    code: Mapped[str] = mapped_column(String(16))
+    purpose: Mapped[EmailCodePurpose] = mapped_column(Enum(EmailCodePurpose), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+

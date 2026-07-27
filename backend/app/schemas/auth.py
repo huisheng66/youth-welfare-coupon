@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.models.entities import Role, VerifyStatus
+from app.models.entities import EmailCodePurpose, Role, VerifyStatus
 from app.schemas.common import ORMModel
 
 
@@ -14,6 +14,7 @@ class LoginIn(BaseModel):
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=64)
+    code: str = Field(min_length=4, max_length=16, description="邮箱验证码")
     display_name: str = Field(default="", max_length=64)
     phone: str | None = Field(default=None, max_length=20)
     # 可选；不填则用邮箱 @ 前缀生成唯一用户名
@@ -23,6 +24,53 @@ class RegisterIn(BaseModel):
     @classmethod
     def normalize_email(cls, v: EmailStr) -> str:
         return str(v).strip().lower()
+
+    @field_validator("code")
+    @classmethod
+    def strip_code(cls, v: str) -> str:
+        return v.strip()
+
+
+class SendEmailCodeIn(BaseModel):
+    email: EmailStr
+    purpose: EmailCodePurpose = EmailCodePurpose.register
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+
+class SendEmailCodeOut(BaseModel):
+    message: str
+    expire_minutes: int
+    # 仅未配置 SMTP 且 mail_console=true 时返回，便于本地联调
+    debug_code: str | None = None
+
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+
+class ResetPasswordByEmailIn(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=16)
+    new_password: str = Field(min_length=6, max_length=64)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+    @field_validator("code")
+    @classmethod
+    def strip_code(cls, v: str) -> str:
+        return v.strip()
 
 
 class AccountOut(ORMModel):
@@ -67,8 +115,14 @@ class SetActiveIn(BaseModel):
 
 class UpdateEmailIn(BaseModel):
     email: EmailStr
+    code: str = Field(min_length=4, max_length=16, description="邮箱验证码")
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v: EmailStr) -> str:
         return str(v).strip().lower()
+
+    @field_validator("code")
+    @classmethod
+    def strip_code(cls, v: str) -> str:
+        return v.strip()

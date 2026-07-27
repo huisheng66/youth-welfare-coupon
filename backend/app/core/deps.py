@@ -30,6 +30,25 @@ def get_current_account(
     return account
 
 
+def get_current_account_optional(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> Account | None:
+    if creds is None or not creds.credentials:
+        return None
+    try:
+        payload = decode_access_token(creds.credentials)
+    except ValueError:
+        return None
+    account_id = payload.get("sub")
+    if not account_id:
+        return None
+    account = db.get(Account, account_id)
+    if not account or not account.is_active:
+        return None
+    return account
+
+
 def require_roles(*roles: Role) -> Callable:
     def checker(account: Account = Depends(get_current_account)) -> Account:
         if account.role not in roles:
