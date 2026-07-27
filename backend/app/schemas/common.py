@@ -42,6 +42,7 @@ class DashboardOut(BaseModel):
     approved_users: int = 0
     today_redemptions: int = 0
     today_issued: int = 0
+    expired_coupons: int = 0
     recent_activity: list[DashboardActivityItem] = []
 
 

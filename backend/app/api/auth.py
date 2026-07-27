@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import time
+from collections import defaultdict
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -20,6 +23,42 @@ from app.services.audit import write_audit
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
+# 简易登录限流：同一 IP+用户名 5 分钟内最多 8 次失败
+_LOGIN_FAILS: dict[str, list[float]] = defaultdict(list)
+_LOGIN_WINDOW_SEC = 300
+_LOGIN_MAX_FAILS = 8
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _login_key(ip: str, username: str) -> str:
+    return f"{ip}|{username.strip().lower()}"
+
+
+def _check_login_rate(ip: str, username: str) -> None:
+    key = _login_key(ip, username)
+    now = time.time()
+    recent = [t for t in _LOGIN_FAILS[key] if now - t < _LOGIN_WINDOW_SEC]
+    _LOGIN_FAILS[key] = recent
+    if len(recent) >= _LOGIN_MAX_FAILS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录尝试过于频繁，请 5 分钟后再试",
+        )
+
+
+def _record_login_fail(ip: str, username: str) -> None:
+    _LOGIN_FAILS[_login_key(ip, username)].append(time.time())
+
+
+def _clear_login_fail(ip: str, username: str) -> None:
+    _LOGIN_FAILS.pop(_login_key(ip, username), None)
+
 
 def account_to_out(account: Account) -> AccountOut:
     verify_status = None
@@ -38,12 +77,17 @@ def account_to_out(account: Account) -> AccountOut:
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> TokenOut:
+    ip = _client_ip(request)
+    _check_login_rate(ip, body.username)
     account = db.query(Account).filter(Account.username == body.username).first()
     if not account or not verify_password(body.password, account.password_hash):
+        _record_login_fail(ip, body.username)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名或密码错误")
     if not account.is_active:
+        _record_login_fail(ip, body.username)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号已停用")
+    _clear_login_fail(ip, body.username)
     token = create_access_token(account.id, {"role": account.role.value})
     return TokenOut(access_token=token)
 

@@ -8,7 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import require_roles
-from app.models.entities import Account, CouponInstance, CouponStatus, CouponTemplate, Merchant, RedemptionLog, Role
+from app.models.entities import (
+    Account,
+    CouponInstance,
+    CouponStatus,
+    CouponTemplate,
+    Merchant,
+    RedemptionLog,
+    Role,
+    UserProfile,
+    VerifyStatus,
+)
 
 router = APIRouter(prefix="/export", tags=["导出"])
 
@@ -102,3 +112,37 @@ def export_coupons(
             ]
         )
     return _csv_response(f"coupons_{datetime.now():%Y%m%d_%H%M%S}.csv", out)
+
+
+@router.get("/users")
+def export_users(
+    verify_status: VerifyStatus | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> StreamingResponse:
+    query = (
+        db.query(Account)
+        .filter(Account.role == Role.user)
+        .order_by(Account.created_at.desc())
+    )
+    accounts = query.limit(5000).all()
+    out: list[list] = [["用户名", "昵称", "手机", "姓名", "组织", "核验状态", "注册时间", "备注"]]
+    for acc in accounts:
+        profile = db.query(UserProfile).filter(UserProfile.account_id == acc.id).first()
+        if not profile:
+            continue
+        if verify_status and profile.verify_status != verify_status:
+            continue
+        out.append(
+            [
+                acc.username,
+                acc.display_name or "",
+                acc.phone or "",
+                profile.real_name or "",
+                profile.organization or "",
+                profile.verify_status.value if profile.verify_status else "",
+                _fmt(acc.created_at),
+                profile.remark or "",
+            ]
+        )
+    return _csv_response(f"users_{datetime.now():%Y%m%d_%H%M%S}.csv", out)

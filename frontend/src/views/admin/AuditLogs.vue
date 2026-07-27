@@ -5,6 +5,20 @@
         <h2 class="page-title">审计日志</h2>
         <p class="page-desc">发券、审核、核销、入账等敏感操作记录</p>
       </div>
+      <div class="filters">
+        <el-select v-model="action" clearable filterable allow-create placeholder="动作" style="width:180px" @change="onFilter">
+          <el-option v-for="a in actionOptions" :key="a" :label="a" :value="a" />
+        </el-select>
+        <el-input
+          v-model="q"
+          clearable
+          placeholder="关键字"
+          style="width:180px"
+          @keyup.enter="onFilter"
+          @clear="onFilter"
+        />
+        <el-button type="primary" @click="onFilter">查询</el-button>
+      </div>
     </div>
     <el-table v-loading="loading" :data="items" stripe empty-text="暂无审计记录">
       <el-table-column prop="actor_name" label="操作人" width="120" />
@@ -16,6 +30,16 @@
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
     </el-table>
+    <div class="pager">
+      <span class="muted">共 {{ total }} 条</span>
+      <el-pagination
+        v-model:current-page="page"
+        layout="prev, pager, next"
+        :page-size="pageSize"
+        :total="total"
+        @current-change="load"
+      />
+    </div>
   </div>
 </template>
 
@@ -26,14 +50,61 @@ import { formatTime } from '../../utils/format'
 
 const items = ref([])
 const loading = ref(false)
+const action = ref()
+const q = ref('')
+const total = ref(0)
+const page = ref(1)
+const pageSize = 50
+const actionOptions = [
+  'user_register',
+  'submit_verification',
+  'approve_verification',
+  'reject_verification',
+  'create_template',
+  'update_template',
+  'issue_coupon',
+  'redeem_coupon',
+  'grant_points',
+  'change_password',
+  'reset_password',
+  'set_account_active',
+  'create_merchant',
+  'update_merchant',
+]
 
-onMounted(async () => {
+async function load() {
   loading.value = true
   try {
-    const res = await api.get('/audit-logs', { params: { limit: 100 } })
+    const res = await api.get('/audit-logs', {
+      params: {
+        action: action.value || undefined,
+        q: q.value || undefined,
+        skip: (page.value - 1) * pageSize,
+        limit: pageSize,
+      },
+    })
     items.value = res.data.items
+    total.value = res.data.total
   } finally {
     loading.value = false
   }
-})
+}
+
+function onFilter() {
+  page.value = 1
+  load()
+}
+
+onMounted(load)
 </script>
+
+<style scoped>
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+</style>

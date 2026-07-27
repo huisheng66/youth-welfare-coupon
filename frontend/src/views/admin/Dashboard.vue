@@ -67,6 +67,7 @@ const cards = computed(() => {
     { label: '已通过用户', value: d.approved_users ?? '-' },
     { label: '青年用户', value: d.users ?? '-' },
     { label: '未使用券', value: d.unused_coupons ?? '-' },
+    { label: '已过期券', value: d.expired_coupons ?? '-' },
     { label: '累计核销', value: d.coupons_used ?? '-' },
     { label: '累计发券', value: d.coupons_issued ?? '-' },
     { label: '商家', value: d.merchants ?? '-' },

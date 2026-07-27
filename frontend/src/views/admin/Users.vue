@@ -17,6 +17,7 @@
         <el-button type="success" :disabled="!selectedApproved.length" @click="openBatchIssue">
           批量发券 ({{ selectedApproved.length }})
         </el-button>
+        <el-button @click="onExportUsers">导出用户</el-button>
       </div>
     </div>
 
@@ -169,7 +170,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import api from '../../api'
+import api, { downloadFile } from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
 
@@ -213,6 +214,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function onExportUsers() {
+  const qs = status.value ? `?verify_status=${status.value}` : ''
+  await downloadFile(`/export/users${qs}`, 'users.csv')
+  ElMessage.success('已开始下载')
 }
 
 async function loadTemplates() {

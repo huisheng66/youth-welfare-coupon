@@ -45,10 +45,18 @@ def on_startup() -> None:
     db = SessionLocal()
     try:
         seed_if_empty(db)
+        from app.services.coupons import expire_stale_coupons
+
+        expire_stale_coupons(db)
     finally:
         db.close()
 
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "app": settings.app_name}
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "version": "1.1.0",
+        "live_code_expire_seconds": settings.live_code_expire_seconds,
+    }

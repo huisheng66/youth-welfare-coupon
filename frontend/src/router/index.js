@@ -20,27 +20,28 @@ import UserPoints from '../views/user/Points.vue'
 import MerchantRedeem from '../views/merchant/Redeem.vue'
 import MerchantLogs from '../views/merchant/Logs.vue'
 import Settings from '../views/Settings.vue'
+import NotFound from '../views/NotFound.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/login' },
-    { path: '/login', component: Login, meta: { public: true } },
+    { path: '/login', component: Login, meta: { public: true, title: '登录' } },
     {
       path: '/admin',
       component: AdminLayout,
       meta: { roles: ['super_admin', 'issue_admin'] },
       children: [
-        { path: '', component: Dashboard },
-        { path: 'users', component: Users },
-        { path: 'merchants', component: Merchants },
-        { path: 'templates', component: Templates },
-        { path: 'coupons', component: Coupons },
-        { path: 'redemptions', component: Redemptions },
-        { path: 'points', component: AdminPoints },
-        { path: 'audit', component: AuditLogs },
-        { path: 'accounts', component: Accounts },
-        { path: 'settings', component: Settings },
+        { path: '', component: Dashboard, meta: { title: '仪表盘' } },
+        { path: 'users', component: Users, meta: { title: '用户核验' } },
+        { path: 'merchants', component: Merchants, meta: { title: '商家管理' } },
+        { path: 'templates', component: Templates, meta: { title: '券模板' } },
+        { path: 'coupons', component: Coupons, meta: { title: '券列表' } },
+        { path: 'redemptions', component: Redemptions, meta: { title: '核销流水' } },
+        { path: 'points', component: AdminPoints, meta: { title: '志愿时长' } },
+        { path: 'audit', component: AuditLogs, meta: { title: '审计日志' } },
+        { path: 'accounts', component: Accounts, meta: { title: '账号管理' } },
+        { path: 'settings', component: Settings, meta: { title: '账号设置' } },
       ],
     },
     {
@@ -48,11 +49,11 @@ const router = createRouter({
       component: UserLayout,
       meta: { roles: ['user'] },
       children: [
-        { path: '', component: UserHome },
-        { path: 'profile', component: UserProfile },
-        { path: 'coupons', component: UserCoupons },
-        { path: 'points', component: UserPoints },
-        { path: 'settings', component: Settings },
+        { path: '', component: UserHome, meta: { title: '首页' } },
+        { path: 'profile', component: UserProfile, meta: { title: '资料核验' } },
+        { path: 'coupons', component: UserCoupons, meta: { title: '我的优惠券' } },
+        { path: 'points', component: UserPoints, meta: { title: '时长兑换' } },
+        { path: 'settings', component: Settings, meta: { title: '账号设置' } },
       ],
     },
     {
@@ -60,11 +61,12 @@ const router = createRouter({
       component: MerchantLayout,
       meta: { roles: ['merchant'] },
       children: [
-        { path: '', component: MerchantRedeem },
-        { path: 'logs', component: MerchantLogs },
-        { path: 'settings', component: Settings },
+        { path: '', component: MerchantRedeem, meta: { title: '核销' } },
+        { path: 'logs', component: MerchantLogs, meta: { title: '核销记录' } },
+        { path: 'settings', component: Settings, meta: { title: '账号设置' } },
       ],
     },
+    { path: '/:pathMatch(.*)*', component: NotFound, meta: { public: true, title: '页面不存在' } },
   ],
 })
 
@@ -84,6 +86,11 @@ router.beforeEach((to) => {
     return homePathByRole(auth.account.role)
   }
   return true
+})
+
+router.afterEach((to) => {
+  const page = [...to.matched].reverse().find((r) => r.meta?.title)?.meta?.title
+  document.title = page ? `${page} · 青年福利券` : '青年福利券系统'
 })
 
 export default router

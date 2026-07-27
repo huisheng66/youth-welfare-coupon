@@ -56,10 +56,13 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import { formatTime } from '../../utils/format'
+
+const router = useRouter()
 
 const balance = ref(null)
 const catalog = ref([])
@@ -84,7 +87,20 @@ async function exchange(item) {
   )
   const res = await api.post('/points/exchange', { template_id: item.id })
   ElMessage.success(`兑换成功，券码 ${res.data.coupon.code}`)
-  load()
+  const couponId = res.data.coupon?.id
+  if (couponId) {
+    await ElMessageBox.confirm('是否立即出示动态券码？', '兑换成功', {
+      confirmButtonText: '出示券码',
+      cancelButtonText: '稍后再说',
+      type: 'success',
+    }).then(() => {
+      router.push({ path: '/user/coupons', query: { open: couponId } })
+    }).catch(() => {
+      load()
+    })
+  } else {
+    load()
+  }
 }
 
 onMounted(load)

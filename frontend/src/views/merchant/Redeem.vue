@@ -47,8 +47,9 @@
         size="large"
         type="textarea"
         :rows="3"
-        placeholder="粘贴动态券码，或输入永久券码"
+        placeholder="粘贴动态券码，或输入永久券码（Ctrl+Enter 预览）"
         clearable
+        @keydown.ctrl.enter.prevent="onPreview"
       />
       <div class="quick-actions">
         <el-button size="large" @click="onPreview" :loading="previewing">预览券信息</el-button>
@@ -56,6 +57,9 @@
           确认核销
         </el-button>
         <el-button size="large" @click="reset">清空</el-button>
+        <el-button v-if="result?.ok" size="large" type="success" plain @click="continueScan">
+          继续扫下一张
+        </el-button>
       </div>
 
       <el-descriptions v-if="preview" :column="1" border class="section-gap">
@@ -143,6 +147,15 @@ function reset() {
   code.value = ''
   preview.value = null
   result.value = null
+}
+
+async function continueScan() {
+  reset()
+  try {
+    await scannerRef.value?.start?.()
+  } catch {
+    // ignore
+  }
 }
 
 async function onScanned(text) {

@@ -21,6 +21,7 @@ from app.models.entities import (
 )
 from app.schemas.common import DashboardActivityItem, DashboardOut, MerchantDashboardOut, Page
 from app.schemas.coupon import AuditLogOut
+from app.services.coupons import expire_stale_coupons
 
 router = APIRouter(tags=["统计审计"])
 
@@ -83,6 +84,7 @@ def dashboard(
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> DashboardOut:
+    expire_stale_coupons(db)
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     today_redemptions = (
         db.query(func.count(RedemptionLog.id))
@@ -107,6 +109,7 @@ def dashboard(
         approved_users=db.query(UserProfile).filter(UserProfile.verify_status == VerifyStatus.approved).count(),
         today_redemptions=int(today_redemptions),
         today_issued=int(today_issued),
+        expired_coupons=db.query(CouponInstance).filter(CouponInstance.status == CouponStatus.expired).count(),
         recent_activity=_recent_activity(db),
     )
 
@@ -162,12 +165,24 @@ def merchant_dashboard(
 
 @router.get("/audit-logs", response_model=Page[AuditLogOut])
 def audit_logs(
+    action: str | None = None,
+    q: str | None = None,
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin)),
 ) -> Page[AuditLogOut]:
     query = db.query(AuditLog).order_by(AuditLog.created_at.desc())
+    if action and action.strip():
+        query = query.filter(AuditLog.action == action.strip())
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            AuditLog.action.ilike(like)
+            | AuditLog.target_type.ilike(like)
+            | AuditLog.target_id.ilike(like)
+            | AuditLog.detail.ilike(like)
+        )
     total = query.count()
     rows = query.offset(skip).limit(limit).all()
     items: list[AuditLogOut] = []

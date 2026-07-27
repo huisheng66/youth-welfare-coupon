@@ -5,7 +5,15 @@
         <h2 class="page-title">券模板</h2>
         <p class="page-desc">每张模板绑定指定商家；兑换时长大于 0 时用户可用志愿时长兑换</p>
       </div>
-      <el-button type="primary" @click="openCreate">新建模板</el-button>
+      <div class="filters">
+        <el-select v-model="merchantFilter" clearable filterable placeholder="商家" style="width:160px" @change="load">
+          <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+        </el-select>
+        <el-select v-model="activeFilter" clearable placeholder="状态" style="width:120px" @change="load">
+          <el-option label="仅启用" :value="true" />
+        </el-select>
+        <el-button type="primary" @click="openCreate">新建模板</el-button>
+      </div>
     </div>
     <el-table v-loading="loading" :data="items" stripe empty-text="暂无模板，请先创建">
       <el-table-column prop="name" label="名称" min-width="120" />
@@ -64,6 +72,8 @@ const items = ref([])
 const merchants = ref([])
 const visible = ref(false)
 const loading = ref(false)
+const merchantFilter = ref()
+const activeFilter = ref()
 const form = reactive({
   id: '',
   name: '',
@@ -77,7 +87,13 @@ async function load() {
   loading.value = true
   try {
     const [t, m] = await Promise.all([
-      api.get('/coupons/templates', { params: { limit: 100 } }),
+      api.get('/coupons/templates', {
+        params: {
+          limit: 100,
+          merchant_id: merchantFilter.value || undefined,
+          active_only: activeFilter.value === true ? true : undefined,
+        },
+      }),
       api.get('/merchants', { params: { active_only: true, limit: 100 } }),
     ])
     items.value = t.data.items
