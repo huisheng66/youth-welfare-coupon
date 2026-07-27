@@ -13,8 +13,6 @@
         router
         :collapse="collapsed"
         background-color="transparent"
-        text-color="#c5d0d8"
-        active-text-color="#ffffff"
       >
         <el-menu-item index="/admin">仪表盘</el-menu-item>
         <el-menu-item index="/admin/users">
@@ -104,18 +102,18 @@ watch(() => route.path, loadPending)
 <style scoped>
 .shell { min-height: 100vh; background: var(--bg); }
 .aside {
-  background: linear-gradient(180deg, #16333a 0%, #0f2429 100%);
-  color: #fff;
+  background: var(--surface-2);
+  color: var(--ink);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255,255,255,0.06);
+  border-right: 1px solid var(--border);
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 18px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid var(--border);
   min-height: 72px;
 }
 .brand-mark {
@@ -125,23 +123,42 @@ watch(() => route.path, loadPending)
   display: grid;
   place-items: center;
   background: var(--brand);
+  color: #fff;
   font-weight: 700;
   flex-shrink: 0;
 }
 .brand-title { font-weight: 700; font-size: 0.95rem; }
-.brand-sub { font-size: 0.75rem; color: #9fb0b8; margin-top: 2px; }
-.el-menu { border-right: none; flex: 1; }
+.brand-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+:deep(.el-menu) { border-right: none; flex: 1; background: transparent; }
+:deep(.el-menu-item) {
+  color: var(--ink);
+  border-radius: 10px;
+  margin: 2px 8px;
+  height: 44px;
+  line-height: 44px;
+  font-weight: 500;
+}
+:deep(.el-menu-item:hover) { background: var(--surface-3); }
+:deep(.el-menu-item.is-active) {
+  background: var(--brand-soft) !important;
+  color: var(--brand) !important;
+  font-weight: 700;
+}
+
 .collapse-btn {
   margin: 8px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: transparent;
-  color: #c5d0d8;
-  border-radius: 8px;
-  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 12px;
   cursor: pointer;
   font-size: 0.8125rem;
+  font-weight: 600;
+  transition: background 120ms ease, color 120ms ease;
 }
-.collapse-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.collapse-btn:hover { background: var(--brand-soft); color: var(--brand); }
 .header {
   display: flex;
   justify-content: space-between;
@@ -152,7 +169,7 @@ watch(() => route.path, loadPending)
   min-height: 64px;
   padding: 12px 20px;
 }
-.header-title { font-weight: 650; font-size: 1.05rem; }
+.header-title { font-weight: 700; font-size: 1.1rem; letter-spacing: -0.01em; }
 .header-sub { font-size: 0.8125rem; margin-top: 2px; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .main { padding: 16px 20px 28px; }
