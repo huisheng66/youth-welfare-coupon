@@ -28,6 +28,7 @@
         <el-menu-item index="/admin/points">志愿时长</el-menu-item>
         <el-menu-item v-if="isSuper" index="/admin/accounts">账号管理</el-menu-item>
         <el-menu-item v-if="isSuper" index="/admin/audit">审计日志</el-menu-item>
+        <el-menu-item index="/admin/settings">账号设置</el-menu-item>
       </el-menu>
       <button class="collapse-btn" type="button" @click="collapsed = !collapsed">
         {{ collapsed ? '展开' : '收起' }}
@@ -78,6 +79,7 @@ const titles = {
   '/admin/points': '志愿服务时长',
   '/admin/accounts': '账号管理',
   '/admin/audit': '审计日志',
+  '/admin/settings': '账号设置',
 }
 const pageTitle = computed(() => titles[route.path] || '管理端')
 

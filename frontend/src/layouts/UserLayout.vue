@@ -13,6 +13,7 @@
         <router-link to="/user/profile">资料核验</router-link>
         <router-link to="/user/coupons">我的券</router-link>
         <router-link to="/user/points">时长兑换</router-link>
+        <router-link to="/user/settings">设置</router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
     </header>

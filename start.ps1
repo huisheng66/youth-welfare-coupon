@@ -1,11 +1,11 @@
-# One-click local start for welfare coupon system
+# One-click local start (PC + phone on same Wi-Fi)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendPort = 19001
 $FrontendPort = 5173
 
-Write-Host "==> Backend port: $BackendPort"
-Write-Host "==> Frontend port: $FrontendPort"
+Write-Host "==> Backend port: $BackendPort (127.0.0.1, proxied by Vite)"
+Write-Host "==> Frontend port: $FrontendPort (0.0.0.0, LAN accessible)"
 
 # Ensure backend venv
 if (-not (Test-Path "$Root\backend\.venv\Scripts\python.exe")) {
@@ -16,10 +16,13 @@ if (-not (Test-Path "$Root\backend\.venv\Scripts\python.exe")) {
   Pop-Location
 }
 
-# Patch frontend proxy target
-$vite = Get-Content "$Root\frontend\vite.config.js" -Raw
-$vite = $vite -replace "target:\s*'http://127\.0\.0\.1:\d+'", "target: 'http://127.0.0.1:$BackendPort'"
-Set-Content -Path "$Root\frontend\vite.config.js" -Value $vite -Encoding UTF8
+# Keep proxy target in vite.config.js pointing at backend
+$vitePath = "$Root\frontend\vite.config.js"
+if (Test-Path $vitePath) {
+  $vite = Get-Content $vitePath -Raw
+  $vite = $vite -replace "target:\s*'http://127\.0\.0\.1:\d+'", "target: 'http://127.0.0.1:$BackendPort'"
+  Set-Content -Path $vitePath -Value $vite -Encoding UTF8
+}
 
 if (-not (Test-Path "$Root\frontend\node_modules")) {
   Write-Host "Installing frontend deps..."
@@ -28,16 +31,45 @@ if (-not (Test-Path "$Root\frontend\node_modules")) {
   Pop-Location
 }
 
+# Firewall: allow inbound 5173 for private networks (may need admin once)
+try {
+  $rule = Get-NetFirewallRule -DisplayName "YouthWelfare-Vite-5173" -ErrorAction SilentlyContinue
+  if (-not $rule) {
+    New-NetFirewallRule -DisplayName "YouthWelfare-Vite-5173" -Direction Inbound -Protocol TCP -LocalPort $FrontendPort -Action Allow -Profile Private -ErrorAction Stop | Out-Null
+    Write-Host "Firewall rule added for port $FrontendPort (Private)"
+  }
+} catch {
+  Write-Host "NOTE: Could not add firewall rule (run PowerShell as Admin if phone still cannot open page)"
+}
+
+# LAN IPv4 (prefer WLAN)
+$lan = Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.PrefixOrigin -ne 'WellKnown' } |
+  Sort-Object { if ($_.InterfaceAlias -match 'WLAN|Wi-?Fi|无线') { 0 } else { 1 } } |
+  Select-Object -First 1 -ExpandProperty IPAddress
+
 Write-Host "Starting backend..."
-Start-Process -FilePath "$Root\backend\.venv\Scripts\python.exe" -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","$BackendPort" -WorkingDirectory "$Root\backend" -WindowStyle Minimized
+Start-Process -FilePath "$Root\backend\.venv\Scripts\python.exe" `
+  -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","$BackendPort" `
+  -WorkingDirectory "$Root\backend" -WindowStyle Minimized
 
 Start-Sleep -Seconds 2
 
-Write-Host "Starting frontend..."
-Start-Process -FilePath "npm" -ArgumentList "run","dev","--","--host","127.0.0.1","--port","$FrontendPort" -WorkingDirectory "$Root\frontend" -WindowStyle Minimized
+Write-Host "Starting frontend (HTTPS + LAN, for phone camera)..."
+Start-Process -FilePath "npm" `
+  -ArgumentList "run","dev","--","--host","0.0.0.0","--port","$FrontendPort" `
+  -WorkingDirectory "$Root\frontend" -WindowStyle Minimized
 
 Write-Host ""
-Write-Host "Opened:"
-Write-Host "  Web:  http://127.0.0.1:$FrontendPort/"
-Write-Host "  API:  http://127.0.0.1:$BackendPort/docs"
-Write-Host "  Demo: admin/admin123  merchant1/merchant123  youth1/youth123"
+Write-Host "PC:    https://127.0.0.1:$FrontendPort/   (accept self-signed cert once)"
+if ($lan) {
+  Write-Host "Phone: https://${lan}:$FrontendPort/   (HTTPS required for camera)"
+} else {
+  Write-Host "Phone: https://<电脑WLAN-IP>:$FrontendPort/"
+}
+Write-Host "API:   http://127.0.0.1:$BackendPort/docs"
+Write-Host "Demo:  admin/admin123  merchant1/merchant123  youth1/youth123"
+Write-Host ""
+Write-Host "Phone: same Wi-Fi; first open may warn about certificate -> Advanced -> Proceed"
+Write-Host "If camera still blocked: use 拍照识别 / 相册选图"
+

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -7,12 +7,15 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.entities import Account, Role, UserProfile, VerifyStatus
 from app.schemas.auth import (
     AccountOut,
+    ChangePasswordIn,
     CreateIssueAdminIn,
     CreateMerchantAccountIn,
     LoginIn,
     RegisterIn,
+    ResetPasswordIn,
+    SetActiveIn,
 )
-from app.schemas.common import TokenOut
+from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -128,3 +131,102 @@ def create_issue_admin(
     db.commit()
     db.refresh(account)
     return account_to_out(account)
+
+
+@router.post("/change-password", response_model=MessageOut)
+def change_password(
+    body: ChangePasswordIn,
+    db: Session = Depends(get_db),
+    account: Account = Depends(get_current_account),
+) -> MessageOut:
+    if not verify_password(body.old_password, account.password_hash):
+        raise HTTPException(status_code=400, detail="原密码不正确")
+    if body.old_password == body.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+    account.password_hash = hash_password(body.new_password)
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="change_password",
+        target_type="account",
+        target_id=account.id,
+    )
+    db.commit()
+    return MessageOut(message="密码已修改，请使用新密码登录")
+
+
+@router.get("/accounts", response_model=Page[AccountOut])
+def list_accounts(
+    role: Role | None = None,
+    q: str | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin)),
+) -> Page[AccountOut]:
+    query = db.query(Account).order_by(Account.created_at.desc())
+    if role:
+        query = query.filter(Account.role == role)
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            (Account.username.ilike(like))
+            | (Account.display_name.ilike(like))
+            | (Account.phone.ilike(like))
+        )
+    total = query.count()
+    rows = query.offset(skip).limit(limit).all()
+    return Page(total=total, items=[account_to_out(r) for r in rows])
+
+
+@router.post("/accounts/{account_id}/reset-password", response_model=MessageOut)
+def reset_password(
+    account_id: str,
+    body: ResetPasswordIn,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin)),
+) -> MessageOut:
+    target = db.get(Account, account_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if target.role == Role.super_admin and target.id != admin.id:
+        raise HTTPException(status_code=400, detail="不能重置其他超级管理员密码")
+    target.password_hash = hash_password(body.new_password)
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="reset_password",
+        target_type="account",
+        target_id=target.id,
+        detail=f"username={target.username}",
+    )
+    db.commit()
+    return MessageOut(message="密码已重置")
+
+
+@router.post("/accounts/{account_id}/set-active", response_model=AccountOut)
+def set_account_active(
+    account_id: str,
+    body: SetActiveIn,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin)),
+) -> AccountOut:
+    target = db.get(Account, account_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if target.id == admin.id and not body.is_active:
+        raise HTTPException(status_code=400, detail="不能停用当前登录账号")
+    if target.role == Role.super_admin and target.id != admin.id and not body.is_active:
+        raise HTTPException(status_code=400, detail="不能停用其他超级管理员")
+    target.is_active = body.is_active
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="set_account_active",
+        target_type="account",
+        target_id=target.id,
+        detail=f"is_active={body.is_active}",
+    )
+    db.commit()
+    db.refresh(target)
+    return account_to_out(target)

@@ -19,6 +19,7 @@ import UserCoupons from '../views/user/Coupons.vue'
 import UserPoints from '../views/user/Points.vue'
 import MerchantRedeem from '../views/merchant/Redeem.vue'
 import MerchantLogs from '../views/merchant/Logs.vue'
+import Settings from '../views/Settings.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -39,6 +40,7 @@ const router = createRouter({
         { path: 'points', component: AdminPoints },
         { path: 'audit', component: AuditLogs },
         { path: 'accounts', component: Accounts },
+        { path: 'settings', component: Settings },
       ],
     },
     {
@@ -50,6 +52,7 @@ const router = createRouter({
         { path: 'profile', component: UserProfile },
         { path: 'coupons', component: UserCoupons },
         { path: 'points', component: UserPoints },
+        { path: 'settings', component: Settings },
       ],
     },
     {
@@ -59,6 +62,7 @@ const router = createRouter({
       children: [
         { path: '', component: MerchantRedeem },
         { path: 'logs', component: MerchantLogs },
+        { path: 'settings', component: Settings },
       ],
     },
   ],

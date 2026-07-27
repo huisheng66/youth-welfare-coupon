@@ -38,3 +38,16 @@ class CreateIssueAdminIn(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=6, max_length=64)
     display_name: str = ""
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str = Field(min_length=1, max_length=64)
+    new_password: str = Field(min_length=6, max_length=64)
+
+
+class ResetPasswordIn(BaseModel):
+    new_password: str = Field(min_length=6, max_length=64)
+
+
+class SetActiveIn(BaseModel):
+    is_active: bool

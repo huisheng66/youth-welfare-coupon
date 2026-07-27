@@ -27,7 +27,10 @@ api.interceptors.response.use(
         router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
       }
     }
-    ElMessage.error(msg)
+    // 轮询等场景可传 { silent: true } 避免打断用户
+    if (!err.config?.silent) {
+      ElMessage.error(msg)
+    }
     return Promise.reject(err)
   },
 )

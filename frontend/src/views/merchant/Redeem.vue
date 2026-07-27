@@ -2,7 +2,7 @@
   <div>
     <div class="page-card" style="margin-bottom:16px">
       <h2 class="page-title">{{ stats?.merchant_name || '本店' }}</h2>
-      <p class="page-desc">仅可核销本店适用券，建议先预览再确认</p>
+      <p class="page-desc">仅可核销本店适用券；支持扫用户动态二维码或粘贴券码</p>
       <el-skeleton v-if="!stats" animated :rows="2" />
       <div v-else class="stat-grid">
         <div class="stat-item is-accent">
@@ -24,9 +24,24 @@
       </div>
     </div>
 
+    <div class="page-card" style="margin-bottom:16px">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">扫码核销</h2>
+          <p class="page-desc">手机后置摄像头对准用户屏幕上的二维码</p>
+        </div>
+        <el-switch
+          v-model="autoRedeem"
+          active-text="扫码后自动核销"
+          inactive-text="扫码后仅预览"
+        />
+      </div>
+      <QrScanner ref="scannerRef" @scan="onScanned" />
+    </div>
+
     <div class="page-card">
-      <h2 class="page-title">优惠券核销</h2>
-      <p class="page-desc">支持用户出示的动态券码或备用永久券码</p>
+      <h2 class="page-title">券码核销</h2>
+      <p class="page-desc">也可手动粘贴动态码 / 输入永久码</p>
       <el-input
         v-model="code"
         size="large"
@@ -61,6 +76,31 @@
         :sub-title="result.sub"
       />
     </div>
+
+    <div class="page-card" style="margin-top:16px">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">今日 / 近期核销</h2>
+          <p class="page-desc">最近 8 条本店流水，完整记录见「核销记录」</p>
+        </div>
+        <el-button link type="primary" @click="$router.push('/merchant/logs')">全部记录</el-button>
+      </div>
+      <el-table :data="recent" size="small" stripe empty-text="暂无记录">
+        <el-table-column prop="code" label="券码" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="username" label="用户" width="100" />
+        <el-table-column label="结果" width="80">
+          <template #default="{ row }">
+            <StatusTag
+              :text="row.result === 'success' ? '成功' : '失败'"
+              :type="row.result === 'success' ? 'success' : 'danger'"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+      </el-table>
+    </div>
   </div>
 </template>
 
@@ -68,6 +108,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../api'
+import QrScanner from '../../components/QrScanner.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'
 
@@ -77,6 +118,10 @@ const previewing = ref(false)
 const preview = ref(null)
 const result = ref(null)
 const stats = ref(null)
+const recent = ref([])
+const autoRedeem = ref(false)
+const scannerRef = ref(null)
+const handling = ref(false)
 
 const canRedeem = computed(() => !!code.value.trim() && preview.value?.status === 'unused')
 
@@ -85,16 +130,43 @@ async function loadStats() {
   stats.value = res.data
 }
 
+async function loadRecent() {
+  try {
+    const res = await api.get('/coupons/redemptions', { params: { limit: 8 }, silent: true })
+    recent.value = res.data.items || []
+  } catch {
+    recent.value = []
+  }
+}
+
 function reset() {
   code.value = ''
   preview.value = null
   result.value = null
 }
 
+async function onScanned(text) {
+  if (handling.value) return
+  handling.value = true
+  try {
+    code.value = text
+    result.value = null
+    ElMessage.success('已识别二维码')
+    // pause camera to avoid multi-fire while processing
+    await scannerRef.value?.stop?.()
+    const ok = await onPreview()
+    if (ok && autoRedeem.value && preview.value?.status === 'unused') {
+      await onRedeem()
+    }
+  } finally {
+    handling.value = false
+  }
+}
+
 async function onPreview() {
   if (!code.value.trim()) {
     ElMessage.warning('请输入券码')
-    return
+    return false
   }
   previewing.value = true
   preview.value = null
@@ -104,9 +176,12 @@ async function onPreview() {
     preview.value = res.data
     if (res.data.status !== 'unused') {
       ElMessage.warning(`当前状态：${couponStatusText(res.data.status)}，不可核销`)
+      return false
     }
+    return true
   } catch {
     preview.value = null
+    return false
   } finally {
     previewing.value = false
   }
@@ -130,6 +205,7 @@ async function onRedeem() {
     preview.value = null
     ElMessage.success('核销成功')
     loadStats()
+    loadRecent()
   } catch (e) {
     result.value = {
       ok: false,
@@ -141,5 +217,8 @@ async function onRedeem() {
   }
 }
 
-onMounted(loadStats)
+onMounted(() => {
+  loadStats()
+  loadRecent()
+})
 </script>

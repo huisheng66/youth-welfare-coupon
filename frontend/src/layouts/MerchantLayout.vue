@@ -11,6 +11,7 @@
       <nav>
         <router-link to="/merchant">核销</router-link>
         <router-link to="/merchant/logs">核销记录</router-link>
+        <router-link to="/merchant/settings">设置</router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
     </header>
