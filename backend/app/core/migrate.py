@@ -23,3 +23,7 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "accounts", "email", "email VARCHAR(128)")
     _add_column_if_missing(engine, "user_profiles", "student_no", "student_no VARCHAR(64) DEFAULT ''")
     # 旧字段 id_number_masked 保留在库中（SQLite 不便删列），业务已改用 student_no
+    _add_column_if_missing(engine, "user_profiles", "bank_card_encrypted", "bank_card_encrypted TEXT")
+    _add_column_if_missing(engine, "user_profiles", "bank_card_last4", "bank_card_last4 VARCHAR(4) DEFAULT ''")
+    _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
+    _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")

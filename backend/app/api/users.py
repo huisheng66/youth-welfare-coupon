@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.deps import require_roles
-from app.models.entities import Account, Role, UserProfile, UserVerification, VerifyStatus
+from app.models.entities import Account, Role, UserProfile, UserVerification, VerifyStatus, utcnow
 from app.schemas.common import MessageOut, Page
 from app.schemas.user import (
+    BankCardIn,
+    BankCardPlainOut,
     BatchReviewIn,
     ProfileUpdateIn,
     ReviewVerificationIn,
@@ -16,6 +18,7 @@ from app.schemas.user import (
     VerificationOut,
 )
 from app.services.audit import write_audit
+from app.services.crypto import decrypt_text, encrypt_text, mask_bank_card, validate_bank_card
 
 router = APIRouter(prefix="/users", tags=["用户核验"])
 
@@ -31,6 +34,9 @@ def _latest_material(db: Session, profile_id: str) -> str | None:
 
 
 def _user_item(acc: Account, profile: UserProfile, db: Session) -> UserListItem:
+    bound = bool(profile.bank_card_encrypted)
+    # 列表/资料接口不解密，仅展示脱敏
+    masked = f"**** **** **** {profile.bank_card_last4}" if bound and profile.bank_card_last4 else ("****" if bound else None)
     return UserListItem(
         id=acc.id,
         username=acc.username,
@@ -43,6 +49,10 @@ def _user_item(acc: Account, profile: UserProfile, db: Session) -> UserListItem:
         student_no=profile.student_no,
         remark=profile.remark,
         latest_material_note=_latest_material(db, profile.id),
+        bank_card_bound=bound,
+        bank_card_masked=masked,
+        bank_card_bank_name=profile.bank_card_bank_name or None,
+        bank_card_bound_at=profile.bank_card_bound_at,
     )
 
 
@@ -90,6 +100,94 @@ def update_my_profile(
     profile.remark = body.remark
     db.commit()
     return my_profile(account, db)
+
+
+@router.put("/me/bank-card", response_model=UserListItem)
+def bind_my_bank_card(
+    body: BankCardIn,
+    account: Account = Depends(require_roles(Role.user)),
+    db: Session = Depends(get_db),
+) -> UserListItem:
+    """核验通过后自愿绑定/更新银行卡（库内加密存储）。"""
+    profile = db.query(UserProfile).filter(UserProfile.account_id == account.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    if profile.verify_status != VerifyStatus.approved:
+        raise HTTPException(status_code=400, detail="仅核验通过后可自愿添加银行卡")
+    try:
+        digits = validate_bank_card(body.card_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    profile.bank_card_encrypted = encrypt_text(digits)
+    profile.bank_card_last4 = digits[-4:]
+    profile.bank_card_bank_name = body.bank_name
+    profile.bank_card_bound_at = utcnow()
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="bind_bank_card",
+        target_type="profile",
+        target_id=profile.id,
+        detail=f"masked={mask_bank_card(digits)} bank={body.bank_name}",
+    )
+    db.commit()
+    return _user_item(account, profile, db)
+
+
+@router.delete("/me/bank-card", response_model=MessageOut)
+def unbind_my_bank_card(
+    account: Account = Depends(require_roles(Role.user)),
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    profile = db.query(UserProfile).filter(UserProfile.account_id == account.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    if not profile.bank_card_encrypted:
+        return MessageOut(message="当前未绑定银行卡")
+    profile.bank_card_encrypted = None
+    profile.bank_card_last4 = ""
+    profile.bank_card_bank_name = ""
+    profile.bank_card_bound_at = None
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="unbind_bank_card",
+        target_type="profile",
+        target_id=profile.id,
+    )
+    db.commit()
+    return MessageOut(message="已解除银行卡绑定")
+
+
+@router.get("/{user_id}/bank-card", response_model=BankCardPlainOut)
+def reveal_user_bank_card(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin)),
+) -> BankCardPlainOut:
+    """超级管理员查看完整卡号（解密 + 审计）。发券管理员仅能看脱敏。"""
+    profile = db.query(UserProfile).filter(UserProfile.account_id == user_id).first()
+    if not profile or not profile.bank_card_encrypted:
+        raise HTTPException(status_code=404, detail="该用户未绑定银行卡")
+    try:
+        plain = decrypt_text(profile.bank_card_encrypted)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="reveal_bank_card",
+        target_type="account",
+        target_id=user_id,
+        detail=f"masked={mask_bank_card(plain)}",
+    )
+    db.commit()
+    return BankCardPlainOut(
+        user_id=user_id,
+        card_number=plain,
+        bank_card_masked=mask_bank_card(plain),
+        bank_name=profile.bank_card_bank_name or "",
+    )
 
 
 @router.get("/me/verifications", response_model=list[VerificationOut])

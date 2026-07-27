@@ -91,6 +91,11 @@ class UserProfile(Base):
     student_no: Mapped[str] = mapped_column(String(64), default="")  # 学号
     organization: Mapped[str] = mapped_column(String(128), default="")
     remark: Mapped[str] = mapped_column(Text, default="")
+    # 银行卡：仅存 Fernet 密文 + 末四位/脱敏展示字段，明文不落库
+    bank_card_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bank_card_last4: Mapped[str] = mapped_column(String(4), default="")
+    bank_card_bank_name: Mapped[str] = mapped_column(String(64), default="")  # 开户行（选填）
+    bank_card_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verify_status: Mapped[VerifyStatus] = mapped_column(_str_enum(VerifyStatus), default=VerifyStatus.draft, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

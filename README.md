@@ -6,7 +6,8 @@
   - 开发默认 **SQLite**（`backend/data/app.db`）  
   - 生产推荐 **MySQL 8**（`mysql+pymysql://...`）  
 - 前端：Vue 3 + Vite + Element Plus  
-- **不含**微信小程序、**不采集**银行卡  
+- **不含**微信小程序  
+- 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
 
 **Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
 
@@ -211,6 +212,6 @@ DATABASE_URL=mysql+pymysql://user:password@host:3306/welfare
 
 ## 安全说明
 
-- 用户主键为系统 UUID，**不使用银行卡**  
+- 用户主键为系统 UUID；银行卡号 **Fernet 加密落库**（密钥派生自 `SECRET_KEY`），更换密钥后旧密文无法解密  
 - 券模板强制绑定商家；核销校验 `merchant_id`  
 - 核销使用状态条件更新，降低并发重复核销风险  

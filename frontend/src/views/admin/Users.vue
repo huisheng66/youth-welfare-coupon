@@ -76,6 +76,11 @@
       <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="real_name" label="姓名" width="100" />
       <el-table-column prop="student_no" label="学号" width="120" show-overflow-tooltip />
+      <el-table-column label="银行卡" width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.bank_card_bound ? (row.bank_card_masked || '已绑定') : '—' }}
+        </template>
+      </el-table-column>
       <el-table-column prop="phone" label="手机" width="130" />
       <el-table-column prop="organization" label="单位/组织" min-width="140" />
       <el-table-column label="状态" width="100">
@@ -111,6 +116,27 @@
         <el-descriptions-item label="手机">{{ current.phone || '-' }}</el-descriptions-item>
         <el-descriptions-item label="学号">{{ current.student_no || '-' }}</el-descriptions-item>
         <el-descriptions-item label="组织">{{ current.organization || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="银行卡">
+          <span v-if="current.bank_card_bound">
+            {{ current.bank_card_masked || '已绑定' }}
+            <span v-if="current.bank_card_bank_name" class="muted"> · {{ current.bank_card_bank_name }}</span>
+          </span>
+          <span v-else class="muted">未绑定</span>
+          <el-button
+            v-if="isSuperAdmin && current.bank_card_bound"
+            link
+            type="warning"
+            style="margin-left:8px"
+            :loading="revealing"
+            @click="revealCard"
+          >
+            查看完整卡号
+          </el-button>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="revealedCard" label="完整卡号">
+          <code>{{ revealedCard }}</code>
+          <span class="muted" style="margin-left:8px">（已记审计，请勿截图传播）</span>
+        </el-descriptions-item>
         <el-descriptions-item label="备注">{{ current.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="核验状态">
           <StatusTag :text="verifyStatusText(current.verify_status)" :type="verifyStatusType(current.verify_status)" />
@@ -197,8 +223,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { downloadFile } from '../../api'
+import { useAuth } from '../../auth'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
+
+const auth = useAuth()
+const isSuperAdmin = computed(() => auth.account?.role === 'super_admin')
 
 const items = ref([])
 const loading = ref(false)
@@ -222,6 +252,8 @@ const detailHistory = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const revealing = ref(false)
+const revealedCard = ref('')
 const selectedApproved = computed(() => selected.value.filter((r) => r.verify_status === 'approved'))
 
 function onSelect(rows) {
@@ -270,7 +302,28 @@ async function loadTemplates() {
   templates.value = res.data.items
 }
 
+async function revealCard() {
+  if (!current.value?.id) return
+  try {
+    await ElMessageBox.confirm(
+      '将解密查看完整银行卡号，操作会记入审计日志。确认继续？',
+      '敏感操作',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  revealing.value = true
+  try {
+    const { data } = await api.get(`/users/${current.value.id}/bank-card`)
+    revealedCard.value = data.card_number
+  } finally {
+    revealing.value = false
+  }
+}
+
 async function openDetail(row) {
+  revealedCard.value = ''
   const res = await api.get(`/users/${row.id}`)
   current.value = res.data
   try {

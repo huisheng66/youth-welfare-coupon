@@ -32,6 +32,42 @@
       </el-form>
     </div>
 
+    <div v-if="verifyStatus === 'approved'" class="page-card" style="margin-bottom:16px">
+      <h2 class="page-title">银行卡（自愿）</h2>
+      <p class="page-desc">
+        核验通过后可自愿绑定；卡号在服务端加密存储，页面仅显示脱敏号。非强制。
+      </p>
+      <el-alert
+        v-if="bankBound"
+        type="success"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        :title="`已绑定：${bankMasked || '****'}${bankName ? ' · ' + bankName : ''}`"
+      />
+      <el-form label-width="100px" style="max-width:520px" @submit.prevent="saveBank">
+        <el-form-item label="银行卡号" required>
+          <el-input
+            v-model="bankForm.card_number"
+            maxlength="32"
+            :placeholder="bankBound ? '输入新卡号以更换' : '16–19 位卡号'"
+            autocomplete="off"
+          />
+        </el-form-item>
+        <el-form-item label="开户行">
+          <el-input v-model="bankForm.bank_name" maxlength="64" placeholder="选填，如某某银行某某支行" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="bankSaving" native-type="submit">
+            {{ bankBound ? '更新银行卡' : '绑定银行卡' }}
+          </el-button>
+          <el-button v-if="bankBound" type="danger" plain :loading="bankSaving" @click="clearBank">
+            解除绑定
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </div>
+
     <div class="page-card" style="margin-bottom:16px">
       <h2 class="page-title">提交核验</h2>
       <p class="page-desc">说明身份材料来源，便于管理员审核</p>
@@ -95,6 +131,11 @@ const material = ref('')
 const history = ref([])
 const saving = ref(false)
 const submitting = ref(false)
+const bankBound = ref(false)
+const bankMasked = ref('')
+const bankName = ref('')
+const bankSaving = ref(false)
+const bankForm = reactive({ card_number: '', bank_name: '' })
 
 const statusText = computed(() => verifyStatusText(verifyStatus.value))
 const canSubmit = computed(() => ['draft', 'rejected'].includes(verifyStatus.value))
@@ -106,7 +147,7 @@ const statusHint = computed(() => {
   const m = {
     draft: '请完善资料并提交核验材料',
     pending: '管理员审核中，暂不可重复提交',
-    approved: '已通过，可在「我的优惠券」「时长兑换」使用福利',
+    approved: '已通过，可在「我的优惠券」「时长兑换」使用福利；可自愿绑定银行卡',
     rejected: '请根据审核备注修改资料后重新提交',
   }
   return m[verifyStatus.value] || ''
@@ -134,8 +175,49 @@ async function load() {
     remark: profileRes.data.remark || '',
   })
   verifyStatus.value = profileRes.data.verify_status
+  bankBound.value = !!profileRes.data.bank_card_bound
+  bankMasked.value = profileRes.data.bank_card_masked || ''
+  bankName.value = profileRes.data.bank_card_bank_name || ''
+  bankForm.bank_name = profileRes.data.bank_card_bank_name || ''
+  bankForm.card_number = ''
   history.value = histRes.data || []
   syncAuth(profileRes.data)
+}
+
+async function saveBank() {
+  if (!bankForm.card_number.trim()) {
+    ElMessage.warning('请填写银行卡号')
+    return
+  }
+  bankSaving.value = true
+  try {
+    const { data } = await api.put('/users/me/bank-card', {
+      card_number: bankForm.card_number.trim(),
+      bank_name: bankForm.bank_name.trim(),
+    })
+    bankBound.value = !!data.bank_card_bound
+    bankMasked.value = data.bank_card_masked || ''
+    bankName.value = data.bank_card_bank_name || ''
+    bankForm.card_number = ''
+    ElMessage.success('银行卡已保存（加密存储）')
+  } finally {
+    bankSaving.value = false
+  }
+}
+
+async function clearBank() {
+  bankSaving.value = true
+  try {
+    await api.delete('/users/me/bank-card')
+    bankBound.value = false
+    bankMasked.value = ''
+    bankName.value = ''
+    bankForm.card_number = ''
+    bankForm.bank_name = ''
+    ElMessage.success('已解除绑定')
+  } finally {
+    bankSaving.value = false
+  }
 }
 
 async function save() {
