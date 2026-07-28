@@ -25,11 +25,12 @@ if (-not $SkipBuiltin) {
   $py = Join-Path $Root "backend\.venv\Scripts\python.exe"
   if (-not (Test-Path $py)) { $py = "python" }
   Write-Host ""
-  Write-Host "==> security_audit.py"
+  Write-Host "==> security_audit.py + extra + authz (deep IDOR)"
   Push-Location (Join-Path $Root "backend")
   try {
     & $py scripts\security_audit.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_$Stamp.log")
     & $py scripts\security_audit_extra.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_extra_$Stamp.log")
+    & $py scripts\security_audit_authz.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_authz_$Stamp.log")
   } finally {
     Pop-Location
   }

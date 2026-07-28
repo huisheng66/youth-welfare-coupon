@@ -9,6 +9,7 @@
 | 工具 | 仓库 | 用途 | 本项目用法 |
 |------|------|------|------------|
 | **业务自检** | 本仓库 | SQLi / 鉴权 / 越权 / 限流 | `backend/scripts/security_audit.py` |
+| **深度越权** | 本仓库 | 多角色垂直/水平 IDOR、JWT 伪造、导出隔离 | `backend/scripts/security_audit_authz.py` |
 | **硬化单测** | 本仓库 | 配置开关 / 净化 / 密钥 / 限流 | `backend/tests/test_security_hardening.py` |
 | **依赖 CVE** | — | pip / npm | `scripts/dep_audit.ps1` |
 | **Nuclei** | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) | 模板化漏洞 / 暴露面扫描 | `scripts/external_scan.ps1` |
