@@ -20,9 +20,20 @@
 sudo bash deploy/install-ubuntu.sh
 # 可选环境变量：
 # DOMAIN=coupon.example.com DB_PASS='强密码' sudo -E bash deploy/install-ubuntu.sh
+# DOMAIN=192.168.x.x SKIP_FRONTEND_BUILD=1 BOOTSTRAP_ADMIN_PASS='强密码' sudo -E bash deploy/install-ubuntu.sh
 ```
 
-脚本会：安装 MySQL/Nginx/Python/Node、建库、写 `.env`、`pip install`、`npm run build`、启用 `welfare-api` 服务。
+脚本会：安装 MySQL/Nginx/Python、建库、写 `.env`、`pip install`、构建前端（或使用预构建 `dist`）、启用 `welfare-api`、引导创建首个超管。
+
+| 变量 | 说明 |
+|------|------|
+| `DOMAIN` | Nginx `server_name` 与 CORS（IP 仅写 `http://IP`） |
+| `DB_PASS` | MySQL 业务账号密码（默认随机） |
+| `SKIP_FRONTEND_BUILD=1` | 使用包内 `frontend/dist`，不装 Node |
+| `BOOTSTRAP_ADMIN_USER/PASS` | 首个超管（库中已有 super_admin 则跳过） |
+| `PRESERVE_ENV=1` | 升级时保留已有 `backend/.env` |
+
+从 Windows/WSL 打包上传：`deploy/pack-and-upload.sh` → 服务器 `sudo -E bash run-on-server.sh`。
 
 ## 手动步骤摘要
 
