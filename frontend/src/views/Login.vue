@@ -339,38 +339,34 @@ onUnmounted(() => {
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(circle at 12% 18%, rgba(0, 122, 255, 0.08), transparent 42%),
-    radial-gradient(circle at 88% 80%, rgba(0, 122, 255, 0.05), transparent 40%),
+    radial-gradient(circle at 12% 18%, rgba(15, 110, 106, 0.14), transparent 42%),
+    radial-gradient(circle at 88% 80%, rgba(29, 79, 145, 0.1), transparent 40%),
     var(--bg);
 }
-.panel {
-  width: min(440px, 100%);
-  padding: 28px;
-  border-radius: var(--radius-lg);
-}
+.panel { width: min(440px, 100%); }
 .hero {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 .mark {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   background: var(--brand);
   color: #fff;
-  font-weight: 800;
-  font-size: 1.25rem;
+  font-weight: 700;
+  font-size: 1.1rem;
   flex-shrink: 0;
 }
 h1 {
   margin: 0 0 4px;
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .form-extra {
   display: flex;

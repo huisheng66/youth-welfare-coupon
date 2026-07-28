@@ -42,11 +42,8 @@ function onLogout() {
   gap: 12px;
   flex-wrap: wrap;
   padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
-  border-bottom: 1px solid var(--border);
-  color: var(--ink);
+  background: #16333a;
+  color: #fff;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -57,23 +54,21 @@ function onLogout() {
   display: grid; place-items: center;
   background: var(--brand); color: #fff; font-weight: 700;
 }
-.brand { font-weight: 700; font-size: 1rem; color: var(--ink); letter-spacing: -0.01em; }
-.who { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.brand { font-weight: 700; font-size: 1rem; }
+.who { font-size: 0.75rem; color: #9fb0b8; margin-top: 2px; }
 nav { display: flex; gap: 4px; align-items: center; }
 nav a {
-  color: var(--muted);
-  padding: 7px 12px;
-  border-radius: 999px;
+  color: #c5d0d8;
+  padding: 6px 10px;
+  border-radius: 8px;
   font-size: 0.875rem;
-  font-weight: 500;
-  transition: background 120ms ease, color 120ms ease;
 }
-nav a:hover { background: var(--surface-2); color: var(--ink); }
+nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
 nav a.router-link-active {
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-weight: 700;
+  background: rgba(15, 110, 106, 0.45);
+  color: #fff;
+  font-weight: 650;
 }
-.logout { color: var(--danger) !important; border-radius: 999px !important; }
+.logout { color: #fca5a5 !important; }
 .main { max-width: 820px; margin: 20px auto; padding: 0 16px 32px; }
 </style>
