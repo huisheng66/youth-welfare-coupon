@@ -118,7 +118,7 @@ def _unique_username_from_email(db: Session, email: str, preferred: str | None =
 def smtp_status(
     _: Account = Depends(require_roles(Role.super_admin)),
 ) -> SmtpStatusOut:
-    """超级管理员查看 SMTP 是否已配置（不返回密码）。"""
+    """超级管理员查看 SMTP/IMAP 是否已配置（不返回密码）。"""
     s = get_settings()
     user = s.mail_username or ""
     # 脱敏：只显示前 2 与域名
@@ -135,6 +135,10 @@ def smtp_status(
         mail_ssl_tls=s.mail_ssl_tls,
         mail_starttls=s.mail_starttls and not s.mail_ssl_tls,
         mail_console=s.mail_console and not s.smtp_configured,
+        imap_configured=s.imap_configured,
+        imap_server=s.imap_server or "",
+        imap_port=s.imap_port,
+        imap_ssl=s.imap_ssl,
     )
 
 
@@ -155,6 +159,32 @@ async def test_smtp(
     )
     db.commit()
     return MessageOut(message=f"测试邮件已发送至 {body.to}，请查收（含垃圾箱）")
+
+
+@router.post("/email/test-imap", response_model=MessageOut)
+def test_imap(
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin)),
+) -> MessageOut:
+    """超级管理员：登录 IMAP 收件服务器，验证 SSL/账号（不拉取正文）。"""
+    from app.services.mail import probe_imap
+
+    info = probe_imap()
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="test_imap",
+        target_type="email",
+        target_id=info.get("imap_server", ""),
+        detail=f"inbox={info.get('inbox_messages')}",
+    )
+    db.commit()
+    return MessageOut(
+        message=(
+            f"IMAP 连通正常：{info.get('imap_server')}:{info.get('imap_port')} "
+            f"（INBOX 约 {info.get('inbox_messages')} 封）"
+        )
+    )
 
 
 @router.post("/email/send-code", response_model=SendEmailCodeOut)

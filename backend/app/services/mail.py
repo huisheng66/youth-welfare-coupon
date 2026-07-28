@@ -248,3 +248,80 @@ async def send_test_email(*, to: str, settings: Settings | None = None) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.exception("test mail failed: %s", exc)
         raise HTTPException(status_code=502, detail=_friendly_smtp_error(exc)) from exc
+
+
+def probe_imap(*, settings: Settings | None = None) -> dict:
+    """
+    用标准库 imaplib 登录 IMAP，验证账号/密码与 SSL 端口。
+    不拉取正文；成功返回邮箱文件夹概况。
+    """
+    import imaplib
+    import ssl
+
+    settings = settings or get_settings()
+    if not settings.imap_configured:
+        raise HTTPException(
+            status_code=400,
+            detail="尚未配置 IMAP（IMAP_SERVER + MAIL_USERNAME + MAIL_PASSWORD）",
+        )
+
+    host = (settings.imap_server or "").strip()
+    port = int(settings.imap_port or 993)
+    user = (settings.mail_username or "").strip()
+    password = settings.mail_password or ""
+    use_ssl = bool(settings.imap_ssl)
+
+    try:
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            client: imaplib.IMAP4 = imaplib.IMAP4_SSL(host, port, ssl_context=ctx, timeout=20)
+        else:
+            client = imaplib.IMAP4(host, port, timeout=20)
+            client.starttls(ssl_context=ssl.create_default_context())
+
+        typ, _ = client.login(user, password)
+        if typ != "OK":
+            raise HTTPException(status_code=502, detail="IMAP 登录失败，请检查账号密码")
+
+        typ, data = client.select("INBOX", readonly=True)
+        messages = 0
+        if typ == "OK" and data and data[0] is not None:
+            try:
+                messages = int(data[0])
+            except (TypeError, ValueError):
+                messages = 0
+
+        try:
+            client.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "ok": True,
+            "imap_server": host,
+            "imap_port": port,
+            "imap_ssl": use_ssl,
+            "inbox_messages": messages,
+        }
+    except HTTPException:
+        raise
+    except imaplib.IMAP4.error as exc:
+        logger.warning("IMAP auth error: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="IMAP 认证失败：请确认企业邮账号与客户端专用密码正确",
+        ) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"连接 IMAP 超时：请检查网络是否放行 {host}:{port}",
+        ) from exc
+    except OSError as exc:
+        logger.warning("IMAP network error: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"无法连接 IMAP {host}:{port}（{exc}）",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("IMAP probe failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"IMAP 检测失败：{exc}") from exc

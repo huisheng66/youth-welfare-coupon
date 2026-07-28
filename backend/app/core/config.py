@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     email_code_cooldown_seconds: int = 60
     email_code_max_per_hour: int = 8
 
+    # IMAP（收信；与 SMTP 共用 MAIL_USERNAME / MAIL_PASSWORD；业务发码不依赖 IMAP）
+    imap_server: str = ""
+    imap_port: int = 993
+    imap_ssl: bool = True
+
     @field_validator("app_env", mode="before")
     @classmethod
     def normalize_env(cls, v: object) -> str:
@@ -138,6 +143,14 @@ class Settings(BaseSettings):
             (self.mail_server or "").strip()
             and (self.mail_password or "").strip()
             and (self.mail_username or self.mail_from or "").strip()
+        )
+
+    @property
+    def imap_configured(self) -> bool:
+        return bool(
+            (self.imap_server or "").strip()
+            and (self.mail_password or "").strip()
+            and (self.mail_username or "").strip()
         )
 
     @property

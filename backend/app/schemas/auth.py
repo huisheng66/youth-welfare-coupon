@@ -117,6 +117,11 @@ class SmtpStatusOut(BaseModel):
     mail_ssl_tls: bool = False
     mail_starttls: bool = False
     mail_console: bool = True
+    # IMAP 收信配置（与 SMTP 共用账号密码）
+    imap_configured: bool = False
+    imap_server: str = ""
+    imap_port: int = 0
+    imap_ssl: bool = True
 
 
 class AccountOut(ORMModel):
