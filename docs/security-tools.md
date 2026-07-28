@@ -26,6 +26,26 @@ go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 nuclei -update-templates
 ```
 
+### WSL 上的 Docker + ZAP（本机已验证）
+
+```bash
+# 1) 安装 Docker 引擎（root）
+wsl -u root bash /mnt/d/卡系统/scripts/wsl-install-docker-zap.sh
+
+# 2) 若 Docker 镜像拉取失败，装独立 ZAP（Java）
+wsl -u root bash /mnt/d/卡系统/scripts/wsl-finish-zap.sh
+
+# 3) Windows API 需监听 0.0.0.0（WSL 才能访问）
+#    uvicorn ... --host 0.0.0.0 --port 19001
+
+# 4) 探测 + 扫描
+wsl -u root bash /mnt/d/卡系统/scripts/wsl-probe-api.sh
+wsl -u root bash /mnt/d/卡系统/scripts/wsl-run-zap-docs.sh 'http://<探测到的IP>:19001/docs'
+```
+
+最新报告示例：`reports/zap_final_summary.md`  
+（注意：Docker 镜像源超时属网络问题；独立 ZAP 已可扫。）
+
 ---
 
 ## 二、强烈推荐（GitHub 高星 / 业界常用）
