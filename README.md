@@ -8,7 +8,8 @@
 - 前端：Vue 3 + Vite + Element Plus  
 - **不含**微信小程序  
 - 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**（可用独立 `FIELD_ENCRYPTION_KEY`）；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
-- 安全硬化：生产关 OpenAPI / 演示 seed、CORS 白名单、登录限流、输入净化、安全响应头 → 见 [`优化.md`](优化.md)
+- 安全硬化：生产关 OpenAPI / 演示 seed、CORS 白名单、登录限流、输入净化、安全响应头 → 见 [`优化.md`](优化.md)  
+- 安全运维（依赖扫描 / ZAP / Token 说明）→ [`docs/security-ops.md`](docs/security-ops.md)；CI 模板：[`docs/ci/security.yml`](docs/ci/security.yml)
 
 **Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
 
@@ -78,6 +79,22 @@ npm run dev
 | 青年用户（待审核） | youth2 | youth2@demo.local | youth123 |
 
 青年用户支持**邮箱注册（需验证码）**；登录可用邮箱或用户名；支持**忘记密码**。各角色可在「账号设置」中**改密 / 验证码绑定邮箱**。
+
+## 安全回归（开发）
+
+```powershell
+# 硬化单元测试
+cd backend
+.\.venv\Scripts\python.exe tests\test_security_hardening.py
+
+# 依赖 CVE（仓库根目录）
+.\scripts\dep_audit.ps1
+
+# API 已启动时
+.\.venv\Scripts\python.exe scripts\security_audit.py
+```
+
+JWT 现存在浏览器 `localStorage`，须防 XSS；生产请 HTTPS。Cookie 方案评估见 `docs/security-ops.md`。
 
 ### 邮箱验证码 / SMTP（腾讯企业邮）
 

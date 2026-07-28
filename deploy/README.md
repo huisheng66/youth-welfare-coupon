@@ -118,4 +118,8 @@ curl -s http://127.0.0.1:19001/api/health
 - [ ] 登录限流：单机用 `RATE_LIMIT_BACKEND=file`，多机用 Redis  
 - [ ] 防火墙只开放 80/443，MySQL 不对外  
 - [ ] 定期备份：`mysqldump welfare > backup.sql`  
-- [ ] JWT 现存在前端 `localStorage`：须防 XSS；勿对用户字段使用 `v-html`
+- [ ] JWT 现存在前端 `localStorage`：须防 XSS；勿对用户字段使用 `v-html`  
+- [ ] 定期跑依赖扫描：`scripts/dep_audit.ps1` 或 CI workflow `Security`  
+- [ ] 半年或大版本前对 staging 跑 ZAP baseline（见 `docs/security-ops.md`）
+
+Token / Cookie 方案评估、依赖与 ZAP 细节 → [`docs/security-ops.md`](../docs/security-ops.md)。

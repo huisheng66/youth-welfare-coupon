@@ -455,6 +455,34 @@ class TestEnvExampleDocumentsKeys(unittest.TestCase):
         self.assertIn("X-Content-Type-Options", conf)
 
 
+class TestPhase4Artifacts(unittest.TestCase):
+    """7b/7c/7e: docs, dep audit scripts, ZAP helpers, CI workflow."""
+
+    def test_security_ops_docs(self) -> None:
+        root = BACKEND_ROOT.parent
+        ops = (root / "docs" / "security-ops.md").read_text(encoding="utf-8")
+        self.assertIn("localStorage", ops)
+        self.assertIn("HttpOnly", ops)
+        self.assertIn("pip-audit", ops)
+        self.assertIn("ZAP", ops)
+
+    def test_dep_audit_scripts_exist(self) -> None:
+        root = BACKEND_ROOT.parent
+        self.assertTrue((root / "scripts" / "dep_audit.ps1").is_file())
+        self.assertTrue((root / "scripts" / "dep_audit.sh").is_file())
+        self.assertTrue((root / "scripts" / "zap-baseline.ps1").is_file())
+        self.assertTrue((root / "scripts" / "zap-baseline.sh").is_file())
+
+    def test_github_security_workflow(self) -> None:
+        # Template lives under docs/ci (OAuth tokens without workflow scope cannot push .github/workflows)
+        wf = BACKEND_ROOT.parent / "docs" / "ci" / "security.yml"
+        self.assertTrue(wf.is_file())
+        text = wf.read_text(encoding="utf-8")
+        self.assertIn("pip_audit", text)
+        self.assertIn("npm audit", text)
+        self.assertIn("test_security_hardening", text)
+
+
 class TestProfileWritePathSanitizes(unittest.TestCase):
     """Drive real schema + sanitize path used by PUT /users/me/profile."""
 

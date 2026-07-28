@@ -1,0 +1,3 @@
+# Dev / CI extras (not required for production runtime)
+-r requirements.txt
+pip-audit>=2.7

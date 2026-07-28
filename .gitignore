@@ -22,3 +22,7 @@ Thumbs.db
 
 # Local tooling
 .impeccable/
+
+# Security scan reports (ZAP / local audits)
+reports/
+backend/data/rate_limit*.db
