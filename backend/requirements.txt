@@ -1,16 +1,17 @@
-fastapi==0.115.6
+fastapi==0.140.7
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
-pydantic==2.10.4
+pydantic==2.13.4
 pydantic-settings==2.7.0
-python-jose[cryptography]==3.3.0
+# JWT: PyJWT instead of python-jose (avoids unfixed ecdsa advisories)
+PyJWT==2.13.0
 bcrypt==4.2.1
-python-multipart==0.0.20
-email-validator==2.2.0
-fastapi-mail==1.4.2
+python-multipart==0.0.31
+email-validator==2.3.0
+fastapi-mail==1.6.5
 # MySQL（Ubuntu 生产）
 PyMySQL==1.1.1
-cryptography==44.0.0
+cryptography==49.0.0
 # 测试 / TestClient
 httpx==0.28.1
 # 可选：生产登录限流 Redis 后端
