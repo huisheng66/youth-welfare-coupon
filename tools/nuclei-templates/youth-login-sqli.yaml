@@ -1,0 +1,38 @@
+id: youth-login-sqli
+
+info:
+  name: Youth Welfare - login SQLi probe (auth bypass)
+  author: youth-welfare
+  severity: critical
+  description: |
+    Classic SQLi auth-bypass payloads on /api/auth/login must NOT return a JWT.
+  tags: sqli,auth,youth-welfare,api
+
+http:
+  - raw:
+      - |
+        POST /api/auth/login HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Accept: application/json
+
+        {"username":"{{payload}}","password":"{{payload}}"}
+
+    payloads:
+      payload:
+        - "' OR '1'='1"
+        - "admin'--"
+        - "\" OR 1=1--"
+        - "1' OR '1'='1' /*"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "access_token"

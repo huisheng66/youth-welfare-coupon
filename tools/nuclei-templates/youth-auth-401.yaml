@@ -1,0 +1,26 @@
+id: youth-auth-401
+
+info:
+  name: Youth Welfare - protected routes require auth
+  author: youth-welfare
+  severity: high
+  description: |
+    Authenticated API routes must reject unauthenticated requests
+    (must not return HTTP 200).
+  tags: auth,youth-welfare,api
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/auth/me"
+      - "{{BaseURL}}/api/users/me/profile"
+      - "{{BaseURL}}/api/stats/dashboard"
+      - "{{BaseURL}}/api/stats/audit-logs"
+      - "{{BaseURL}}/api/auth/accounts"
+      - "{{BaseURL}}/api/auth/email/smtp-status"
+
+    matchers:
+      # Match = vulnerability (got 200 without credentials)
+      - type: status
+        status:
+          - 200

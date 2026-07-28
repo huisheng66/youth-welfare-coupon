@@ -12,6 +12,9 @@
 | **硬化单测** | 本仓库 | 配置开关 / 净化 / 密钥 / 限流 | `backend/tests/test_security_hardening.py` |
 | **依赖 CVE** | — | pip / npm | `scripts/dep_audit.ps1` |
 | **Nuclei** | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) | 模板化漏洞 / 暴露面扫描 | `scripts/external_scan.ps1` |
+| **自定义模板** | 本仓库 `tools/nuclei-templates/` | 鉴权 401 / 登录 SQLi / 匿名管理面 | 随 external_scan 跑，期望 **0 findings** |
+| **ffuf** | [ffuf/ffuf](https://github.com/ffuf/ffuf) | API 路径发现 | `tools/wordlists/api-paths.txt` |
+| **sqlmap** | [sqlmapproject/sqlmap](https://github.com/sqlmapproject/sqlmap) | 登录 JSON 注入探测 | 本地 clone 到 `tools/sqlmap/`（gitignore） |
 | **ZAP baseline** | [zaproxy/zaproxy](https://github.com/zaproxy/zaproxy) | 爬虫 + 被动/基线主动扫描 | `scripts/zap-baseline.ps1`（需 Docker） |
 
 安装 Nuclei（已在本机验证）：

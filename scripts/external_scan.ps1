@@ -1,12 +1,14 @@
-# External web/API security scan using Nuclei (+ optional built-in audits).
+# External web/API security scan: built-in audits + custom Nuclei + ffuf + sqlmap.
 # Usage:
 #   .\scripts\external_scan.ps1
 #   .\scripts\external_scan.ps1 -Target http://127.0.0.1:19001 -SkipBuiltin
-# Requires: nuclei in PATH or %USERPROFILE%\go\bin\nuclei.exe
+# Requires (optional): nuclei / ffuf in %USERPROFILE%\go\bin ; tools/sqlmap clone
 param(
   [string]$Target = "http://127.0.0.1:19001",
   [switch]$SkipBuiltin,
-  [switch]$SkipNuclei
+  [switch]$SkipNuclei,
+  [switch]$SkipFfuf,
+  [switch]$SkipSqlmap
 )
 
 $ErrorActionPreference = "Continue"
@@ -76,18 +78,73 @@ if (-not $SkipNuclei) {
 
   if (Test-Path $jsonl) {
     $n = (Get-Content $jsonl | Measure-Object -Line).Lines
-    Write-Host "Nuclei findings lines: $n -> $jsonl"
-    # Summarize template-ids
-    Get-Content $jsonl | ForEach-Object {
-      try {
-        $j = $_ | ConvertFrom-Json
-        $id = $j.'template-id'
-        $name = $j.'matcher-name'
-        if ($name) { "$id : $name" } else { $id }
-      } catch { }
-    } | Group-Object | Sort-Object Count -Descending | ForEach-Object {
-      "  $($_.Count)x $($_.Name)"
+    Write-Host "Nuclei community findings lines: $n -> $jsonl"
+  }
+
+  # Custom youth templates (expect 0 findings if auth/SQLi locked down)
+  $customDir = Join-Path $Root "tools\nuclei-templates"
+  $customOut = Join-Path $Out "nuclei_custom_$Stamp.jsonl"
+  if (Test-Path $customDir) {
+    Write-Host ""
+    Write-Host "==> Nuclei custom templates: $customDir"
+    Get-ChildItem $customDir -Filter "*.yaml" | ForEach-Object {
+      & $nuclei -u $Target -t $_.FullName -severity info -rate-limit 20 -c 5 -timeout 8 -ni `
+        -jsonl-export $customOut -silent 2>$null
     }
+    $cn = 0
+    if (Test-Path $customOut) { $cn = @(Get-Content $customOut).Count }
+    Write-Host "Custom template findings: $cn (0 = protected routes + login SQLi OK)"
+  }
+}
+
+# --- ffuf path discovery ---
+if (-not $SkipFfuf) {
+  $ffuf = $null
+  foreach ($c in @(
+      (Join-Path $env:USERPROFILE "go\bin\ffuf.exe"),
+      "ffuf.exe",
+      "ffuf"
+    )) {
+    if ($c -and (Get-Command $c -ErrorAction SilentlyContinue)) { $ffuf = (Get-Command $c).Source; break }
+    if ($c -and (Test-Path $c)) { $ffuf = $c; break }
+  }
+  $wl = Join-Path $Root "tools\wordlists\api-paths.txt"
+  if ($ffuf -and (Test-Path $wl)) {
+    Write-Host ""
+    Write-Host "==> ffuf path discovery"
+    $csv = Join-Path $Out "ffuf_$Stamp.csv"
+    & $ffuf -u "$Target/FUZZ" -w $wl -mc 200,401,403,405,422,429 -t 5 -rate 20 `
+      -of csv -o $csv -noninteractive 2>$null
+    if (Test-Path $csv) {
+      Write-Host "ffuf report: $csv"
+      Get-Content $csv | Select-Object -First 30
+    }
+  } else {
+    Write-Host "ffuf skipped (install: go install github.com/ffuf/ffuf/v2@latest)" -ForegroundColor Yellow
+  }
+}
+
+# --- sqlmap light on login JSON ---
+if (-not $SkipSqlmap) {
+  $sqlmap = Join-Path $Root "tools\sqlmap\sqlmap.py"
+  if (Test-Path $sqlmap) {
+    Write-Host ""
+    Write-Host "==> sqlmap (login JSON, level=1 risk=1)"
+    $log = Join-Path $Out "sqlmap_$Stamp.txt"
+    Push-Location (Split-Path $sqlmap)
+    try {
+      python sqlmap.py -u "$Target/api/auth/login" --method=POST `
+        --data='{"username":"admin*","password":"test*"}' `
+        --headers="Content-Type: application/json" `
+        --batch --level=1 --risk=1 --timeout=15 --retries=1 --flush-session `
+        --ignore-code=400,422,429 --technique=BEUST -v 1 2>&1 |
+        Tee-Object $log | Select-Object -Last 25
+    } finally {
+      Pop-Location
+    }
+    Write-Host "sqlmap log: $log"
+  } else {
+    Write-Host "sqlmap skipped (git clone https://github.com/sqlmapproject/sqlmap.git tools/sqlmap)" -ForegroundColor Yellow
   }
 }
 

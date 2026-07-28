@@ -1,0 +1,22 @@
+id: youth-role-idor
+
+info:
+  name: Youth Welfare - anonymous admin surface
+  author: youth-welfare
+  severity: high
+  description: |
+    Admin-only endpoints must not return 200 to anonymous clients.
+  tags: idor,authz,youth-welfare,api
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/auth/accounts"
+      - "{{BaseURL}}/api/stats/dashboard"
+      - "{{BaseURL}}/api/stats/audit-logs"
+      - "{{BaseURL}}/api/auth/email/smtp-status"
+
+    matchers:
+      - type: status
+        status:
+          - 200
