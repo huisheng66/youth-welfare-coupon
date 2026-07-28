@@ -130,50 +130,39 @@ onMounted(async () => {
 
 <style scoped>
 .stat-grid {
-  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 4px;
 }
-.stat-item {
-  background: var(--surface-2);
-  border-radius: 10px;
-  padding: 14px 12px;
-  border: 1px solid var(--border);
+
+.status-val {
+  margin-top: 6px;
 }
-.stat-item.is-accent {
-  background: var(--brand-soft);
-  border-color: rgba(15, 110, 106, 0.25);
-}
-.stat-item .label {
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-.stat-item .value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--ink);
-  line-height: 1.1;
-}
-.stat-item .unit {
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin-left: 2px;
-  color: var(--muted);
-}
-.status-val { margin-top: 4px; }
+
 .coupon-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
-.coupon-row:last-child { border-bottom: none; }
+
+.coupon-row:last-child {
+  border-bottom: none;
+}
+
+.coupon-row strong {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 @media (max-width: 720px) {
-  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .coupon-row { flex-direction: column; align-items: stretch; }
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coupon-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

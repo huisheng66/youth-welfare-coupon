@@ -1,8 +1,8 @@
 <template>
-  <div class="empty-hint">
+  <div class="empty-hint" role="status">
     <strong>{{ title }}</strong>
-    <div v-if="description">{{ description }}</div>
-    <div v-if="$slots.default" style="margin-top:12px">
+    <p v-if="description" class="empty-desc">{{ description }}</p>
+    <div v-if="$slots.default" class="empty-actions">
       <slot />
     </div>
   </div>

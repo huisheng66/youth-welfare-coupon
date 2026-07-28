@@ -1,14 +1,14 @@
 <template>
   <div class="wrap">
-    <header class="top">
+    <header class="top" data-od-id="user-topbar">
       <div class="brand-block">
-        <span class="mark">福</span>
+        <span class="mark" aria-hidden="true">福</span>
         <div>
           <div class="brand">青年福利券</div>
           <div class="who">{{ auth.account?.display_name || auth.account?.username }}</div>
         </div>
       </div>
-      <nav>
+      <nav aria-label="用户导航">
         <router-link to="/user">首页</router-link>
         <router-link to="/user/profile">资料核验</router-link>
         <router-link to="/user/coupons">我的券</router-link>
@@ -17,7 +17,7 @@
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
     </header>
-    <main class="main">
+    <main class="main" data-od-id="user-main">
       <router-view />
     </main>
   </div>
@@ -36,42 +36,108 @@ function onLogout() {
 </script>
 
 <style scoped>
-.wrap { min-height: 100vh; background: var(--bg); }
+.wrap {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
 .top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 12px 20px;
+  padding: 10px 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: var(--z-sticky);
 }
-.brand-block { display: flex; align-items: center; gap: 10px; }
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .mark {
-  width: 36px; height: 36px; border-radius: 10px;
-  display: grid; place-items: center;
-  background: var(--brand); color: #fff; font-weight: 700;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
 }
-.brand { font-weight: 700; font-size: 1rem; color: var(--ink); }
-.who { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
-nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+.brand {
+  font-weight: 650;
+  font-size: 0.95rem;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.who {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+nav {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 nav a {
   color: var(--muted);
-  padding: 6px 10px;
+  padding: 7px 11px;
   border-radius: 8px;
   font-size: 0.875rem;
   font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: background 150ms ease, color 150ms ease;
 }
-nav a:hover { background: var(--surface-2); color: var(--ink); }
+
+nav a:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
 nav a.router-link-active {
   background: var(--brand-soft);
   color: var(--brand);
-  font-weight: 650;
+  font-weight: 600;
 }
-.logout { color: var(--danger) !important; }
-.main { max-width: 920px; margin: 20px auto; padding: 0 16px 32px; }
+
+nav a:focus-visible {
+  box-shadow: var(--focus);
+  outline: none;
+}
+
+.logout {
+  color: var(--danger) !important;
+  margin-left: 4px;
+}
+
+.main {
+  max-width: 920px;
+  margin: 20px auto;
+  padding: 0 16px 32px;
+}
+
+@media (max-width: 640px) {
+  .top {
+    padding: 10px 12px;
+  }
+
+  nav a {
+    padding: 6px 8px;
+    font-size: 0.8125rem;
+  }
+}
 </style>

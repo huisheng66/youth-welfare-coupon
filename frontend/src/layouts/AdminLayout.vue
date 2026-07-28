@@ -1,8 +1,8 @@
 <template>
   <el-container class="shell">
-    <el-aside :width="collapsed ? '72px' : '228px'" class="aside">
+    <el-aside :width="collapsed ? '72px' : '228px'" class="aside" data-od-id="admin-sidebar">
       <div class="brand">
-        <span class="brand-mark">福</span>
+        <span class="brand-mark" aria-hidden="true">福</span>
         <div v-if="!collapsed" class="brand-text">
           <div class="brand-title">青年福利券</div>
           <div class="brand-sub">运营管理端</div>
@@ -15,6 +15,7 @@
         background-color="transparent"
         text-color="#c5d0d8"
         active-text-color="#ffffff"
+        class="nav-menu"
       >
         <el-menu-item index="/admin">仪表盘</el-menu-item>
         <el-menu-item index="/admin/users">
@@ -30,24 +31,36 @@
         <el-menu-item v-if="isSuper" index="/admin/audit">审计日志</el-menu-item>
         <el-menu-item index="/admin/settings">账号设置</el-menu-item>
       </el-menu>
-      <button class="collapse-btn" type="button" @click="collapsed = !collapsed">
+      <button
+        class="collapse-btn"
+        type="button"
+        :aria-expanded="!collapsed"
+        :aria-label="collapsed ? '展开侧栏' : '收起侧栏'"
+        @click="collapsed = !collapsed"
+      >
         {{ collapsed ? '展开' : '收起' }}
       </button>
     </el-aside>
-    <el-container>
-      <el-header class="header">
-        <div>
+    <el-container class="body">
+      <el-header class="header" data-od-id="admin-topbar">
+        <div class="header-left">
           <div class="header-title">{{ pageTitle }}</div>
           <div class="header-sub muted">{{ roleLabel }} · {{ auth.account?.display_name }}</div>
         </div>
         <div class="header-actions">
-          <el-button v-if="pendingCount > 0" type="warning" plain size="small" @click="$router.push('/admin/users')">
+          <el-button
+            v-if="pendingCount > 0"
+            type="warning"
+            plain
+            size="small"
+            @click="$router.push('/admin/users')"
+          >
             {{ pendingCount }} 条待审
           </el-button>
           <el-button link type="primary" @click="onLogout">退出登录</el-button>
         </div>
       </el-header>
-      <el-main class="main">
+      <el-main class="main" data-od-id="admin-main">
         <router-view />
       </el-main>
     </el-container>
@@ -102,46 +115,106 @@ watch(() => route.path, loadPending)
 </script>
 
 <style scoped>
-.shell { min-height: 100vh; background: var(--bg); }
+.shell {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
 .aside {
-  background: linear-gradient(180deg, #16333a 0%, #0f2429 100%);
+  background: #122a30;
   color: #fff;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255,255,255,0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  transition: width 180ms ease;
 }
+
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 18px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  min-height: 72px;
+  padding: 16px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 68px;
 }
+
 .brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
   background: var(--brand);
   font-weight: 700;
+  font-size: 0.95rem;
   flex-shrink: 0;
 }
-.brand-title { font-weight: 700; font-size: 0.95rem; }
-.brand-sub { font-size: 0.75rem; color: #9fb0b8; margin-top: 2px; }
-.el-menu { border-right: none; flex: 1; }
+
+.brand-title {
+  font-weight: 650;
+  font-size: 0.9375rem;
+  letter-spacing: -0.01em;
+}
+
+.brand-sub {
+  font-size: 0.75rem;
+  color: #9fb0b8;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
+.nav-menu {
+  border-right: none;
+  flex: 1;
+  padding: 8px 0;
+  overflow-y: auto;
+}
+
+.nav-menu :deep(.el-menu-item) {
+  margin: 2px 8px;
+  border-radius: 8px;
+  height: 40px;
+  line-height: 40px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.nav-menu :deep(.el-menu-item:hover) {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.nav-menu :deep(.el-menu-item.is-active) {
+  background: color-mix(in srgb, var(--brand) 55%, #0a1c20) !important;
+  font-weight: 600;
+}
+
 .collapse-btn {
   margin: 8px;
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   background: transparent;
   color: #c5d0d8;
   border-radius: 8px;
   padding: 8px;
   cursor: pointer;
   font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  transition: background 150ms ease, color 150ms ease;
 }
-.collapse-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+
+.collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.collapse-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.body {
+  min-width: 0;
+}
+
 .header {
   display: flex;
   justify-content: space-between;
@@ -149,16 +222,58 @@ watch(() => route.path, loadPending)
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   height: auto !important;
-  min-height: 64px;
-  padding: 12px 20px;
+  min-height: 60px;
+  padding: 10px 20px;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
 }
-.header-title { font-weight: 650; font-size: 1.05rem; }
-.header-sub { font-size: 0.8125rem; margin-top: 2px; }
-.header-actions { display: flex; align-items: center; gap: 8px; }
-.main { padding: 16px 20px 28px; }
-.badge { margin-left: 8px; }
+
+.header-title {
+  font-weight: 650;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.header-sub {
+  font-size: 0.8125rem;
+  margin-top: 2px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.main {
+  padding: 16px 20px 32px;
+}
+
+.badge {
+  margin-left: 8px;
+}
+
 @media (max-width: 900px) {
-  .aside { width: 72px !important; }
-  .brand-text, .collapse-btn { display: none; }
+  .aside {
+    width: 72px !important;
+  }
+
+  .brand-text,
+  .collapse-btn {
+    display: none;
+  }
+
+  .main {
+    padding: 12px 12px 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aside {
+    transition: none;
+  }
 }
 </style>

@@ -5,7 +5,7 @@
         <span class="mark">福</span>
         <div>
           <h1>青年福利券系统</h1>
-          <p class="page-desc" style="margin:0">邮箱注册需验证码；登录可用邮箱或用户名</p>
+          <p class="page-desc" style="margin:0">登录可用邮箱或用户名；注册需邮箱验证码</p>
         </div>
       </div>
 
@@ -338,35 +338,39 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   padding: 24px;
+  /* craft: 避免双色「信任渐变」；单色品牌晕染 + 平底 */
   background:
-    radial-gradient(circle at 12% 18%, rgba(15, 110, 106, 0.14), transparent 42%),
-    radial-gradient(circle at 88% 80%, rgba(29, 79, 145, 0.1), transparent 40%),
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 46%),
     var(--bg);
 }
-.panel { width: min(440px, 100%); }
+.panel {
+  width: min(440px, 100%);
+}
 .hero {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   background: var(--brand);
   color: #fff;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   flex-shrink: 0;
 }
 h1 {
   margin: 0 0 4px;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  text-wrap: balance;
 }
 .form-extra {
   display: flex;
@@ -378,11 +382,13 @@ h1 {
   gap: 8px;
   width: 100%;
 }
-.code-row .el-input { flex: 1; }
+.code-row .el-input {
+  flex: 1;
+}
 .debug-tip {
   margin: 6px 0 0;
   font-size: 0.8125rem;
-  color: var(--brand, #0f6e6a);
+  color: var(--brand);
 }
 .demo {
   margin-top: 18px;
@@ -392,6 +398,7 @@ h1 {
 .demo-title {
   font-size: 0.8125rem;
   margin-bottom: 10px;
+  letter-spacing: 0.01em;
 }
 .demo-list {
   display: flex;
