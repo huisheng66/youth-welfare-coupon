@@ -59,7 +59,7 @@
               <p v-if="regDebugCode" class="debug-tip">开发模式验证码：<strong>{{ regDebugCode }}</strong></p>
             </el-form-item>
             <el-form-item label="密码" required>
-              <el-input v-model="reg.password" type="password" show-password size="large" placeholder="至少 6 位" />
+              <el-input v-model="reg.password" type="password" show-password size="large" placeholder="至少 8 位" />
             </el-form-item>
             <el-form-item label="确认密码" required>
               <el-input v-model="reg.confirm" type="password" show-password size="large" />
@@ -96,7 +96,7 @@
               <p v-if="forgotDebugCode" class="debug-tip">开发模式验证码：<strong>{{ forgotDebugCode }}</strong></p>
             </el-form-item>
             <el-form-item label="新密码" required>
-              <el-input v-model="forgot.password" type="password" show-password size="large" placeholder="至少 6 位" />
+              <el-input v-model="forgot.password" type="password" show-password size="large" placeholder="至少 8 位" />
             </el-form-item>
             <el-form-item label="确认新密码" required>
               <el-input v-model="forgot.confirm" type="password" show-password size="large" />
@@ -269,8 +269,8 @@ async function onRegister() {
     ElMessage.warning('请填写密码')
     return
   }
-  if (reg.password.length < 6) {
-    ElMessage.warning('密码至少 6 位')
+  if (reg.password.length < 8) {
+    ElMessage.warning('密码至少 8 位')
     return
   }
   if (reg.password !== reg.confirm) {
@@ -302,8 +302,8 @@ async function onReset() {
     ElMessage.warning('请填写验证码')
     return
   }
-  if (!forgot.password || forgot.password.length < 6) {
-    ElMessage.warning('新密码至少 6 位')
+  if (!forgot.password || forgot.password.length < 8) {
+    ElMessage.warning('新密码至少 8 位')
     return
   }
   if (forgot.password !== forgot.confirm) {

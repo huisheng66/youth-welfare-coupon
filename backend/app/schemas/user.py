@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.models.entities import VerifyStatus
 from app.schemas.common import ORMModel
+from app.services.sanitize import sanitize_note, sanitize_plain_text
 
 
 class ProfileUpdateIn(BaseModel):
@@ -13,6 +14,34 @@ class ProfileUpdateIn(BaseModel):
     student_no: str = Field(default="", max_length=64, description="学号")
     organization: str = Field(default="", max_length=128)
     remark: str = ""
+
+    @field_validator("real_name")
+    @classmethod
+    def clean_real_name(cls, v: str) -> str:
+        return sanitize_plain_text(v, max_length=64)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return sanitize_plain_text(v, max_length=64)
+
+    @field_validator("student_no")
+    @classmethod
+    def clean_student_no(cls, v: str) -> str:
+        # 学号：去控制符与尖括号
+        return sanitize_plain_text(v, max_length=64)
+
+    @field_validator("organization")
+    @classmethod
+    def clean_organization(cls, v: str) -> str:
+        return sanitize_plain_text(v, max_length=128)
+
+    @field_validator("remark")
+    @classmethod
+    def clean_remark(cls, v: str) -> str:
+        return sanitize_note(v, max_length=2000)
 
 
 class BankCardIn(BaseModel):
@@ -29,16 +58,29 @@ class BankCardIn(BaseModel):
     @field_validator("bank_name")
     @classmethod
     def strip_bank(cls, v: str) -> str:
-        return (v or "").strip()
+        return sanitize_plain_text(v or "", max_length=64)
 
 
 class SubmitVerificationIn(BaseModel):
     material_note: str = Field(min_length=1, max_length=2000)
 
+    @field_validator("material_note")
+    @classmethod
+    def clean_material(cls, v: str) -> str:
+        cleaned = sanitize_note(v, max_length=2000)
+        if not cleaned.strip():
+            raise ValueError("材料说明不能为空")
+        return cleaned
+
 
 class ReviewVerificationIn(BaseModel):
     approve: bool
     review_note: str = ""
+
+    @field_validator("review_note")
+    @classmethod
+    def clean_note(cls, v: str) -> str:
+        return sanitize_note(v, max_length=2000)
 
 
 class VerificationOut(ORMModel):
@@ -90,3 +132,8 @@ class BatchReviewIn(BaseModel):
     verification_ids: list[str] = Field(min_length=1, max_length=100)
     approve: bool
     review_note: str = ""
+
+    @field_validator("review_note")
+    @classmethod
+    def clean_note(cls, v: str) -> str:
+        return sanitize_note(v, max_length=2000)

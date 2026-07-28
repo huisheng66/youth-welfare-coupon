@@ -51,10 +51,18 @@ pip install -U pip
 pip install -r requirements.txt
 
 SECRET="$(openssl rand -hex 32)"
+FIELD_KEY="$(openssl rand -hex 32)"
 cat > "${APP_ROOT}/backend/.env" <<EOF
+APP_ENV=production
 SECRET_KEY=${SECRET}
+FIELD_ENCRYPTION_KEY=${FIELD_KEY}
 DATABASE_URL=mysql+pymysql://${DB_USER}:${DB_PASS}@127.0.0.1:3306/${DB_NAME}?charset=utf8mb4
-CORS_ORIGINS=http://${DOMAIN},https://${DOMAIN},http://127.0.0.1,https://127.0.0.1
+CORS_ORIGINS=http://${DOMAIN},https://${DOMAIN}
+CORS_ALLOW_LAN=false
+OPENAPI_ENABLED=false
+SEED_DEMO_ACCOUNTS=false
+RATE_LIMIT_BACKEND=file
+RATE_LIMIT_FILE_PATH=./data/rate_limit.db
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 LIVE_CODE_EXPIRE_SECONDS=30
 MAIL_CONSOLE=true
@@ -122,7 +130,9 @@ echo " 站点: http://服务器IP/  （或域名 ${DOMAIN}）"
 echo " API 健康: http://127.0.0.1:19001/api/health"
 echo " MySQL: 库=${DB_NAME} 用户=${DB_USER}"
 echo " 密码已写入 ${APP_ROOT}/backend/.env （请妥善保管）"
-echo " 演示账号见 README（admin / admin123 等）"
-echo " 生产请改 SECRET_KEY、SMTP，并关闭演示弱密码"
+echo " 生产默认 SEED_DEMO_ACCOUNTS=false（无 admin/admin123）"
+echo " 请自行创建超管或临时 SEED_DEMO_ACCOUNTS=true 后立刻改密并关闭"
+echo " 已生成 SECRET_KEY 与 FIELD_ENCRYPTION_KEY，请备份 .env"
+echo " 生产请配置 SMTP；OpenAPI 已关闭；CORS 无局域网正则"
 echo " HTTPS: sudo certbot --nginx -d 你的域名"
 echo "=============================================="

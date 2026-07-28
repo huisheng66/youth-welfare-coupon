@@ -173,6 +173,14 @@ def patch_existing_demo(db: Session) -> None:
 
 
 def seed_if_empty(db: Session) -> None:
+    """Seed demo accounts only when SEED_DEMO_ACCOUNTS / non-production allows it."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if not settings.effective_seed_demo_accounts:
+        # Production / explicit off: never create weak demo passwords
+        return
+
     if db.query(Account).filter(Account.username == "admin").first():
         patch_existing_demo(db)
         return

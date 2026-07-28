@@ -84,7 +84,7 @@
 
     <el-dialog v-model="resetVisible" title="重置密码" width="400px" @closed="resetPwd = ''">
       <p class="muted" style="margin-top:0">账号：{{ resetTarget?.username }}</p>
-      <el-input v-model="resetPwd" type="password" show-password placeholder="新密码（至少 6 位）" />
+      <el-input v-model="resetPwd" type="password" show-password placeholder="新密码（至少 8 位）" />
       <template #footer>
         <el-button @click="resetVisible = false">取消</el-button>
         <el-button type="primary" :loading="resetting" @click="confirmReset">确认重置</el-button>
@@ -157,8 +157,8 @@ function openReset(row) {
 }
 
 async function confirmReset() {
-  if (!resetPwd.value || resetPwd.value.length < 6) {
-    ElMessage.warning('新密码至少 6 位')
+  if (!resetPwd.value || resetPwd.value.length < 8) {
+    ElMessage.warning('新密码至少 8 位')
     return
   }
   resetting.value = true

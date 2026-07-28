@@ -1,6 +1,4 @@
 import re
-import time
-from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
@@ -30,13 +28,10 @@ from app.schemas.auth import (
 from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
 from app.services.mail import consume_email_code, issue_email_code, send_test_email
+from app.services.rate_limit import get_login_limiter
+from app.services.sanitize import sanitize_plain_text
 
 router = APIRouter(prefix="/auth", tags=["认证"])
-
-# 简易登录限流：同一 IP+用户名 5 分钟内最多 8 次失败
-_LOGIN_FAILS: dict[str, list[float]] = defaultdict(list)
-_LOGIN_WINDOW_SEC = 300
-_LOGIN_MAX_FAILS = 8
 
 
 def _client_ip(request: Request) -> str:
@@ -52,22 +47,22 @@ def _login_key(ip: str, username: str) -> str:
 
 def _check_login_rate(ip: str, username: str) -> None:
     key = _login_key(ip, username)
-    now = time.time()
-    recent = [t for t in _LOGIN_FAILS[key] if now - t < _LOGIN_WINDOW_SEC]
-    _LOGIN_FAILS[key] = recent
-    if len(recent) >= _LOGIN_MAX_FAILS:
+    limiter = get_login_limiter()
+    allowed, retry_after = limiter.check(key)
+    if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="登录尝试过于频繁，请 5 分钟后再试",
+            headers={"Retry-After": str(retry_after)},
         )
 
 
 def _record_login_fail(ip: str, username: str) -> None:
-    _LOGIN_FAILS[_login_key(ip, username)].append(time.time())
+    get_login_limiter().hit(_login_key(ip, username))
 
 
 def _clear_login_fail(ip: str, username: str) -> None:
-    _LOGIN_FAILS.pop(_login_key(ip, username), None)
+    get_login_limiter().clear(_login_key(ip, username))
 
 
 def account_to_out(account: Account) -> AccountOut:
@@ -301,12 +296,13 @@ def register(body: RegisterIn, db: Session = Depends(get_db)) -> AccountOut:
         username = body.username.strip()
     else:
         username = _unique_username_from_email(db, email)
+    display = sanitize_plain_text(body.display_name or username, max_length=64) or username
     account = Account(
         username=username,
         email=email,
         password_hash=hash_password(body.password),
         role=Role.user,
-        display_name=body.display_name or username,
+        display_name=display,
         phone=body.phone,
     )
     db.add(account)
@@ -399,8 +395,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="原密码不正确")
     if body.old_password == body.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
-    if len(body.new_password) < 6:
-        raise HTTPException(status_code=400, detail="新密码至少 6 位")
+    # 长度/策略由 ChangePasswordIn 校验（最少 8 位）
     account.password_hash = hash_password(body.new_password)
     write_audit(
         db,

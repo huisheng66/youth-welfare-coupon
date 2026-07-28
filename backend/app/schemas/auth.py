@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models.entities import EmailCodePurpose, Role, VerifyStatus
 from app.schemas.common import ORMModel
+from app.services.sanitize import sanitize_plain_text, validate_password_strength
 
 
 class LoginIn(BaseModel):
@@ -13,7 +14,7 @@ class LoginIn(BaseModel):
 
 class RegisterIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6, max_length=64)
+    password: str = Field(min_length=8, max_length=64)
     code: str = Field(min_length=4, max_length=16, description="邮箱验证码")
     display_name: str = Field(default="", max_length=64)
     phone: str | None = Field(default=None, max_length=20)
@@ -29,6 +30,24 @@ class RegisterIn(BaseModel):
     @classmethod
     def strip_code(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, v: str) -> str:
+        return sanitize_plain_text(v, max_length=64)
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = sanitize_plain_text(v, max_length=64)
+        return s or None
 
 
 class SendEmailCodeIn(BaseModel):
@@ -60,7 +79,7 @@ class ForgotPasswordIn(BaseModel):
 class ResetPasswordByEmailIn(BaseModel):
     email: EmailStr
     code: str = Field(min_length=4, max_length=16)
-    new_password: str = Field(min_length=6, max_length=64)
+    new_password: str = Field(min_length=8, max_length=64)
 
     @field_validator("email")
     @classmethod
@@ -71,6 +90,11 @@ class ResetPasswordByEmailIn(BaseModel):
     @classmethod
     def strip_code(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
 
 
 class TestSmtpIn(BaseModel):
@@ -109,26 +133,56 @@ class AccountOut(ORMModel):
 
 class CreateMerchantAccountIn(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=6, max_length=64)
+    password: str = Field(min_length=8, max_length=64)
     display_name: str = ""
     merchant_id: str
     email: EmailStr | None = None
 
+    @field_validator("password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, v: str) -> str:
+        return sanitize_plain_text(v, max_length=64)
+
 
 class CreateIssueAdminIn(BaseModel):
     username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=6, max_length=64)
+    password: str = Field(min_length=8, max_length=64)
     display_name: str = ""
     email: EmailStr | None = None
+
+    @field_validator("password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, v: str) -> str:
+        return sanitize_plain_text(v, max_length=64)
 
 
 class ChangePasswordIn(BaseModel):
     old_password: str = Field(min_length=1, max_length=64)
-    new_password: str = Field(min_length=6, max_length=64)
+    new_password: str = Field(min_length=8, max_length=64)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
 
 
 class ResetPasswordIn(BaseModel):
-    new_password: str = Field(min_length=6, max_length=64)
+    new_password: str = Field(min_length=8, max_length=64)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
 
 
 class SetActiveIn(BaseModel):

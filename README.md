@@ -7,7 +7,8 @@
   - 生产推荐 **MySQL 8**（`mysql+pymysql://...`）  
 - 前端：Vue 3 + Vite + Element Plus  
 - **不含**微信小程序  
-- 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
+- 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**（可用独立 `FIELD_ENCRYPTION_KEY`）；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
+- 安全硬化：生产关 OpenAPI / 演示 seed、CORS 白名单、登录限流、输入净化、安全响应头 → 见 [`优化.md`](优化.md)
 
 **Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
 
@@ -52,7 +53,7 @@ DATABASE_URL=mysql+pymysql://welfare:密码@127.0.0.1:3306/welfare?charset=utf8m
 - API 文档：http://127.0.0.1:19001/docs  
 - 健康检查：http://127.0.0.1:19001/api/health  
 
-首次启动会自动建表并写入演示数据。
+首次启动会自动建表；开发环境默认写入演示数据（`SEED_DEMO_ACCOUNTS`）。生产请设 `APP_ENV=production` 并关闭演示 seed。
 
 ### 2. 前端
 

@@ -87,7 +87,7 @@ const rules = {
   old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '至少 6 位', trigger: 'blur' },
+    { min: 8, message: '至少 8 位', trigger: 'blur' },
   ],
   confirm: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },

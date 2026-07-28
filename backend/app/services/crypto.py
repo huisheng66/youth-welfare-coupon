@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import re
+import warnings
 from functools import lru_cache
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _digits_only(value: str) -> str:
@@ -53,27 +57,60 @@ def mask_bank_card(digits: str) -> str:
     return f"{d[:4]}{mid}{d[-4:]}"
 
 
-@lru_cache
-def _fernet() -> Fernet:
-    # Derive 32-byte key from app secret (stable across restarts for same SECRET_KEY)
-    raw = hashlib.sha256(get_settings().secret_key.encode("utf-8")).digest()
+def _fernet_from_material(material: str) -> Fernet:
+    raw = hashlib.sha256(material.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(raw))
+
+
+@lru_cache
+def _multi_fernet() -> MultiFernet:
+    """
+    Primary key = FIELD_ENCRYPTION_KEY if set, else SECRET_KEY (deprecated fallback).
+    Previous key (if set) can still decrypt old ciphertext.
+    """
+    settings = get_settings()
+    materials: list[str] = []
+    primary = (settings.field_encryption_key or "").strip()
+    if primary:
+        materials.append(primary)
+    else:
+        warnings.warn(
+            "FIELD_ENCRYPTION_KEY 未设置，银行卡加密回退使用 SECRET_KEY。"
+            "生产环境请配置独立 FIELD_ENCRYPTION_KEY。",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(
+            "FIELD_ENCRYPTION_KEY not set; field encryption falls back to SECRET_KEY"
+        )
+        materials.append(settings.secret_key)
+    prev = (settings.field_encryption_key_previous or "").strip()
+    if prev and prev not in materials:
+        materials.append(prev)
+    # Also try SECRET_KEY as last resort when dedicated key is set
+    # (migration path from old installs)
+    sk = settings.secret_key
+    if primary and sk and sk not in materials:
+        materials.append(sk)
+    fernets = [_fernet_from_material(m) for m in materials]
+    return MultiFernet(fernets)
 
 
 def encrypt_text(plain: str) -> str:
     if not plain:
         raise ValueError("empty plaintext")
-    return _fernet().encrypt(plain.encode("utf-8")).decode("ascii")
+    # MultiFernet.encrypt uses the first (primary) key
+    return _multi_fernet().encrypt(plain.encode("utf-8")).decode("ascii")
 
 
 def decrypt_text(token: str) -> str:
     if not token:
         raise ValueError("empty ciphertext")
     try:
-        return _fernet().decrypt(token.encode("ascii")).decode("utf-8")
+        return _multi_fernet().decrypt(token.encode("ascii")).decode("utf-8")
     except InvalidToken as exc:
         raise ValueError("密文无效或密钥已变更，无法解密") from exc
 
 
 def clear_crypto_cache() -> None:
-    _fernet.cache_clear()
+    _multi_fernet.cache_clear()

@@ -11,3 +11,7 @@ fastapi-mail==1.4.2
 # MySQL（Ubuntu 生产）
 PyMySQL==1.1.1
 cryptography==44.0.0
+# 测试 / TestClient
+httpx==0.28.1
+# 可选：生产登录限流 Redis 后端
+# redis>=5.0.0
