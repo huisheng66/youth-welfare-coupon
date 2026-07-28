@@ -135,5 +135,7 @@ Windows PowerShell 示例见 `scripts/zap-baseline.ps1`。
 | `优化.md` | 总计划与 DoD |
 | `deploy/README.md` | 生产部署安全清单 |
 | `scripts/dep_audit.ps1` / `.sh` | 依赖扫描 |
+| `scripts/external_scan.ps1` | Nuclei + 业务自检一键扫 |
 | `scripts/zap-baseline.ps1` / `.sh` | ZAP 基线封装 |
+| `docs/security-tools.md` | GitHub 安全测试项目推荐清单 |
 | `docs/ci/security.yml` | CI 工作流模板（复制到 `.github/workflows/` 启用） |

@@ -9,7 +9,7 @@
 - **不含**微信小程序  
 - 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**（可用独立 `FIELD_ENCRYPTION_KEY`）；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
 - 安全硬化：生产关 OpenAPI / 演示 seed、CORS 白名单、登录限流、输入净化、安全响应头 → 见 [`优化.md`](优化.md)  
-- 安全运维（依赖扫描 / ZAP / Token 说明）→ [`docs/security-ops.md`](docs/security-ops.md)；CI 模板：[`docs/ci/security.yml`](docs/ci/security.yml)
+- 安全运维（依赖扫描 / ZAP / Token 说明）→ [`docs/security-ops.md`](docs/security-ops.md)；外部扫描工具清单 → [`docs/security-tools.md`](docs/security-tools.md)；CI 模板：[`docs/ci/security.yml`](docs/ci/security.yml)
 
 **Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
 

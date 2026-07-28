@@ -25,21 +25,26 @@ LAN_ORIGIN_REGEX = (
 )
 
 
+def apply_security_headers(response: Response) -> Response:
+    """Attach baseline security headers (also used on early 429 paths)."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-XSS-Protection", "0")
+    return response
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("X-XSS-Protection", "0")
-        return response
+        return apply_security_headers(response)
 
 
 class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
     """Light per-IP request ceiling to blunt naive scanning (optional)."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Skip health for probes
+        # Skip health for probes / scanners
         if request.url.path in {"/api/health", "/health"}:
             return await call_next(request)
         limiter = get_ip_limiter()
@@ -48,11 +53,14 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
         ip = _client_ip(request)
         allowed, retry = limiter.check(ip)
         if not allowed:
-            return Response(
-                content='{"detail":"请求过于频繁，请稍后再试"}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": str(retry)},
+            # Early return must still carry security headers (outer middleware may not run)
+            return apply_security_headers(
+                Response(
+                    content='{"detail":"请求过于频繁，请稍后再试"}',
+                    status_code=429,
+                    media_type="application/json",
+                    headers={"Retry-After": str(retry)},
+                )
             )
         limiter.hit(ip)
         return await call_next(request)
