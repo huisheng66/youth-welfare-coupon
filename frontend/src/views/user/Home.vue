@@ -17,7 +17,7 @@
           </div>
           <div class="stat-item">
             <div class="label">可用时长</div>
-            <div class="value">{{ balance ?? 0 }}<span class="unit">h</span></div>
+            <div class="value">{{ formatHours(balance ?? 0) }}<span class="unit">h</span></div>
           </div>
           <div class="stat-item">
             <div class="label">核验状态</div>
@@ -81,7 +81,7 @@ import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
 import { useAuth } from '../../auth'
 import StatusTag from '../../components/StatusTag.vue'
-import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
+import { formatHours, formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
 
 const auth = useAuth()
 const profile = ref(null)

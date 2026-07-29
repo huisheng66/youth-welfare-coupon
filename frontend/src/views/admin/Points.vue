@@ -28,8 +28,14 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时长(小时)">
-          <el-input-number v-model="form.amount" :min="-1000" :max="1000" />
-          <span class="muted" style="margin-left:8px">正数入账，负数扣减</span>
+          <el-input-number
+            v-model="form.amount"
+            :min="-1000"
+            :max="1000"
+            :step="0.01"
+            :precision="2"
+          />
+          <span class="muted" style="margin-left:8px">支持两位小数；正数入账，负数扣减</span>
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.reason" placeholder="如：社区志愿服务 2026-07-26" />
@@ -62,14 +68,16 @@
         <el-table-column label="用户" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ usernameOf(row.user_id) }}</template>
         </el-table-column>
-        <el-table-column prop="change" label="变动" width="100">
+        <el-table-column prop="change" label="变动" width="110">
           <template #default="{ row }">
             <span :style="{ color: row.change >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
-              {{ row.change >= 0 ? '+' : '' }}{{ row.change }}
+              {{ row.change >= 0 ? '+' : '' }}{{ formatHours(row.change) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="balance_after" label="余额" width="90" />
+        <el-table-column label="余额" width="100">
+          <template #default="{ row }">{{ formatHours(row.balance_after) }}</template>
+        </el-table-column>
         <el-table-column prop="reason" label="说明" min-width="160" show-overflow-tooltip />
         <el-table-column prop="ref_type" label="类型" width="100" />
         <el-table-column label="时间" width="160">
@@ -94,7 +102,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { downloadFile } from '../../api'
-import { formatTime } from '../../utils/format'
+import { formatHours, formatTime } from '../../utils/format'
 
 const users = ref([])
 const loading = ref(false)
@@ -124,7 +132,7 @@ async function loadUsers() {
 async function queryBalance() {
   if (form.user_ids.length !== 1) return
   const res = await api.get(`/points/users/${form.user_ids[0]}`)
-  balanceText.value = `当前余额：${res.data.balance} 小时`
+  balanceText.value = `当前余额：${formatHours(res.data.balance)} 小时`
 }
 
 async function grant() {
@@ -140,7 +148,8 @@ async function grant() {
     ElMessage.warning('请填写说明')
     return
   }
-  const sign = form.amount > 0 ? `+${form.amount}` : String(form.amount)
+  const amt = Math.round(Number(form.amount) * 100) / 100
+  const sign = amt > 0 ? `+${formatHours(amt)}` : formatHours(amt)
   try {
     await ElMessageBox.confirm(
       `对 ${form.user_ids.length} 人调整 ${sign} 小时，确认？`,
@@ -155,15 +164,15 @@ async function grant() {
     if (form.user_ids.length === 1) {
       const res = await api.post('/points/grant', {
         user_id: form.user_ids[0],
-        amount: form.amount,
+        amount: amt,
         reason: form.reason,
       })
-      balanceText.value = `调整成功，当前余额：${res.data.balance} 小时`
+      balanceText.value = `调整成功，当前余额：${formatHours(res.data.balance)} 小时`
       ElMessage.success('已调整')
     } else {
       const res = await api.post('/points/grant-batch', {
         user_ids: form.user_ids,
-        amount: form.amount,
+        amount: amt,
         reason: form.reason,
       })
       balanceText.value = res.data.message

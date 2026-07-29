@@ -19,9 +19,9 @@
       <el-table-column prop="name" label="名称" min-width="120" />
       <el-table-column prop="merchant_name" label="指定商家" min-width="120" />
       <el-table-column prop="valid_days" label="有效天数" width="100" />
-      <el-table-column label="兑换时长" width="110">
+      <el-table-column label="兑换时长" width="120">
         <template #default="{ row }">
-          <span v-if="row.cost_points > 0">{{ row.cost_points }} 小时</span>
+          <span v-if="Number(row.cost_points) > 0">{{ formatHours(row.cost_points) }} 小时</span>
           <span v-else class="muted">不可兑换</span>
         </template>
       </el-table-column>
@@ -49,8 +49,14 @@
         </el-form-item>
         <el-form-item label="有效天数"><el-input-number v-model="form.valid_days" :min="1" :max="3650" /></el-form-item>
         <el-form-item label="兑换时长">
-          <el-input-number v-model="form.cost_points" :min="0" :max="100000" />
-          <span class="muted" style="margin-left:8px">0 表示不可兑换</span>
+          <el-input-number
+            v-model="form.cost_points"
+            :min="0"
+            :max="100000"
+            :step="0.01"
+            :precision="2"
+          />
+          <span class="muted" style="margin-left:8px">小时，支持两位小数；0 表示不可兑换</span>
         </el-form-item>
         <el-form-item label="说明"><el-input v-model="form.description" type="textarea" /></el-form-item>
       </el-form>
@@ -67,6 +73,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
+import { formatHours } from '../../utils/format'
 
 const items = ref([])
 const merchants = ref([])

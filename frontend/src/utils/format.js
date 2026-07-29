@@ -41,3 +41,11 @@ export function roleLabel(role) {
     user: '青年用户',
   }[role] || role
 }
+
+/** 志愿服务时长（小时），最多两位小数，去掉无意义尾零 */
+export function formatHours(v) {
+  if (v === null || v === undefined || v === '') return '-'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return String(v)
+  return String(Math.round(n * 100) / 100)
+}

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -27,7 +28,7 @@ from app.schemas.points import (
     PointLedgerOut,
 )
 from app.services.audit import write_audit
-from app.services.points import apply_points, get_or_create_account
+from app.services.points import apply_points, get_or_create_account, quantize_hours
 import secrets
 import string
 
@@ -119,7 +120,7 @@ def _grant_one(
     db: Session,
     *,
     user_id: str,
-    amount: int,
+    amount: Decimal,
     reason: str,
     admin: Account,
 ) -> PointAccountOut:
@@ -129,6 +130,7 @@ def _grant_one(
     profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).first()
     if not profile or profile.verify_status != VerifyStatus.approved:
         raise ValueError("仅可为已核验用户调整时长")
+    amount = quantize_hours(amount)
     ref_type = "grant" if amount > 0 else "adjust"
     try:
         acc = apply_points(
@@ -216,7 +218,7 @@ def exchange_catalog(
                 "merchant_id": t.merchant_id,
                 "merchant_name": merchant.name if merchant else None,
                 "valid_days": t.valid_days,
-                "cost_points": t.cost_points,
+                "cost_points": quantize_hours(t.cost_points),
                 "is_active": t.is_active,
                 "created_at": t.created_at,
             }
@@ -234,7 +236,8 @@ def exchange(
     if not profile or profile.verify_status != VerifyStatus.approved:
         raise HTTPException(status_code=400, detail="请先完成身份核验")
     template = db.get(CouponTemplate, body.template_id)
-    if not template or not template.is_active or template.cost_points <= 0:
+    cost = quantize_hours(getattr(template, "cost_points", 0) if template else 0)
+    if not template or not template.is_active or cost <= 0:
         raise HTTPException(status_code=400, detail="该券不可兑换")
     merchant = db.get(Merchant, template.merchant_id)
     if not merchant or not merchant.is_active:
@@ -244,7 +247,7 @@ def exchange(
         acc = apply_points(
             db,
             user_id=account.id,
-            change=-template.cost_points,
+            change=-cost,
             reason=f"兑换优惠券：{template.name}",
             operator_id=account.id,
             ref_type="exchange",
@@ -274,7 +277,7 @@ def exchange(
         action="exchange_coupon",
         target_type="template",
         target_id=template.id,
-        detail=f"cost={template.cost_points}",
+        detail=f"cost={cost}",
     )
     db.commit()
     db.refresh(coupon)

@@ -2,7 +2,9 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -126,7 +128,8 @@ class CouponTemplate(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     merchant_id: Mapped[str] = mapped_column(String(36), ForeignKey("merchants.id"), index=True)
     valid_days: Mapped[int] = mapped_column(Integer, default=30)
-    cost_points: Mapped[int] = mapped_column(Integer, default=0)  # 0=不可用时长兑换
+    # 兑换所需志愿服务时长（小时，两位小数）；0=不可兑换
+    cost_points: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -189,7 +192,7 @@ class PointAccount(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), unique=True)
-    balance: Mapped[int] = mapped_column(Integer, default=0)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -200,8 +203,8 @@ class PointLedger(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
-    change: Mapped[int] = mapped_column(Integer)
-    balance_after: Mapped[int] = mapped_column(Integer, default=0)
+    change: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    balance_after: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     reason: Mapped[str] = mapped_column(String(255), default="")
     operator_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id"), nullable=True)
     ref_type: Mapped[str] = mapped_column(String(32), default="")

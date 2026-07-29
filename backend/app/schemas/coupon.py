@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from app.models.entities import CouponStatus
 from app.schemas.common import ORMModel
+from app.services.points import quantize_hours
 
 
 class TemplateCreate(BaseModel):
@@ -11,15 +13,27 @@ class TemplateCreate(BaseModel):
     description: str = ""
     merchant_id: str
     valid_days: int = Field(default=30, ge=1, le=3650)
-    cost_points: int = Field(default=0, ge=0, le=100000)
+    cost_points: Decimal = Field(default=Decimal("0"), ge=0, le=100000, max_digits=12, decimal_places=2)
+
+    @field_validator("cost_points", mode="before")
+    @classmethod
+    def _cost(cls, v):
+        return quantize_hours(v) if v is not None else Decimal("0.00")
 
 
 class TemplateUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     valid_days: int | None = Field(default=None, ge=1, le=3650)
-    cost_points: int | None = Field(default=None, ge=0, le=100000)
+    cost_points: Decimal | None = Field(default=None, ge=0, le=100000, max_digits=12, decimal_places=2)
     is_active: bool | None = None
+
+    @field_validator("cost_points", mode="before")
+    @classmethod
+    def _cost(cls, v):
+        if v is None:
+            return None
+        return quantize_hours(v)
 
 
 class TemplateOut(ORMModel):
@@ -29,9 +43,18 @@ class TemplateOut(ORMModel):
     merchant_id: str
     merchant_name: str | None = None
     valid_days: int
-    cost_points: int = 0
+    cost_points: Decimal = Decimal("0.00")
     is_active: bool
     created_at: datetime
+
+    @field_validator("cost_points", mode="before")
+    @classmethod
+    def _cost(cls, v):
+        return quantize_hours(v) if v is not None else Decimal("0.00")
+
+    @field_serializer("cost_points")
+    def _ser_cost(self, v: Decimal) -> float:
+        return float(quantize_hours(v) if v is not None else Decimal("0.00"))
 
 
 class LiveCodeOut(BaseModel):
