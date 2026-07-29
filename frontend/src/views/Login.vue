@@ -2,14 +2,50 @@
   <div class="login-page">
     <div class="panel page-card">
       <div class="hero">
-        <span class="mark">福</span>
         <div>
-          <h1>青年福利券系统</h1>
-          <p class="page-desc" style="margin:0">登录可用邮箱或用户名；注册需邮箱验证码</p>
+          <h1>youth</h1>
+          <p class="page-desc" style="margin:0">
+            {{ view === 'forgot' ? '通过注册邮箱验证码重置密码' : '登录可用邮箱或用户名；注册需邮箱验证码' }}
+          </p>
         </div>
       </div>
 
-      <el-tabs v-model="tab">
+      <!-- 找回密码：由登录页「忘记密码」进入，不单独占 Tab -->
+      <template v-if="view === 'forgot'">
+        <el-form label-position="top" @submit.prevent="onReset">
+          <el-form-item label="注册邮箱" required>
+            <el-input v-model="forgot.email" type="email" size="large" placeholder="已绑定的邮箱" />
+          </el-form-item>
+          <el-form-item label="验证码" required>
+            <div class="code-row">
+              <el-input v-model="forgot.code" size="large" maxlength="8" placeholder="6 位验证码" />
+              <el-button
+                size="large"
+                :disabled="forgotCooldown > 0 || codeSending"
+                :loading="codeSending"
+                @click="sendForgotCode"
+              >
+                {{ forgotCooldown > 0 ? `${forgotCooldown}s` : '获取验证码' }}
+              </el-button>
+            </div>
+            <p v-if="forgotDebugCode" class="debug-tip">开发模式验证码：<strong>{{ forgotDebugCode }}</strong></p>
+          </el-form-item>
+          <el-form-item label="新密码" required>
+            <el-input v-model="forgot.password" type="password" show-password size="large" placeholder="至少 8 位" />
+          </el-form-item>
+          <el-form-item label="确认新密码" required>
+            <el-input v-model="forgot.confirm" type="password" show-password size="large" />
+          </el-form-item>
+          <el-button type="primary" size="large" style="width:100%" :loading="loading" native-type="submit">
+            重置密码
+          </el-button>
+          <div class="form-extra back-row">
+            <el-button link type="primary" @click="view = 'auth'">返回登录</el-button>
+          </div>
+        </el-form>
+      </template>
+
+      <el-tabs v-else v-model="tab">
         <el-tab-pane label="登录" name="login">
           <el-form label-position="top" @submit.prevent="onLogin">
             <el-form-item label="邮箱 / 用户名">
@@ -31,7 +67,7 @@
               />
             </el-form-item>
             <div class="form-extra">
-              <el-button link type="primary" @click="tab = 'forgot'">忘记密码？</el-button>
+              <el-button link type="primary" @click="openForgot">忘记密码？</el-button>
             </div>
             <el-button type="primary" size="large" style="width:100%" :loading="loading" native-type="submit">
               登录
@@ -75,54 +111,7 @@
             </el-button>
           </el-form>
         </el-tab-pane>
-
-        <el-tab-pane label="找回密码" name="forgot">
-          <el-form label-position="top" @submit.prevent="onReset">
-            <el-form-item label="注册邮箱" required>
-              <el-input v-model="forgot.email" type="email" size="large" placeholder="已绑定的邮箱" />
-            </el-form-item>
-            <el-form-item label="验证码" required>
-              <div class="code-row">
-                <el-input v-model="forgot.code" size="large" maxlength="8" placeholder="6 位验证码" />
-                <el-button
-                  size="large"
-                  :disabled="forgotCooldown > 0 || codeSending"
-                  :loading="codeSending"
-                  @click="sendForgotCode"
-                >
-                  {{ forgotCooldown > 0 ? `${forgotCooldown}s` : '获取验证码' }}
-                </el-button>
-              </div>
-              <p v-if="forgotDebugCode" class="debug-tip">开发模式验证码：<strong>{{ forgotDebugCode }}</strong></p>
-            </el-form-item>
-            <el-form-item label="新密码" required>
-              <el-input v-model="forgot.password" type="password" show-password size="large" placeholder="至少 8 位" />
-            </el-form-item>
-            <el-form-item label="确认新密码" required>
-              <el-input v-model="forgot.confirm" type="password" show-password size="large" />
-            </el-form-item>
-            <el-button type="primary" size="large" style="width:100%" :loading="loading" native-type="submit">
-              重置密码
-            </el-button>
-            <el-button link type="primary" style="margin-top:8px" @click="tab = 'login'">返回登录</el-button>
-          </el-form>
-        </el-tab-pane>
       </el-tabs>
-
-      <div class="demo">
-        <div class="demo-title muted">演示账号（点击填入，可用用户名或邮箱登录）</div>
-        <div class="demo-list">
-          <button
-            v-for="item in demos"
-            :key="item.username"
-            type="button"
-            class="role-chip"
-            @click="fillDemo(item)"
-          >
-            {{ item.label }}
-          </button>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -131,11 +120,13 @@
 import { onUnmounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import api from '../api'
+import api, { AUTH_SLOW_TIMEOUT } from '../api'
 import { homePathByRole, login, register } from '../auth'
 
 const router = useRouter()
 const route = useRoute()
+/** auth = 登录/注册 Tab；forgot = 从「忘记密码」进入 */
+const view = ref('auth')
 const tab = ref('login')
 const loading = ref(false)
 const codeSending = ref(false)
@@ -149,17 +140,13 @@ const forgotCooldown = ref(0)
 let regTimer = null
 let forgotTimer = null
 
-const demos = [
-  { label: '超管', username: 'admin', email: 'admin@demo.local', password: 'admin123' },
-  { label: '发券', username: 'issuer', email: 'issuer@demo.local', password: 'issuer123' },
-  { label: '商家', username: 'merchant1', email: 'merchant1@demo.local', password: 'merchant123' },
-  { label: '用户', username: 'youth1', email: 'youth1@demo.local', password: 'youth123' },
-]
-
-function fillDemo(item) {
-  tab.value = 'login'
-  form.username = item.email || item.username
-  form.password = item.password
+function openForgot() {
+  // 若登录框里填的是邮箱，带到重置表单
+  const u = form.username.trim()
+  if (u && validEmail(u)) {
+    forgot.email = u
+  }
+  view.value = 'forgot'
 }
 
 function validEmail(email) {
@@ -238,6 +225,7 @@ async function goAfter(account) {
 }
 
 async function onLogin() {
+  if (loading.value) return
   if (!form.username || !form.password) {
     ElMessage.warning('请输入邮箱/用户名和密码')
     return
@@ -253,6 +241,7 @@ async function onLogin() {
 }
 
 async function onRegister() {
+  if (loading.value) return
   if (!reg.email.trim()) {
     ElMessage.warning('请填写邮箱')
     return
@@ -294,6 +283,7 @@ async function onRegister() {
 }
 
 async function onReset() {
+  if (loading.value) return
   if (!forgot.email.trim() || !validEmail(forgot.email.trim())) {
     ElMessage.warning('请填写正确邮箱')
     return
@@ -312,15 +302,20 @@ async function onReset() {
   }
   loading.value = true
   try {
-    await api.post('/auth/reset-password-by-email', {
-      email: forgot.email.trim(),
-      code: forgot.code.trim(),
-      new_password: forgot.password,
-    })
+    await api.post(
+      '/auth/reset-password-by-email',
+      {
+        email: forgot.email.trim(),
+        code: forgot.code.trim(),
+        new_password: forgot.password,
+      },
+      { timeout: AUTH_SLOW_TIMEOUT },
+    )
     ElMessage.success('密码已重置，请登录')
     form.username = forgot.email.trim()
     form.password = ''
     tab.value = 'login'
+    view.value = 'auth'
   } finally {
     loading.value = false
   }
@@ -338,7 +333,6 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   padding: 24px;
-  /* craft: 避免双色「信任渐变」；单色品牌晕染 + 平底 */
   background:
     radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 46%),
     var(--bg);
@@ -352,30 +346,25 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 14px;
 }
-.mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  background: var(--brand);
-  color: #fff;
-  font-weight: 700;
-  font-size: 1.05rem;
-  flex-shrink: 0;
-}
 h1 {
   margin: 0 0 4px;
-  font-size: 1.25rem;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   line-height: 1.25;
+  color: #2bb5a0;
+  text-transform: lowercase;
+  font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
   text-wrap: balance;
 }
 .form-extra {
   display: flex;
   justify-content: flex-end;
   margin: -4px 0 12px;
+}
+.form-extra.back-row {
+  justify-content: center;
+  margin: 12px 0 0;
 }
 .code-row {
   display: flex;
@@ -389,20 +378,5 @@ h1 {
   margin: 6px 0 0;
   font-size: 0.8125rem;
   color: var(--brand);
-}
-.demo {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-.demo-title {
-  font-size: 0.8125rem;
-  margin-bottom: 10px;
-  letter-spacing: 0.01em;
-}
-.demo-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 </style>

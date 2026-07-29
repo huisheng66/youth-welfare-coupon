@@ -3,6 +3,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.client_ip import get_client_ip
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import get_current_account, get_current_account_optional, require_roles
@@ -34,35 +35,37 @@ from app.services.sanitize import sanitize_plain_text
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+def _login_user_key(username: str) -> str:
+    """按账号限流：换 IP / 伪造 XFF 无法重置计数。"""
+    return f"u:{(username or '').strip().lower()}"
 
 
-def _login_key(ip: str, username: str) -> str:
-    return f"{ip}|{username.strip().lower()}"
+def _login_ip_key(ip: str) -> str:
+    """按 IP 限流：抑制对大量用户名的喷洒。"""
+    return f"ip:{(ip or 'unknown').strip()}"
 
 
 def _check_login_rate(ip: str, username: str) -> None:
-    key = _login_key(ip, username)
     limiter = get_login_limiter()
-    allowed, retry_after = limiter.check(key)
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="登录尝试过于频繁，请 5 分钟后再试",
-            headers={"Retry-After": str(retry_after)},
-        )
+    for key in (_login_user_key(username), _login_ip_key(ip)):
+        allowed, retry_after = limiter.check(key)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="登录尝试过于频繁，请 5 分钟后再试",
+                headers={"Retry-After": str(retry_after)},
+            )
 
 
 def _record_login_fail(ip: str, username: str) -> None:
-    get_login_limiter().hit(_login_key(ip, username))
+    limiter = get_login_limiter()
+    limiter.hit(_login_user_key(username))
+    limiter.hit(_login_ip_key(ip))
 
 
 def _clear_login_fail(ip: str, username: str) -> None:
-    get_login_limiter().clear(_login_key(ip, username))
+    # 成功登录只清账号桶，保留 IP 桶以免喷洒后立刻换号
+    get_login_limiter().clear(_login_user_key(username))
 
 
 def account_to_out(account: Account) -> AccountOut:
@@ -297,7 +300,7 @@ def reset_password_by_email(body: ResetPasswordByEmailIn, db: Session = Depends(
 
 @router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> TokenOut:
-    ip = _client_ip(request)
+    ip = get_client_ip(request)
     login_id = body.username.strip()
     _check_login_rate(ip, login_id)
     account = _find_by_login(db, login_id)

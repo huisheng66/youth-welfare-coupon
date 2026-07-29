@@ -2,11 +2,11 @@
   <el-container class="shell">
     <el-aside :width="collapsed ? '72px' : '228px'" class="aside" data-od-id="admin-sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">福</span>
         <div v-if="!collapsed" class="brand-text">
-          <div class="brand-title">青年福利券</div>
+          <div class="brand-title">youth</div>
           <div class="brand-sub">运营管理端</div>
         </div>
+        <div v-else class="brand-title brand-title-collapsed" title="youth">y</div>
       </div>
       <el-menu
         :default-active="route.path"
@@ -138,22 +138,19 @@ watch(() => route.path, loadPending)
   min-height: 68px;
 }
 
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: var(--brand);
+.brand-title {
   font-weight: 700;
-  font-size: 0.95rem;
-  flex-shrink: 0;
+  font-size: 1.125rem;
+  letter-spacing: 0.04em;
+  color: #2bb5a0;
+  text-transform: lowercase;
+  font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
 }
 
-.brand-title {
-  font-weight: 650;
-  font-size: 0.9375rem;
-  letter-spacing: -0.01em;
+.brand-title-collapsed {
+  width: 100%;
+  text-align: center;
+  font-size: 1.25rem;
 }
 
 .brand-sub {

@@ -20,7 +20,7 @@ INSECURE_SECRET_KEYS = frozenset(
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "青年福利券系统"
+    app_name: str = "youth"
     # development | production — drives secure defaults when explicit flags are omitted
     app_env: Literal["development", "production"] = "development"
 
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     mail_username: str = ""
     mail_password: str = ""
     mail_from: str = ""
-    mail_from_name: str = "青年福利券系统"
+    mail_from_name: str = "youth"
     mail_starttls: bool = False
     mail_ssl_tls: bool = True
     mail_console: bool = True

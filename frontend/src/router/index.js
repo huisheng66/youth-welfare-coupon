@@ -90,7 +90,7 @@ router.beforeEach((to) => {
 
 router.afterEach((to) => {
   const page = [...to.matched].reverse().find((r) => r.meta?.title)?.meta?.title
-  document.title = page ? `${page} · 青年福利券` : '青年福利券系统'
+  document.title = page ? `${page} · youth` : 'youth'
 })
 
 export default router

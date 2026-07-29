@@ -2,9 +2,8 @@
   <div class="wrap">
     <header class="top" data-od-id="user-topbar">
       <div class="brand-block">
-        <span class="mark" aria-hidden="true">福</span>
         <div>
-          <div class="brand">青年福利券</div>
+          <div class="brand">youth</div>
           <div class="who">{{ auth.account?.display_name || auth.account?.username }}</div>
         </div>
       </div>
@@ -61,23 +60,13 @@ function onLogout() {
   gap: 10px;
 }
 
-.mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: var(--brand);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.95rem;
-}
-
 .brand {
-  font-weight: 650;
-  font-size: 0.95rem;
-  color: var(--ink);
-  letter-spacing: -0.01em;
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: #2bb5a0;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
 }
 
 .who {

@@ -62,7 +62,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import api from '../api'
+import api, { AUTH_SLOW_TIMEOUT } from '../api'
 import { useAuth } from '../auth'
 import { roleLabel as mapRole } from '../utils/format'
 
@@ -176,14 +176,19 @@ async function onEmail() {
 }
 
 async function onSubmit() {
+  if (loading.value) return
   const valid = await formRef.value?.validate?.().catch(() => false)
   if (!valid) return
   loading.value = true
   try {
-    await api.post('/auth/change-password', {
-      old_password: form.old_password,
-      new_password: form.new_password,
-    })
+    await api.post(
+      '/auth/change-password',
+      {
+        old_password: form.old_password,
+        new_password: form.new_password,
+      },
+      { timeout: AUTH_SLOW_TIMEOUT },
+    )
     ElMessage.success('密码已修改，请使用新密码登录')
     resetForm()
   } finally {

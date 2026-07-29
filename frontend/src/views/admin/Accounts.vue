@@ -59,10 +59,23 @@
         <el-col :xs="24" :md="12">
           <h3 class="sub-title">发券管理员</h3>
           <el-form label-width="80px" @submit.prevent="createIssuer">
-            <el-form-item label="用户名"><el-input v-model="issuer.username" /></el-form-item>
-            <el-form-item label="密码"><el-input v-model="issuer.password" type="password" show-password /></el-form-item>
-            <el-form-item label="昵称"><el-input v-model="issuer.display_name" /></el-form-item>
-            <el-button type="primary" native-type="submit">创建</el-button>
+            <el-form-item label="用户名" required>
+              <el-input v-model="issuer.username" placeholder="至少 3 个字符" maxlength="64" clearable />
+            </el-form-item>
+            <el-form-item label="密码" required>
+              <el-input
+                v-model="issuer.password"
+                type="password"
+                show-password
+                placeholder="至少 8 位"
+                maxlength="64"
+                autocomplete="new-password"
+              />
+            </el-form-item>
+            <el-form-item label="昵称">
+              <el-input v-model="issuer.display_name" placeholder="可选" maxlength="64" clearable />
+            </el-form-item>
+            <el-button type="primary" native-type="submit" :loading="creatingIssuer">创建</el-button>
           </el-form>
         </el-col>
         <el-col :xs="24" :md="12">
@@ -76,7 +89,7 @@
                 <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
               </el-select>
             </el-form-item>
-            <el-button type="primary" native-type="submit">创建</el-button>
+            <el-button type="primary" native-type="submit" :loading="creatingMerchant">创建</el-button>
           </el-form>
         </el-col>
       </el-row>
@@ -108,11 +121,30 @@ const role = ref('')
 const q = ref('')
 const issuer = reactive({ username: '', password: '', display_name: '' })
 const merchantAcc = reactive({ username: '', password: '', display_name: '', merchant_id: '' })
+const creatingIssuer = ref(false)
+const creatingMerchant = ref(false)
 
 const resetVisible = ref(false)
 const resetTarget = ref(null)
 const resetPwd = ref('')
 const resetting = ref(false)
+
+function validateAccountForm({ username, password }, needMerchantId) {
+  const u = (username || '').trim()
+  if (u.length < 3) {
+    ElMessage.warning('用户名至少 3 个字符')
+    return false
+  }
+  if (!password || password.length < 8) {
+    ElMessage.warning('密码至少 8 位')
+    return false
+  }
+  if (needMerchantId && !merchantAcc.merchant_id) {
+    ElMessage.warning('请选择商家')
+    return false
+  }
+  return true
+}
 
 async function load() {
   loading.value = true
@@ -132,22 +164,45 @@ async function load() {
 }
 
 async function createIssuer() {
-  await api.post('/auth/issue-admins', issuer)
-  ElMessage.success('发券管理员已创建')
-  Object.assign(issuer, { username: '', password: '', display_name: '' })
-  load()
+  if (creatingIssuer.value) return
+  if (!validateAccountForm(issuer, false)) return
+  creatingIssuer.value = true
+  try {
+    await api.post('/auth/issue-admins', {
+      username: issuer.username.trim(),
+      password: issuer.password,
+      display_name: (issuer.display_name || '').trim(),
+    })
+    ElMessage.success('发券管理员已创建')
+    Object.assign(issuer, { username: '', password: '', display_name: '' })
+    await load()
+  } finally {
+    creatingIssuer.value = false
+  }
 }
 
 async function createMerchantAcc() {
-  await api.post('/auth/merchant-accounts', merchantAcc)
-  ElMessage.success('商家账号已创建')
-  Object.assign(merchantAcc, {
-    username: '',
-    password: '',
-    display_name: '',
-    merchant_id: merchants.value[0]?.id || '',
-  })
-  load()
+  if (creatingMerchant.value) return
+  if (!validateAccountForm(merchantAcc, true)) return
+  creatingMerchant.value = true
+  try {
+    await api.post('/auth/merchant-accounts', {
+      username: merchantAcc.username.trim(),
+      password: merchantAcc.password,
+      display_name: (merchantAcc.display_name || '').trim(),
+      merchant_id: merchantAcc.merchant_id,
+    })
+    ElMessage.success('商家账号已创建')
+    Object.assign(merchantAcc, {
+      username: '',
+      password: '',
+      display_name: '',
+      merchant_id: merchants.value[0]?.id || '',
+    })
+    await load()
+  } finally {
+    creatingMerchant.value = false
+  }
 }
 
 function openReset(row) {

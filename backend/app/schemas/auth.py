@@ -136,12 +136,40 @@ class AccountOut(ORMModel):
     verify_status: VerifyStatus | None = None
 
 
+def _clean_account_username(v: str) -> str:
+    s = sanitize_plain_text((v or "").strip(), max_length=64, strip_angles=True)
+    if len(s) < 3:
+        raise ValueError("用户名至少 3 个字符")
+    if len(s) > 64:
+        raise ValueError("用户名过长")
+    return s
+
+
+def _empty_email_to_none(v: object) -> object:
+    """表单常传 email:''，转为 None，避免 EmailStr 422。"""
+    if v is None:
+        return None
+    if isinstance(v, str) and not v.strip():
+        return None
+    return v
+
+
 class CreateMerchantAccountIn(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8, max_length=64)
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=64)
     display_name: str = ""
-    merchant_id: str
+    merchant_id: str = Field(min_length=1, description="商家 ID")
     email: EmailStr | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_email(cls, v: object) -> object:
+        return _empty_email_to_none(v)
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, v: str) -> str:
+        return _clean_account_username(v)
 
     @field_validator("password")
     @classmethod
@@ -153,12 +181,30 @@ class CreateMerchantAccountIn(BaseModel):
     def clean_display_name(cls, v: str) -> str:
         return sanitize_plain_text(v, max_length=64)
 
+    @field_validator("merchant_id")
+    @classmethod
+    def clean_merchant_id(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("请选择商家")
+        return s
+
 
 class CreateIssueAdminIn(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8, max_length=64)
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=64)
     display_name: str = ""
     email: EmailStr | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_email(cls, v: object) -> object:
+        return _empty_email_to_none(v)
+
+    @field_validator("username")
+    @classmethod
+    def clean_username(cls, v: str) -> str:
+        return _clean_account_username(v)
 
     @field_validator("password")
     @classmethod

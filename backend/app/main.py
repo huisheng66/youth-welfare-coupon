@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import auth, coupons, export, merchants, points, stats, users
+from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.migrate import ensure_schema
@@ -50,7 +51,7 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
         limiter = get_ip_limiter()
         if limiter is None:
             return await call_next(request)
-        ip = _client_ip(request)
+        ip = get_client_ip(request)
         allowed, retry = limiter.check(ip)
         if not allowed:
             # Early return must still carry security headers (outer middleware may not run)
@@ -64,13 +65,6 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
             )
         limiter.hit(ip)
         return await call_next(request)
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 def create_app() -> FastAPI:
