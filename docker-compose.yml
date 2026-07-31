@@ -1,4 +1,7 @@
 # Youth Welfare Coupon — Docker Compose
+# 项目名固定，避免从含非 ASCII 的目录名推导出空 project name
+name: welfare
+
 # 一键起停整套服务（api + web + redis）。
 # 用法：
 #   cp .env.docker.example .env  # 填好密钥与域名

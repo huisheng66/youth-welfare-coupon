@@ -7,16 +7,18 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 WORKDIR /build
 
-# 系统依赖（构建 bcrypt/cryptography 需要 gcc）
-RUN apt-get update \
+# 切换 apt 到清华镜像源（trixie 新格式 sources.list.d/debian.sources），加速国内构建
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends gcc libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 先装依赖（利用 layer 缓存）
+# 先装依赖（利用 layer 缓存；pip 走阿里镜像）
 COPY requirements.txt .
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install -U pip \
@@ -29,11 +31,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# 运行时只需 libffi（cryptography 依赖）
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libffi9 \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 1001 app \
+# 运行时无需额外装 libffi：python:3.12-slim 基础镜像已自带（python ctypes 依赖）
+# 仅创建非 root 用户
+RUN groupadd --system --gid 1001 app \
     && useradd --system --uid 1001 --gid app --home-dir /app --shell /sbin/nologin app
 
 # 拷贝虚拟环境

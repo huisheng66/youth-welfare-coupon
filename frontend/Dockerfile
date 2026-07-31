@@ -6,6 +6,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /build
 
+# npm 走淘宝镜像源，加速国内构建
+RUN npm config set registry https://registry.npmmirror.com
+
 # 先拷依赖文件（利用 layer 缓存）
 COPY package.json package-lock.json ./
 
