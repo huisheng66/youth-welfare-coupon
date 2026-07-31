@@ -24,7 +24,7 @@ def run_alembic_upgrade() -> None:
     from alembic import command
     from alembic.config import Config
 
-    from app.core.database import engine
+    import app.core.database as db
 
     backend_dir = Path(__file__).resolve().parent.parent.parent
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -32,6 +32,7 @@ def run_alembic_upgrade() -> None:
     # env.py 会从 app.core.database 取 engine，无需在 ini 中配 url
     cfg.set_main_option("prepend_sys_path", str(backend_dir))
 
+    engine = db.engine
     insp = inspect(engine)
     tables = set(insp.get_table_names())
     has_alembic_version = "alembic_version" in tables

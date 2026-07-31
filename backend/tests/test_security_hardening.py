@@ -21,6 +21,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from tests._helpers import skip_app_lifespan  # noqa: E402
+
 
 def _fresh_settings(**env: str):
     """Set env vars and clear settings / crypto / limiter caches."""
@@ -71,7 +73,7 @@ class TestProductionGuards(unittest.TestCase):
 
         app = create_app()
         # Disable startup seed/DB side effects for docs-only check
-        app.router.on_startup.clear()
+        skip_app_lifespan(app)
         client = TestClient(app)
         self.assertEqual(client.get("/docs").status_code, 404)
         self.assertEqual(client.get("/openapi.json").status_code, 404)
@@ -88,7 +90,7 @@ class TestProductionGuards(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         app = create_app()
-        app.router.on_startup.clear()
+        skip_app_lifespan(app)
         client = TestClient(app)
         # FastAPI returns 200 HTML for /docs when enabled
         self.assertEqual(client.get("/docs").status_code, 200)
@@ -109,7 +111,7 @@ class TestProductionGuards(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         app = create_app()
-        app.router.on_startup.clear()
+        skip_app_lifespan(app)
         client = TestClient(app)
         r = client.options(
             "/api/health",
@@ -341,7 +343,7 @@ class TestRateLimiter(unittest.TestCase):
 
             reset_limiters()
             app = create_app()
-            app.router.on_startup.clear()
+            skip_app_lifespan(app)
             with TestClient(app, headers={"X-Requested-With": "XMLHttpRequest"}) as client:
                 user = "admin"
                 for i in range(3):
@@ -359,8 +361,10 @@ class TestRateLimiter(unittest.TestCase):
                 self.assertIn("Retry-After", r429.headers)
 
                 lim = get_login_limiter()
+                # key 格式需与 auth._login_user_key / _login_ip_key 一致
+                lim.clear(f"u:{user}")
                 for ip in ("testclient", "127.0.0.1", "unknown"):
-                    lim.clear(f"{ip}|{user}")
+                    lim.clear(f"ip:{ip}")
 
                 ok = client.post(
                     "/api/auth/login",
@@ -412,7 +416,7 @@ class TestSecurityHeadersAndHealth(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         app = create_app()
-        app.router.on_startup.clear()
+        skip_app_lifespan(app)
         client = TestClient(app)
         r = client.get("/api/health")
         self.assertEqual(r.status_code, 200)

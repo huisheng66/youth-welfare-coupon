@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 一次性补丁：已合入主线，保留作历史参考。详见 deploy/archive/README.md
 # Deploy frontend dist + enable nginx timed access log on public host
 set -euo pipefail
 

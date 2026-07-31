@@ -113,6 +113,60 @@ sudo systemctl restart welfare-api
 curl -s http://127.0.0.1:19001/api/health
 ```
 
+## 脚本分类
+
+`deploy/` 下脚本分两类：**长期运维脚本**（保留原位，新人优先熟悉这些）与**一次性补丁脚本**（已归档至 `deploy/archive/`，仅作历史参考，**不要在新环境执行**）。
+
+### 长期运维脚本（原位）
+
+| 脚本 | 用途 | 备注 |
+|------|------|------|
+| `install-ubuntu.sh` | Ubuntu 一键部署骨架（MySQL + API + 前端 + Nginx） | 首选入口；支持 `DOMAIN`/`DB_PASS`/`SKIP_FRONTEND_BUILD` 等 |
+| `remote-deploy.sh` | 服务器端解压 + 调用 `install-ubuntu.sh` | 由 `run-on-server.sh` / `run-on-public.sh` 触发 |
+| `run-on-server.sh` | 内网机部署封装 | 配合 `pack-and-upload.sh` |
+| `run-on-public.sh` | 公网机 root 部署封装 | 配合 `pack-and-upload-public.sh` |
+| `pack-and-upload.sh` | 开发机→内网服务器打包上传 | WSL 调用 |
+| `pack-and-upload-public.sh` | 开发机→公网服务器打包上传 | WSL 调用 |
+| `sync-frontend-prod.sh` | 仅同步 `frontend/dist` 到生产 | 不动 `.env`/数据库 |
+| `wait-deploy.sh` | 轮询等待部署完成 | 辅助脚本 |
+| `remote-status.sh` | 远程服务/端口/`.env`/健康检查 | 日常巡检 |
+| `remote-probe-pub.sh` | 公网机 nginx/`/opt`/mysql 诊断 | 排障 |
+| `verify-prod.sh` | 生产接口/页面探测 | 部署后验收 |
+| `verify-theme.sh` | 验证品牌色是否生效 | 主题发布后用 |
+| `ssh-probe.sh` | SSH 密钥/账号连通性探测 | 排障 |
+| `_server_sec_check.sh` | 主机安全巡检（`.env` 权限/端口/ufw/fail2ban） | 安全审计，长期 |
+| `harden-nginx-prod.sh` | Nginx 加固（敏感路径 404、HSTS、隐藏文件拦截） | 上线必跑 |
+| `cloudflare-origin-protect.sh` | Cloudflare 源站防护（real_ip + UFW 仅放行 CF） | 经 CF 接入时用 |
+| `enable-nginx-request-time.sh` | 启用带 `request_time` 的 access log | 性能排障 |
+| `fix-nginx-welfare.sh` | 修复/重写 welfare 站点 nginx 配置 | 配置变更时用 |
+| `bind-youth-domain.sh` | 绑定 `youth.huishengbook.us.ci` 到站点 | 域名切换时用 |
+| `config-smtp-prod.sh` | 写生产 SMTP 配置到 `.env` | 邮件接入时用 |
+| `deploy-imap.sh` | 写 IMAP 配置并重启服务 | 收信接入时用 |
+| `nginx-welfare.conf` | Nginx 站点配置模板 | 被 `install-ubuntu.sh` 引用 |
+| `setup-mysql.sql` | MySQL 建库脚本 | 被 `install-ubuntu.sh` 引用 |
+| `welfare-api.service` | systemd 单元 | 被 `install-ubuntu.sh` 引用 |
+
+### 一次性补丁脚本（`deploy/archive/`）
+
+以下脚本均为历史一次性补丁/诊断，对应修复**已合入主线代码**，保留仅供追溯。新环境**不要执行**——直接走 `install-ubuntu.sh` 即可。
+
+| 脚本 | 历史用途 |
+|------|------|
+| `_deploy_xff_fix.sh` | 部署 XFF/IP 伪造修复 + Cloudflare 源站防护补丁 |
+| `_verify_xff_fix.sh` | 验证 XFF 修复是否生效 |
+| `_deploy_decimal_points.sh` | 部署积分时长 INTEGER→DECIMAL 升级 |
+| `_deploy_issue_admin_fix.sh` | 部署 `issue-admins` 接口 422 修复 |
+| `_debug_issue_admin.sh` | 调试 `issue-admins` 422 请求样本 |
+| `_deploy_timeout_fix.sh` | 部署前端 + Nginx 计时日志修复（计时逻辑已迁至 `enable-nginx-request-time.sh`） |
+| `_deploy_youth_brand.sh` | 部署 youth 品牌重塑（前端 + 后端模块） |
+| `_cors_https_only.sh` | 把生产 `CORS_ORIGINS` 改为仅 HTTPS |
+| `_check_nginx.sh` | 一次性 nginx 配置/`.env` 探测 |
+| `_check_pwd_logs.sh` | 排查改密 499 日志（特定时间段） |
+| `_check_scan_claims.sh` | 扫描 claim 一次性安全核查 |
+| `_pentest_host.sh` | 一次性渗透测试主机配置采集 |
+
+> 归档脚本头部均已加 `# 一次性补丁：已合入主线，保留作历史参考` 标记。如需清理，可整目录删除而不影响部署。
+
 ## 从 SQLite 迁到 MySQL
 
 1. 新环境用 MySQL 空库启动，自动建表  
@@ -129,7 +183,7 @@ curl -s http://127.0.0.1:19001/api/health
 - [ ] 登录限流：单机用 `RATE_LIMIT_BACKEND=file`，多机用 Redis  
 - [ ] 防火墙只开放 80/443，MySQL 不对外  
 - [ ] 定期备份：`mysqldump welfare > backup.sql`  
-- [ ] JWT 现存在前端 `localStorage`：须防 XSS；勿对用户字段使用 `v-html`  
+- [ ] JWT 已迁至 HttpOnly Cookie；过渡期仍允许 `Authorization: Bearer`，上线 1–2 版本后关闭 `AUTH_ALLOW_BEARER=false`
 - [ ] 定期跑依赖扫描：`scripts/dep_audit.ps1` 或 CI workflow `Security`  
 - [ ] 半年或大版本前对 staging 跑 ZAP baseline（见 `docs/security-ops.md`）
 

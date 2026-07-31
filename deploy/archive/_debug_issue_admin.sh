@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 一次性补丁：已合入主线，保留作历史参考。详见 deploy/archive/README.md
 set -euo pipefail
 echo "=== schema ==="
 sed -n '157,172p' /opt/welfare/backend/app/schemas/auth.py

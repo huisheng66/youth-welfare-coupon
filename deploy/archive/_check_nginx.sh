@@ -1,4 +1,5 @@
 #!/bin/bash
+# 一次性补丁：已合入主线，保留作历史参考。详见 deploy/archive/README.md
 set -e
 echo "=== welfare site ==="
 cat /etc/nginx/sites-available/welfare

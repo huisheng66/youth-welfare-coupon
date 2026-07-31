@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 一次性补丁：已合入主线，保留作历史参考。详见 deploy/archive/README.md
 set -euo pipefail
 echo "=== ufw web/ssh ==="
 ufw status numbered | grep -E '80|443|OpenSSH|cf-origin|Nginx' | head -50

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -10,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api import auth, coupons, export, merchants, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
-from app.core.database import SessionLocal, engine
+import app.core.database as db
 from app.core.migrate import apply_migrations
 from app.seed import seed_if_empty
 from app.services.rate_limit import get_ip_limiter, reset_limiters
@@ -97,6 +98,34 @@ def create_app() -> FastAPI:
         db_path = settings.database_url.replace("sqlite:///./", "")
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
+    # engine 由 app.core.database 模块级 init_engine() 构造（import 时按 settings）；
+    # 测试可通过 init_engine(test_settings) 显式重建切换，create_app 不重复构造
+    # 以免覆盖测试已注入的 engine。
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        # Re-assert in case settings were mutated after import
+        s = get_settings()
+        assert_secure_startup(s)
+        reset_limiters()
+        # 生产环境用 alembic upgrade head；开发环境保留 create_all + ensure_schema
+        # 用 db.engine 访问最新 engine（init_engine 重建后的实例）
+        apply_migrations(db.engine, production=s.is_production)
+        session = db.SessionLocal()
+        try:
+            seed_if_empty(session)
+            from app.services.coupons import expire_stale_coupons
+
+            expire_stale_coupons(session)
+        finally:
+            session.close()
+        if s.using_secret_for_field_crypto:
+            logger.warning(
+                "FIELD_ENCRYPTION_KEY unset — bank-card encryption uses SECRET_KEY (deprecated)"
+            )
+        yield
+        # shutdown：当前无资源需显式释放；限流器/连接池随进程退出回收
+
     openapi_on = settings.effective_openapi_enabled
     app = FastAPI(
         title=settings.app_name,
@@ -104,6 +133,7 @@ def create_app() -> FastAPI:
         docs_url="/docs" if openapi_on else None,
         redoc_url="/redoc" if openapi_on else None,
         openapi_url="/openapi.json" if openapi_on else None,
+        lifespan=lifespan,
     )
 
     origins = settings.cors_origin_list
@@ -128,27 +158,6 @@ def create_app() -> FastAPI:
     app.include_router(stats.router, prefix="/api")
     app.include_router(points.router, prefix="/api")
     app.include_router(export.router, prefix="/api")
-
-    @app.on_event("startup")
-    def on_startup() -> None:
-        # Re-assert in case settings were mutated after import
-        s = get_settings()
-        assert_secure_startup(s)
-        reset_limiters()
-        # 生产环境用 alembic upgrade head；开发环境保留 create_all + ensure_schema
-        apply_migrations(engine, production=s.is_production)
-        db = SessionLocal()
-        try:
-            seed_if_empty(db)
-            from app.services.coupons import expire_stale_coupons
-
-            expire_stale_coupons(db)
-        finally:
-            db.close()
-        if s.using_secret_for_field_crypto:
-            logger.warning(
-                "FIELD_ENCRYPTION_KEY unset — bank-card encryption uses SECRET_KEY (deprecated)"
-            )
 
     @app.get("/api/health")
     def health() -> dict:

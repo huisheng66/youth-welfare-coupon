@@ -55,6 +55,21 @@ def reset_env_defaults() -> None:
     )
 
 
+def skip_app_lifespan(app) -> None:
+    """用空 lifespan 覆盖 app，跳过 startup 副作用（建表/seed/expire 等）。
+
+    替代旧 `app.router.on_startup.clear()`：lifespan 模式下 on_startup 已无效，
+    需覆盖 `app.router.lifespan_context` 才能真正跳过。
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _noop_lifespan(_):
+        yield
+
+    app.router.lifespan_context = _noop_lifespan
+
+
 class TempApp:
     """临时 FastAPI app + 独立 SQLite 文件库，已 seed 演示数据。
 
@@ -79,22 +94,21 @@ class TempApp:
             LOGIN_MAX_FAILS="50",  # 测试期间避免 429
             LOGIN_WINDOW_SECONDS="300",
             FIELD_ENCRYPTION_KEY="test-field-key-dedicated-xxx",
+            # 禁用 SMTP，强制 console 模式（issue_email_code 返回 debug_code，不触发真实邮件发送）
+            MAIL_SERVER=None,
+            MAIL_USERNAME=None,
+            MAIL_PASSWORD=None,
+            MAIL_FROM=None,
         )
-        # monkey-patch 模块级 engine / SessionLocal
+        # 用 init_engine 按测试 settings 重建 engine / SessionLocal，
+        # 所有调用方经 `import app.core.database as db` 即可拿到测试 engine
         import app.core.database as dbmod
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from sqlalchemy.pool import StaticPool
+        from app.core.config import get_settings
 
+        dbmod.init_engine(get_settings())
         self._dbmod = dbmod
-        self.engine = create_engine(
-            f"sqlite:///{self.db_path.as_posix()}",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-        self.Session = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
-        dbmod.engine = self.engine
-        dbmod.SessionLocal = self.Session
+        self.engine = dbmod.engine
+        self.Session = dbmod.SessionLocal
 
         from app.core.database import Base
         import app.models  # noqa: F401  保证 mapper 注册
@@ -113,8 +127,8 @@ class TempApp:
         from app.main import create_app
 
         self.app = create_app()
-        # 跳过 startup 副作用（已手动建表 + seed）
-        self.app.router.on_startup.clear()
+        # 跳过 lifespan startup 副作用（已手动建表 + seed）
+        skip_app_lifespan(self.app)
         self._client = None
 
     # ---- context manager ----

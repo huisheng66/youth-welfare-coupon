@@ -1,4 +1,5 @@
 #!/bin/bash
+# 一次性补丁：已合入主线，保留作历史参考。详见 deploy/archive/README.md
 set -e
 echo "=== change-password access lines ==="
 grep -h change-password /var/log/nginx/access.log /var/log/nginx/access.log.1 2>/dev/null | tail -20 || true
