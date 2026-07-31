@@ -10,8 +10,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api import auth, coupons, export, merchants, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
-from app.core.database import Base, SessionLocal, engine
-from app.core.migrate import ensure_schema
+from app.core.database import SessionLocal, engine
+from app.core.migrate import apply_migrations
 from app.seed import seed_if_empty
 from app.services.rate_limit import get_ip_limiter, reset_limiters
 
@@ -67,6 +67,27 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class CsrfProtectMiddleware(BaseHTTPMiddleware):
+    """基于 X-Requested-With 的 CSRF 防护（配合 SameSite=Lax Cookie）。
+
+    浏览器原生表单不会带 X-Requested-With，前端 axios 全局加上后即可区分 AJAX 与跨站提交。
+    仅对写方法（POST/PUT/PATCH/DELETE）校验；GET/HEAD/OPTIONS 跳过。
+    """
+
+    WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if request.method in self.WRITE_METHODS and "x-requested-with" not in {k.lower() for k in request.headers.keys()}:
+            return apply_security_headers(
+                Response(
+                    content='{"detail":"缺少 CSRF 校验头（X-Requested-With）"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
+            )
+        return await call_next(request)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     assert_secure_startup(settings)
@@ -96,6 +117,7 @@ def create_app() -> FastAPI:
         cors_kwargs["allow_origin_regex"] = LAN_ORIGIN_REGEX
     app.add_middleware(CORSMiddleware, **cors_kwargs)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(CsrfProtectMiddleware)
     if settings.global_ip_max_requests > 0:
         app.add_middleware(GlobalIpRateLimitMiddleware)
 
@@ -110,10 +132,11 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def on_startup() -> None:
         # Re-assert in case settings were mutated after import
-        assert_secure_startup(get_settings())
+        s = get_settings()
+        assert_secure_startup(s)
         reset_limiters()
-        Base.metadata.create_all(bind=engine)
-        ensure_schema(engine)
+        # 生产环境用 alembic upgrade head；开发环境保留 create_all + ensure_schema
+        apply_migrations(engine, production=s.is_production)
         db = SessionLocal()
         try:
             seed_if_empty(db)
@@ -122,7 +145,6 @@ def create_app() -> FastAPI:
             expire_stale_coupons(db)
         finally:
             db.close()
-        s = get_settings()
         if s.using_secret_for_field_crypto:
             logger.warning(
                 "FIELD_ENCRYPTION_KEY unset — bank-card encryption uses SECRET_KEY (deprecated)"

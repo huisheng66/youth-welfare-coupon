@@ -47,6 +47,17 @@ class Settings(BaseSettings):
 
     live_code_expire_seconds: int = 30
 
+    # 认证 Cookie：将 JWT 从 localStorage 迁到 HttpOnly Cookie，消除 XSS 窃取 token 的链路
+    auth_cookie_name: str = "token"
+    # 留空=不设置 Domain（仅当前主机）；跨子域如 api.x.com ↔ www.x.com 可设 ".x.com"
+    auth_cookie_domain: str = ""
+    # None=auto：生产 Secure=True（仅 HTTPS），开发 Secure=False（允许 http://localhost）
+    auth_cookie_secure: bool | None = None
+    # lax 覆盖绝大多数 CSRF 场景；strict 会断开外链跳转后的会话
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    # 是否仍允许 Authorization: Bearer 头读取 token（过渡期兼容小程序/旧前端，1-2 版本后关闭）
+    auth_allow_bearer: bool = True
+
     # Rate limiting: auto | memory | file | redis
     rate_limit_backend: str = "auto"
     redis_url: str = ""
@@ -157,6 +168,13 @@ class Settings(BaseSettings):
     def mail_sender(self) -> str:
         """发件人地址：优先 MAIL_FROM，否则用登录账号。"""
         return (self.mail_from or self.mail_username or "").strip()
+
+    @property
+    def effective_auth_cookie_secure(self) -> bool:
+        """Cookie Secure 属性：显式配置优先，否则生产 True、开发 False。"""
+        if self.auth_cookie_secure is not None:
+            return self.auth_cookie_secure
+        return self.is_production
 
 
 @lru_cache

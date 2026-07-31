@@ -8,13 +8,13 @@ export const AUTH_SLOW_TIMEOUT = 30000
 const api = axios.create({
   baseURL: '/api',
   timeout: 15000,
+  // 携带 HttpOnly Cookie（认证 token 不再走 localStorage / Authorization 头）
+  withCredentials: true,
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
+  // CSRF 防护：后端要求写接口带 X-Requested-With，axios 全局注入
+  config.headers['X-Requested-With'] = 'XMLHttpRequest'
   return config
 })
 

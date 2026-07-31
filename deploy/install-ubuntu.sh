@@ -136,12 +136,12 @@ cd "${APP_ROOT}/backend"
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python - <<'PY'
-from app.core.database import Base, engine, SessionLocal
-from app.core.migrate import ensure_schema
+from app.core.database import engine, SessionLocal
+from app.core.migrate import apply_migrations
 from app.seed import seed_if_empty
-import app.models  # noqa: F401
-Base.metadata.create_all(bind=engine)
-ensure_schema(engine)
+# 生产环境用 alembic upgrade head 管理 schema；
+# 历史库（曾用 create_all）会自动 stamp head 标记基线后增量升级。
+apply_migrations(engine, production=True)
 db = SessionLocal()
 try:
     seed_if_empty(db)

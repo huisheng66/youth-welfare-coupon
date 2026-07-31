@@ -3,11 +3,46 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 logger = logging.getLogger("app.migrate")
+
+
+def run_alembic_upgrade() -> None:
+    """以编程方式执行 `alembic upgrade head`，复用项目 engine。
+
+    生产环境在应用启动前调用，确保 schema 与迁移版本一致；
+    不依赖 alembic CLI，部署脚本只需启动服务即可。
+
+    已有库平滑切换：若业务表已存在但尚未接入 alembic（无 alembic_version 表），
+    先 `stamp head` 标记为基线，再执行 upgrade，避免 baseline 的 create_table
+    因表已存在而失败。
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    from app.core.database import engine
+
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    # env.py 会从 app.core.database 取 engine，无需在 ini 中配 url
+    cfg.set_main_option("prepend_sys_path", str(backend_dir))
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    has_alembic_version = "alembic_version" in tables
+    has_business_tables = bool(tables - {"alembic_version"})
+    if not has_alembic_version and has_business_tables:
+        # 历史库（create_all 建表）首次接入 alembic：标记为基线，不执行 DDL
+        logger.info("legacy database detected — alembic stamp head as baseline")
+        command.stamp(cfg, "head")
+
+    logger.info("running alembic upgrade head")
+    command.upgrade(cfg, "head")
 
 
 def _add_column_if_missing(engine: Engine, table: str, column: str, ddl: str) -> None:
@@ -246,3 +281,21 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")
     _migrate_hours_to_decimal(engine)
+
+
+def apply_migrations(engine: Engine, *, production: bool) -> None:
+    """按环境应用 schema 迁移。
+
+    - 生产：执行 `alembic upgrade head`，schema 由版本化迁移管理；
+      历史库需先 `alembic stamp head` 标记基线（见 baseline 迁移注释）。
+    - 开发：保留 `create_all` + `ensure_schema` 兼容空库与历史库，
+      避免本地迭代时频繁生成迁移。
+    """
+    if production:
+        run_alembic_upgrade()
+        return
+    from app.core.database import Base
+    import app.models  # noqa: F401  # 注册模型
+
+    Base.metadata.create_all(bind=engine)
+    ensure_schema(engine)

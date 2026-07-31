@@ -37,9 +37,19 @@ def _recent_activity(db: Session, limit: int = 8) -> list[DashboardActivityItem]
         .limit(limit)
         .all()
     )
+    r_merchant_ids = {r.merchant_id for r in redemptions if r.merchant_id}
+    r_user_ids = {r.user_id for r in redemptions if r.user_id}
+    merchants_map: dict[str, Merchant] = {}
+    if r_merchant_ids:
+        for m in db.query(Merchant).filter(Merchant.id.in_(r_merchant_ids)).all():
+            merchants_map[m.id] = m
+    users_map: dict[str, Account] = {}
+    if r_user_ids:
+        for u in db.query(Account).filter(Account.id.in_(r_user_ids)).all():
+            users_map[u.id] = u
     for r in redemptions:
-        merchant = db.get(Merchant, r.merchant_id) if r.merchant_id else None
-        user = db.get(Account, r.user_id) if r.user_id else None
+        merchant = merchants_map.get(r.merchant_id) if r.merchant_id else None
+        user = users_map.get(r.user_id) if r.user_id else None
         items.append(
             DashboardActivityItem(
                 time=r.created_at,
@@ -56,9 +66,19 @@ def _recent_activity(db: Session, limit: int = 8) -> list[DashboardActivityItem]
         .limit(limit)
         .all()
     )
+    profile_ids = [v.profile_id for v in pending]
+    profiles_map: dict[str, UserProfile] = {}
+    if profile_ids:
+        for p in db.query(UserProfile).filter(UserProfile.id.in_(profile_ids)).all():
+            profiles_map[p.id] = p
+    v_account_ids = {p.account_id for p in profiles_map.values()}
+    v_accounts_map: dict[str, Account] = {}
+    if v_account_ids:
+        for a in db.query(Account).filter(Account.id.in_(v_account_ids)).all():
+            v_accounts_map[a.id] = a
     for v in pending:
-        profile = db.get(UserProfile, v.profile_id)
-        acc = db.get(Account, profile.account_id) if profile else None
+        profile = profiles_map.get(v.profile_id)
+        acc = v_accounts_map.get(profile.account_id) if profile else None
         items.append(
             DashboardActivityItem(
                 time=v.created_at,
@@ -194,9 +214,14 @@ def audit_logs(
         query = query.filter(AuditLog.created_at <= end)
     total = query.count()
     rows = query.offset(skip).limit(limit).all()
+    actor_ids = {r.actor_id for r in rows if r.actor_id}
+    actor_map: dict[str, Account] = {}
+    if actor_ids:
+        for acc in db.query(Account).filter(Account.id.in_(actor_ids)).all():
+            actor_map[acc.id] = acc
     items: list[AuditLogOut] = []
     for r in rows:
-        actor = db.get(Account, r.actor_id) if r.actor_id else None
+        actor = actor_map.get(r.actor_id) if r.actor_id else None
         items.append(
             AuditLogOut(
                 id=r.id,

@@ -1,10 +1,11 @@
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.client_ip import get_client_ip
 from app.core.config import get_settings
+from app.core.cookie import clear_auth_cookie, set_auth_cookie
 from app.core.database import get_db
 from app.core.deps import get_current_account, get_current_account_optional, require_roles
 from app.core.security import create_access_token, hash_password, verify_password
@@ -299,7 +300,7 @@ def reset_password_by_email(body: ResetPasswordByEmailIn, db: Session = Depends(
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> TokenOut:
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)) -> TokenOut:
     ip = get_client_ip(request)
     login_id = body.username.strip()
     _check_login_rate(ip, login_id)
@@ -312,7 +313,17 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> Tok
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号已停用")
     _clear_login_fail(ip, login_id)
     token = create_access_token(account.id, {"role": account.role.value})
+    # 主路径：HttpOnly Cookie 下发 token，前端 JS 不可读，防 XSS 窃取
+    set_auth_cookie(response, token)
+    # 过渡期仍返回 access_token，兼容尚未改造的前端/小程序
     return TokenOut(access_token=token)
+
+
+@router.post("/logout", response_model=MessageOut)
+def logout(response: Response) -> MessageOut:
+    """登出：清除认证 Cookie。前端调用后丢弃本地账号缓存。"""
+    clear_auth_cookie(response)
+    return MessageOut(message="已登出")
 
 
 @router.post("/register", response_model=AccountOut)

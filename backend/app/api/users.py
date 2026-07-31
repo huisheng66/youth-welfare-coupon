@@ -33,10 +33,36 @@ def _latest_material(db: Session, profile_id: str) -> str | None:
     return row.material_note if row else None
 
 
-def _user_item(acc: Account, profile: UserProfile, db: Session) -> UserListItem:
+def _bulk_latest_materials(db: Session, profile_ids: list[str]) -> dict[str, str | None]:
+    """批量取每个 profile 的最新一条 material_note，避免 N+1。"""
+    if not profile_ids:
+        return {}
+    rows = (
+        db.query(UserVerification)
+        .filter(UserVerification.profile_id.in_(profile_ids))
+        .order_by(UserVerification.profile_id, UserVerification.created_at.desc())
+        .all()
+    )
+    result: dict[str, str | None] = {pid: None for pid in profile_ids}
+    seen: set[str] = set()
+    for v in rows:
+        if v.profile_id not in seen:
+            result[v.profile_id] = v.material_note
+            seen.add(v.profile_id)
+    return result
+
+
+def _user_item(
+    acc: Account,
+    profile: UserProfile,
+    db: Session,
+    latest_material: str | None = None,
+) -> UserListItem:
     bound = bool(profile.bank_card_encrypted)
     # 列表/资料接口不解密，仅展示脱敏
     masked = f"**** **** **** {profile.bank_card_last4}" if bound and profile.bank_card_last4 else ("****" if bound else None)
+    if latest_material is None:
+        latest_material = _latest_material(db, profile.id)
     return UserListItem(
         id=acc.id,
         username=acc.username,
@@ -48,7 +74,7 @@ def _user_item(acc: Account, profile: UserProfile, db: Session) -> UserListItem:
         created_at=acc.created_at,
         student_no=profile.student_no,
         remark=profile.remark,
-        latest_material_note=_latest_material(db, profile.id),
+        latest_material_note=latest_material,
         bank_card_bound=bound,
         bank_card_masked=masked,
         bank_card_bank_name=profile.bank_card_bank_name or None,
@@ -264,7 +290,13 @@ def list_users(
         )
     total = query.count()
     accounts = query.offset(skip).limit(limit).all()
-    items = [_user_item(acc, acc.profile, db) for acc in accounts if acc.profile]
+    profile_ids = [acc.profile.id for acc in accounts if acc.profile]
+    materials = _bulk_latest_materials(db, profile_ids)
+    items = [
+        _user_item(acc, acc.profile, db, materials.get(acc.profile.id))
+        for acc in accounts
+        if acc.profile
+    ]
     return Page(total=total, items=items)
 
 

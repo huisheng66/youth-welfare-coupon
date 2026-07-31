@@ -342,7 +342,7 @@ class TestRateLimiter(unittest.TestCase):
             reset_limiters()
             app = create_app()
             app.router.on_startup.clear()
-            with TestClient(app) as client:
+            with TestClient(app, headers={"X-Requested-With": "XMLHttpRequest"}) as client:
                 user = "admin"
                 for i in range(3):
                     r = client.post(

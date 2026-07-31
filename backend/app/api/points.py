@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.deps import require_roles
@@ -40,10 +40,11 @@ def _gen_code(length: int = 10) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def _coupon_out(c: CouponInstance, db: Session) -> CouponOut:
-    user = db.get(Account, c.user_id)
-    template = db.get(CouponTemplate, c.template_id)
-    merchant = db.get(Merchant, c.merchant_id)
+def _coupon_out(c: CouponInstance) -> CouponOut:
+    # 直接用 relationship（调用方需通过 joinedload 预加载以避免 N+1）
+    user = c.user
+    template = c.template
+    merchant = c.merchant
     return CouponOut(
         id=c.id,
         code=c.code,
@@ -203,13 +204,14 @@ def exchange_catalog(
 ) -> list[dict]:
     rows = (
         db.query(CouponTemplate)
+        .options(joinedload(CouponTemplate.merchant))
         .filter(CouponTemplate.is_active.is_(True), CouponTemplate.cost_points > 0)
         .order_by(CouponTemplate.cost_points.asc())
         .all()
     )
     items = []
     for t in rows:
-        merchant = db.get(Merchant, t.merchant_id)
+        merchant = t.merchant
         items.append(
             {
                 "id": t.id,
@@ -285,5 +287,5 @@ def exchange(
     return ExchangeOut(
         message="兑换成功",
         balance=acc.balance,
-        coupon=_coupon_out(coupon, db),
+        coupon=_coupon_out(coupon),
     )

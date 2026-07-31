@@ -1,6 +1,8 @@
 fastapi==0.140.7
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
+# Schema 迁移：alembic 替代 create_all + 手写 ALTER 补丁
+alembic==1.18.5
 pydantic==2.13.4
 pydantic-settings==2.7.0
 # JWT: PyJWT instead of python-jose (avoids unfixed ecdsa advisories)

@@ -45,10 +45,29 @@ def _gen_code(length: int = 10) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def coupon_to_out(c: CouponInstance, db: Session) -> CouponOut:
-    user = db.get(Account, c.user_id)
-    template = db.get(CouponTemplate, c.template_id)
-    merchant = db.get(Merchant, c.merchant_id)
+def _preload_coupons(db: Session, coupon_ids: list[str]) -> list[CouponInstance]:
+    """按 id 批量预加载 user/template/merchant，保持入参顺序。"""
+    if not coupon_ids:
+        return []
+    loaded = (
+        db.query(CouponInstance)
+        .options(
+            joinedload(CouponInstance.user),
+            joinedload(CouponInstance.template),
+            joinedload(CouponInstance.merchant),
+        )
+        .filter(CouponInstance.id.in_(coupon_ids))
+        .all()
+    )
+    by_id = {c.id: c for c in loaded}
+    return [by_id[i] for i in coupon_ids if i in by_id]
+
+
+def coupon_to_out(c: CouponInstance) -> CouponOut:
+    # 直接用 relationship（调用方需通过 joinedload 预加载以避免 N+1）
+    user = c.user
+    template = c.template
+    merchant = c.merchant
     return CouponOut(
         id=c.id,
         code=c.code,
@@ -250,9 +269,8 @@ def issue_coupons(
         detail=f"template={template.id}, qty={body.quantity}, merchant={template.merchant_id}",
     )
     db.commit()
-    for c in created:
-        db.refresh(c)
-    return [coupon_to_out(c, db) for c in created]
+    loaded = _preload_coupons(db, [c.id for c in created])
+    return [coupon_to_out(c) for c in loaded]
 
 
 @router.post("/issue-batch", response_model=BatchIssueResult)
@@ -290,9 +308,8 @@ def issue_coupons_batch(
         detail=f"users={len(body.user_ids)}, qty_each={body.quantity}, ok={len(all_created)}, fail={len(failed)}",
     )
     db.commit()
-    for c in all_created:
-        db.refresh(c)
-        issued.append(coupon_to_out(c, db))
+    loaded = _preload_coupons(db, [c.id for c in all_created])
+    issued = [coupon_to_out(c) for c in loaded]
     return BatchIssueResult(issued=issued, failed=failed)
 
 
@@ -318,7 +335,7 @@ def preview_coupon(
     db.commit()
     if coupon.merchant_id != account.merchant_id:
         raise HTTPException(status_code=400, detail="该券仅限指定商家核销，非本店券")
-    return coupon_to_out(coupon, db)
+    return coupon_to_out(coupon)
 
 
 @router.get("/instances/{coupon_id}/live-code", response_model=LiveCodeOut)
@@ -371,7 +388,15 @@ def list_instances(
     db: Session = Depends(get_db),
     account: Account = Depends(get_current_account),
 ) -> Page[CouponOut]:
-    query = db.query(CouponInstance).order_by(CouponInstance.issued_at.desc())
+    query = (
+        db.query(CouponInstance)
+        .options(
+            joinedload(CouponInstance.user),
+            joinedload(CouponInstance.template),
+            joinedload(CouponInstance.merchant),
+        )
+        .order_by(CouponInstance.issued_at.desc())
+    )
     if account.role == Role.user:
         query = query.filter(CouponInstance.user_id == account.id)
     elif account.role == Role.merchant:
@@ -399,18 +424,16 @@ def list_instances(
         rows = [r for r in rows if r.status == status]
     if q and q.strip():
         keyword = q.strip().lower()
-        filtered: list[CouponInstance] = []
-        for r in rows:
-            user = db.get(Account, r.user_id)
-            uname = (user.username if user else "") or ""
-            dname = (user.display_name if user else "") or ""
-            code = (r.code or "").lower()
-            if keyword in code or keyword in uname.lower() or keyword in dname.lower():
-                filtered.append(r)
-        rows = filtered
+        rows = [
+            r
+            for r in rows
+            if keyword in (r.code or "").lower()
+            or keyword in (r.user.username if r.user else "").lower()
+            or keyword in (r.user.display_name if r.user else "").lower()
+        ]
     total = len(rows)
     page = rows[skip : skip + limit]
-    return Page(total=total, items=[coupon_to_out(r, db) for r in page])
+    return Page(total=total, items=[coupon_to_out(r) for r in page])
 
 
 @router.get("/my", response_model=list[CouponOut])
@@ -421,6 +444,11 @@ def my_coupons(
 ) -> list[CouponOut]:
     rows = (
         db.query(CouponInstance)
+        .options(
+            joinedload(CouponInstance.user),
+            joinedload(CouponInstance.template),
+            joinedload(CouponInstance.merchant),
+        )
         .filter(CouponInstance.user_id == account.id)
         .order_by(CouponInstance.issued_at.desc())
         .all()
@@ -430,7 +458,7 @@ def my_coupons(
     db.commit()
     if status:
         rows = [r for r in rows if r.status == status]
-    return [coupon_to_out(r, db) for r in rows]
+    return [coupon_to_out(r) for r in rows]
 
 
 @router.post("/instances/{coupon_id}/void", response_model=CouponOut)
@@ -458,7 +486,7 @@ def void_coupon(
     )
     db.commit()
     db.refresh(coupon)
-    return coupon_to_out(coupon, db)
+    return coupon_to_out(coupon)
 
 
 @router.post("/redeem", response_model=RedeemOut)
@@ -569,7 +597,7 @@ def redeem(
     db.commit()
     coupon = db.get(CouponInstance, coupon.id)
     assert coupon is not None
-    return RedeemOut(message="核销成功", coupon=coupon_to_out(coupon, db))
+    return RedeemOut(message="核销成功", coupon=coupon_to_out(coupon))
 
 
 @router.get("/redemptions", response_model=Page[RedemptionLogOut])
@@ -601,11 +629,20 @@ def list_redemptions(
         query = query.filter(RedemptionLog.code.ilike(like) | RedemptionLog.message.ilike(like))
     total = query.count()
     rows = query.offset(skip).limit(limit).all()
+    # 批量预取关联，避免 N+1
+    merchant_ids = {r.merchant_id for r in rows if r.merchant_id}
+    account_ids = {r.operator_id for r in rows if r.operator_id} | {r.user_id for r in rows if r.user_id}
+    merchants: dict[str, Merchant] = {}
+    accounts: dict[str, Account] = {}
+    if merchant_ids:
+        merchants = {m.id: m for m in db.query(Merchant).filter(Merchant.id.in_(merchant_ids)).all()}
+    if account_ids:
+        accounts = {a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()}
     items: list[RedemptionLogOut] = []
     for r in rows:
-        merchant = db.get(Merchant, r.merchant_id) if r.merchant_id else None
-        operator = db.get(Account, r.operator_id) if r.operator_id else None
-        user = db.get(Account, r.user_id) if r.user_id else None
+        merchant = merchants.get(r.merchant_id) if r.merchant_id else None
+        operator = accounts.get(r.operator_id) if r.operator_id else None
+        user = accounts.get(r.user_id) if r.user_id else None
         items.append(
             RedemptionLogOut(
                 id=r.id,
