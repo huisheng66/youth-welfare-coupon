@@ -7,12 +7,20 @@
           <div class="who">{{ auth.account?.display_name || auth.account?.username }}</div>
         </div>
       </div>
+      <el-button
+        class="mobile-logout"
+        text
+        circle
+        :icon="SwitchButton"
+        aria-label="退出登录"
+        @click="onLogout"
+      />
       <nav aria-label="用户导航">
-        <router-link to="/user">首页</router-link>
-        <router-link to="/user/profile">资料核验</router-link>
-        <router-link to="/user/coupons">我的券</router-link>
-        <router-link to="/user/points">时长兑换</router-link>
-        <router-link to="/user/settings">设置</router-link>
+        <router-link to="/user"><el-icon><HomeFilled /></el-icon><span>首页</span></router-link>
+        <router-link to="/user/profile"><el-icon><User /></el-icon><span>资料</span></router-link>
+        <router-link to="/user/coupons"><el-icon><Ticket /></el-icon><span>我的券</span></router-link>
+        <router-link to="/user/points"><el-icon><Timer /></el-icon><span>兑换</span></router-link>
+        <router-link to="/user/settings"><el-icon><Setting /></el-icon><span>设置</span></router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
     </header>
@@ -24,6 +32,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
+import { HomeFilled, Setting, SwitchButton, Ticket, Timer, User } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 
 const auth = useAuth()
@@ -83,6 +92,9 @@ nav {
 }
 
 nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--muted);
   padding: 7px 11px;
   border-radius: 8px;
@@ -113,6 +125,10 @@ nav a:focus-visible {
   margin-left: 4px;
 }
 
+.mobile-logout {
+  display: none;
+}
+
 .main {
   max-width: 920px;
   margin: 20px auto;
@@ -121,12 +137,57 @@ nav a:focus-visible {
 
 @media (max-width: 640px) {
   .top {
-    padding: 10px 12px;
+    min-height: 56px;
+    padding: max(6px, env(safe-area-inset-top)) 12px 6px;
+    flex-wrap: nowrap;
+  }
+
+  .mobile-logout {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    color: var(--danger);
+  }
+
+  nav {
+    position: fixed;
+    z-index: var(--z-sticky);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0;
+    min-height: 58px;
+    padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
   }
 
   nav a {
-    padding: 6px 8px;
+    min-width: 0;
+    min-height: 50px;
+    padding: 5px 2px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
     font-size: 0.8125rem;
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  nav a .el-icon {
+    font-size: 1.125rem;
+  }
+
+  nav .logout {
+    display: none;
+  }
+
+  .main {
+    width: 100%;
+    margin: 10px auto 0;
+    padding: 0 8px calc(74px + env(safe-area-inset-bottom));
   }
 }
 </style>

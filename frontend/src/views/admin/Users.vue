@@ -57,8 +57,8 @@
         @selection-change="onPendingSelect"
       >
         <el-table-column type="selection" width="48" />
-        <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="real_name" label="姓名" width="100" />
+        <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="material_note" label="核验材料" min-width="180" show-overflow-tooltip />
         <el-table-column label="提交时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
@@ -73,8 +73,8 @@
 
     <el-table v-loading="loading" :data="items" stripe empty-text="暂无用户" @selection-change="onSelect">
       <el-table-column type="selection" width="48" :selectable="(row) => row.verify_status === 'approved'" />
-      <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="real_name" label="姓名" width="100" />
+      <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="student_no" label="学号" width="120" show-overflow-tooltip />
       <el-table-column label="银行卡" width="150" show-overflow-tooltip>
         <template #default="{ row }">
@@ -88,11 +88,19 @@
           <StatusTag :text="verifyStatusText(row.verify_status)" :type="verifyStatusType(row.verify_status)" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column
+        label="操作"
+        :width="actionColumnWidth"
+        fixed="right"
+        class-name="action-column"
+        label-class-name="action-column"
+      >
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button link type="primary" @click="openIssue(row)" :disabled="row.verify_status !== 'approved'">发券</el-button>
-          <el-button link type="success" @click="openReview(row)" :disabled="row.verify_status !== 'pending'">审核</el-button>
+          <div class="row-actions">
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" @click="openIssue(row)" :disabled="row.verify_status !== 'approved'">发券</el-button>
+            <el-button link type="success" @click="openReview(row)" :disabled="row.verify_status !== 'pending'">审核</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -220,7 +228,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { downloadFile } from '../../api'
 import { useAuth } from '../../auth'
@@ -255,6 +263,18 @@ const pageSize = ref(20)
 const revealing = ref(false)
 const revealedCard = ref('')
 const selectedApproved = computed(() => selected.value.filter((r) => r.verify_status === 'approved'))
+const compactViewport = ref(false)
+const viewportWidth = ref(0)
+const actionColumnWidth = computed(() => {
+  if (!compactViewport.value) return 156
+  return Math.min(132, Math.max(108, Math.round(viewportWidth.value * 0.34)))
+})
+let compactMedia = null
+
+function syncCompactViewport() {
+  compactViewport.value = compactMedia?.matches ?? window.innerWidth <= 768
+  viewportWidth.value = window.innerWidth
+}
 
 function onSelect(rows) {
   selected.value = rows
@@ -486,7 +506,16 @@ async function doBatchIssue() {
 }
 
 onMounted(async () => {
+  compactMedia = window.matchMedia('(max-width: 768px)')
+  syncCompactViewport()
+  compactMedia.addEventListener?.('change', syncCompactViewport)
+  window.addEventListener('resize', syncCompactViewport)
   await Promise.all([load(), loadTemplates()])
+})
+
+onBeforeUnmount(() => {
+  compactMedia?.removeEventListener?.('change', syncCompactViewport)
+  window.removeEventListener('resize', syncCompactViewport)
 })
 </script>
 
@@ -513,5 +542,32 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.row-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  width: 100%;
+}
+
+.row-actions .el-button {
+  min-width: 0;
+  padding-inline: 2px;
+}
+
+.row-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+:deep(.action-column .cell) {
+  padding-inline: 4px;
+}
+
+@media (max-width: 768px) {
+  .row-actions .el-button {
+    font-size: var(--text-sm);
+    min-height: 44px;
+  }
 }
 </style>

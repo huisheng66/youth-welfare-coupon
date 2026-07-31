@@ -7,10 +7,18 @@
           <div class="who">商家核销 · {{ auth.account?.display_name }}</div>
         </div>
       </div>
+      <el-button
+        class="mobile-logout"
+        text
+        circle
+        :icon="SwitchButton"
+        aria-label="退出登录"
+        @click="onLogout"
+      />
       <nav aria-label="商家导航">
-        <router-link to="/merchant">核销</router-link>
-        <router-link to="/merchant/logs">核销记录</router-link>
-        <router-link to="/merchant/settings">设置</router-link>
+        <router-link to="/merchant"><el-icon><Camera /></el-icon><span>核销</span></router-link>
+        <router-link to="/merchant/logs"><el-icon><List /></el-icon><span>记录</span></router-link>
+        <router-link to="/merchant/settings"><el-icon><Setting /></el-icon><span>设置</span></router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
     </header>
@@ -22,6 +30,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
+import { Camera, List, Setting, SwitchButton } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 
 const auth = useAuth()
@@ -82,6 +91,9 @@ nav {
 }
 
 nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: #c5d0d8;
   padding: 7px 11px;
   border-radius: 8px;
@@ -112,9 +124,68 @@ nav a:focus-visible {
   margin-left: 4px;
 }
 
+.mobile-logout {
+  display: none;
+}
+
 .main {
   max-width: 820px;
   margin: 20px auto;
   padding: 0 16px 32px;
+}
+
+@media (max-width: 640px) {
+  .top {
+    min-height: 56px;
+    padding: max(6px, env(safe-area-inset-top)) 12px 6px;
+    flex-wrap: nowrap;
+  }
+
+  .mobile-logout {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    color: #f0a8a8;
+  }
+
+  nav {
+    position: fixed;
+    z-index: var(--z-sticky);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    min-height: 58px;
+    padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    background: #122a30;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  nav a {
+    min-height: 50px;
+    padding: 5px 4px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    font-size: 0.8125rem;
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  nav a .el-icon {
+    font-size: 1.125rem;
+  }
+
+  nav .logout {
+    display: none;
+  }
+
+  .main {
+    width: 100%;
+    margin: 10px auto 0;
+    padding: 0 8px calc(74px + env(safe-area-inset-bottom));
+  }
 }
 </style>

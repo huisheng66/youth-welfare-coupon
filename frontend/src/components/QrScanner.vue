@@ -197,6 +197,7 @@ defineExpose({ start, stop })
   cursor: pointer;
   border: 1px solid transparent;
   user-select: none;
+  min-height: 40px;
 }
 .file-btn.secondary {
   background: #fff;
@@ -240,5 +241,21 @@ code {
   background: rgba(0,0,0,0.06);
   padding: 1px 4px;
   border-radius: 4px;
+}
+
+@media (max-width: 480px) {
+  .actions {
+    align-items: stretch;
+  }
+
+  .actions > *,
+  .file-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 44px;
+  }
+
+  .reader {
+    border-radius: var(--radius-sm);
+  }
 }
 </style>

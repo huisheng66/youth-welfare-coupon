@@ -295,4 +295,16 @@ onBeforeUnmount(() => {
 .success-wrap {
   padding: 8px 0 4px;
 }
+
+@media (max-width: 640px) {
+  .coupon-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .coupon-card .el-button {
+    width: 100%;
+    min-height: 44px;
+  }
+}
 </style>

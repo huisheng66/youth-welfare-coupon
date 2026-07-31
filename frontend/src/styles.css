@@ -103,6 +103,16 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+html {
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -434,6 +444,7 @@ a:focus-visible,
 
 .el-dialog {
   border-radius: var(--radius);
+  max-width: calc(100vw - 24px);
 }
 
 .el-tag {
@@ -468,6 +479,38 @@ a:focus-visible,
   color: var(--muted);
 }
 
+/* Keep wide operational data usable on narrow screens. Element Plus tables
+ * retain their columns and expose a horizontal scroll area instead of
+ * compressing identifiers and actions into unreadable cells. */
+.el-table {
+  max-width: 100%;
+}
+
+.el-table .el-scrollbar__bar.is-horizontal {
+  height: 8px;
+}
+
+.el-dialog__body {
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .el-button,
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-input-number,
+  .role-chip,
+  .file-btn {
+    min-height: 44px;
+  }
+
+  .el-checkbox,
+  .el-radio,
+  .el-switch {
+    min-height: 44px;
+  }
+}
+
 /* Timeline denser */
 .el-timeline-item__timestamp {
   font-size: var(--text-xs) !important;
@@ -478,6 +521,8 @@ a:focus-visible,
   .page-card {
     padding: var(--space-4);
     border-radius: var(--radius-sm);
+    min-width: 0;
+    overflow: hidden;
   }
 
   .stat-item .value {
@@ -486,6 +531,169 @@ a:focus-visible,
 
   .page-title {
     font-size: 1.05rem;
+  }
+
+  .page-header {
+    display: block;
+  }
+
+  .page-header > :not(:first-child) {
+    margin-top: var(--space-3);
+  }
+
+  .toolbar {
+    align-items: stretch;
+  }
+
+  .filters {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .filters > .el-select,
+  .filters > .el-input,
+  .filters > .el-date-editor,
+  .filters > .el-button {
+    width: calc(50% - 4px) !important;
+    flex: 1 1 calc(50% - 4px);
+    min-height: 44px;
+    margin-left: 0;
+  }
+
+  .quick-actions {
+    align-items: stretch;
+  }
+
+  .quick-actions .el-button {
+    flex: 1 1 140px;
+    min-height: 44px;
+    white-space: normal;
+  }
+
+  .el-dialog {
+    margin: max(12px, env(safe-area-inset-top)) auto max(12px, env(safe-area-inset-bottom));
+    max-height: calc(100dvh - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  }
+
+  .el-dialog__header {
+    padding: 16px 16px 10px;
+  }
+
+  .el-dialog__body {
+    max-height: calc(100dvh - 132px);
+    overflow-y: auto;
+    padding: 14px 16px;
+  }
+
+  .el-dialog__footer {
+    padding: 10px 16px max(16px, env(safe-area-inset-bottom));
+  }
+
+  .el-message-box {
+    width: calc(100vw - 24px);
+    max-width: 420px;
+  }
+
+  .el-form-item {
+    display: block;
+  }
+
+  .el-form-item__label {
+    width: auto !important;
+    height: auto;
+    margin-bottom: 6px;
+    padding: 0 !important;
+    line-height: 1.4;
+  }
+
+  .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  .el-input-number {
+    width: 100%;
+  }
+
+  .el-radio-group {
+    display: flex;
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .el-radio-button {
+    flex: 0 0 auto;
+  }
+
+  .el-radio-button__inner {
+    white-space: nowrap;
+  }
+
+  .el-radio-button__inner,
+  .el-tabs__item {
+    min-height: 44px;
+  }
+
+  .el-descriptions__label {
+    min-width: 76px;
+    width: 28%;
+  }
+
+  .pager {
+    justify-content: center !important;
+  }
+
+  .pager > .muted {
+    width: 100%;
+    text-align: center;
+  }
+
+  .el-pagination {
+    max-width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .coupon-code {
+    font-size: 1.1rem;
+    letter-spacing: 0.06em;
+    padding: 12px 8px;
+  }
+}
+
+@media (max-width: 420px) {
+  .page-card {
+    padding: 14px 12px;
+  }
+
+  .filters > .el-select,
+  .filters > .el-input,
+  .filters > .el-date-editor,
+  .filters > .el-button {
+    width: 100% !important;
+    flex-basis: 100%;
+  }
+
+  .stat-grid,
+  .stat-grid.is-primary,
+  .stat-grid.is-secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat-item {
+    min-width: 0;
+    padding: 11px 10px;
+  }
+
+  .stat-item .label,
+  .stat-item .value {
+    overflow-wrap: anywhere;
+  }
+
+  .empty-hint {
+    padding: 28px 14px;
   }
 }
 

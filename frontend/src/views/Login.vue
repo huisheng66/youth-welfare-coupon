@@ -329,10 +329,10 @@ onUnmounted(() => {
 
 <style scoped>
 .login-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
   background:
     radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 46%),
     var(--bg);
@@ -378,5 +378,25 @@ h1 {
   margin: 6px 0 0;
   font-size: 0.8125rem;
   color: var(--brand);
+}
+
+@media (max-width: 420px) {
+  .login-page {
+    place-items: start center;
+    padding: max(12px, env(safe-area-inset-top)) 8px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .panel {
+    width: 100%;
+  }
+
+  .code-row {
+    align-items: stretch;
+  }
+
+  .code-row .el-button {
+    flex: 0 0 auto;
+    padding-inline: 12px;
+  }
 }
 </style>

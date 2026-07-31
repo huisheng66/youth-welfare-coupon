@@ -123,4 +123,20 @@ onMounted(load)
 }
 .row:last-child { border-bottom: none; }
 .actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+@media (max-width: 640px) {
+  .row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions {
+    justify-content: space-between;
+  }
+
+  .actions .el-button {
+    min-width: 112px;
+    min-height: 44px;
+  }
+}
 </style>

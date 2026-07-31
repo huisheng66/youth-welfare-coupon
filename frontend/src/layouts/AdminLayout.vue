@@ -44,8 +44,18 @@
     <el-container class="body">
       <el-header class="header" data-od-id="admin-topbar">
         <div class="header-left">
-          <div class="header-title">{{ pageTitle }}</div>
-          <div class="header-sub muted">{{ roleLabel }} · {{ auth.account?.display_name }}</div>
+          <el-button
+            class="mobile-menu-btn"
+            text
+            circle
+            :icon="MenuIcon"
+            aria-label="打开导航菜单"
+            @click="mobileNavOpen = true"
+          />
+          <div>
+            <div class="header-title">{{ pageTitle }}</div>
+            <div class="header-sub muted">{{ roleLabel }} · {{ auth.account?.display_name }}</div>
+          </div>
         </div>
         <div class="header-actions">
           <el-button
@@ -64,12 +74,50 @@
         <router-view />
       </el-main>
     </el-container>
+
+    <el-drawer
+      v-model="mobileNavOpen"
+      class="mobile-drawer"
+      direction="ltr"
+      size="min(86vw, 320px)"
+      :with-header="false"
+    >
+      <div class="drawer-head">
+        <div>
+          <div class="brand-title">youth</div>
+          <div class="drawer-sub">{{ roleLabel }} · {{ auth.account?.display_name }}</div>
+        </div>
+        <el-button text circle aria-label="关闭导航菜单" @click="mobileNavOpen = false">关闭</el-button>
+      </div>
+      <el-menu
+        :default-active="route.path"
+        router
+        class="mobile-nav-menu"
+        @select="mobileNavOpen = false"
+      >
+        <el-menu-item index="/admin">仪表盘</el-menu-item>
+        <el-menu-item index="/admin/users">
+          <span>用户核验</span>
+          <el-badge v-if="pendingCount > 0" :value="pendingCount" class="badge" />
+        </el-menu-item>
+        <el-menu-item index="/admin/merchants">商家管理</el-menu-item>
+        <el-menu-item index="/admin/templates">券模板</el-menu-item>
+        <el-menu-item index="/admin/coupons">券列表</el-menu-item>
+        <el-menu-item index="/admin/redemptions">核销流水</el-menu-item>
+        <el-menu-item index="/admin/points">志愿时长</el-menu-item>
+        <el-menu-item v-if="isSuper" index="/admin/accounts">账号管理</el-menu-item>
+        <el-menu-item v-if="isSuper" index="/admin/audit">审计日志</el-menu-item>
+        <el-menu-item index="/admin/settings">账号设置</el-menu-item>
+      </el-menu>
+      <el-button class="drawer-logout" plain type="danger" @click="onLogout">退出登录</el-button>
+    </el-drawer>
   </el-container>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Menu as MenuIcon } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 import api from '../api'
 import { roleLabel as mapRole } from '../utils/format'
@@ -78,6 +126,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 const collapsed = ref(false)
+const mobileNavOpen = ref(false)
 const isSuper = computed(() => auth.account?.role === 'super_admin')
 const roleLabel = computed(() => mapRole(auth.account?.role))
 const pendingCount = ref(0)
@@ -111,7 +160,10 @@ function onLogout() {
 }
 
 onMounted(loadPending)
-watch(() => route.path, loadPending)
+watch(() => route.path, () => {
+  mobileNavOpen.value = false
+  loadPending()
+})
 </script>
 
 <style scoped>
@@ -233,6 +285,21 @@ watch(() => route.path, loadPending)
   color: var(--ink);
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.mobile-menu-btn {
+  display: none;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  margin-right: 2px;
+  color: var(--ink);
+}
+
 .header-sub {
   font-size: 0.8125rem;
   margin-top: 2px;
@@ -253,18 +320,77 @@ watch(() => route.path, loadPending)
   margin-left: 8px;
 }
 
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.mobile-nav-menu {
+  border-right: 0;
+  padding: 8px;
+}
+
+.mobile-nav-menu :deep(.el-menu-item) {
+  height: 44px;
+  margin: 2px 0;
+  border-radius: var(--radius-sm);
+}
+
+.drawer-logout {
+  width: calc(100% - 24px);
+  min-height: 44px;
+  margin: 12px;
+}
+
+:global(.mobile-drawer .el-drawer__body) {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 max(12px, env(safe-area-inset-bottom));
+}
+
 @media (max-width: 900px) {
   .aside {
-    width: 72px !important;
+    display: none;
   }
 
-  .brand-text,
-  .collapse-btn {
-    display: none;
+  .mobile-menu-btn {
+    display: inline-flex;
   }
 
   .main {
     padding: 12px 12px 24px;
+  }
+}
+
+@media (max-width: 520px) {
+  .header {
+    min-height: 56px;
+    padding: max(6px, env(safe-area-inset-top)) 12px 6px;
+  }
+
+  .header-sub {
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-actions .el-button--warning {
+    display: none;
+  }
+
+  .main {
+    padding: 10px 8px max(20px, env(safe-area-inset-bottom));
   }
 }
 
