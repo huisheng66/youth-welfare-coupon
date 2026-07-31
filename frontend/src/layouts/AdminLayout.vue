@@ -17,19 +17,14 @@
         active-text-color="#ffffff"
         class="nav-menu"
       >
-        <el-menu-item index="/admin">仪表盘</el-menu-item>
-        <el-menu-item index="/admin/users">
-          <span>用户核验</span>
-          <el-badge v-if="pendingCount > 0 && !collapsed" :value="pendingCount" class="badge" />
+        <el-menu-item v-for="item in visibleNavItems" :key="item.path" :index="item.path">
+          <span>{{ item.label }}</span>
+          <el-badge
+            v-if="item.showPending && pendingCount > 0 && !collapsed"
+            :value="pendingCount"
+            class="badge"
+          />
         </el-menu-item>
-        <el-menu-item index="/admin/merchants">商家管理</el-menu-item>
-        <el-menu-item index="/admin/templates">券模板</el-menu-item>
-        <el-menu-item index="/admin/coupons">券列表</el-menu-item>
-        <el-menu-item index="/admin/redemptions">核销流水</el-menu-item>
-        <el-menu-item index="/admin/points">志愿时长</el-menu-item>
-        <el-menu-item v-if="isSuper" index="/admin/accounts">账号管理</el-menu-item>
-        <el-menu-item v-if="isSuper" index="/admin/audit">审计日志</el-menu-item>
-        <el-menu-item index="/admin/settings">账号设置</el-menu-item>
       </el-menu>
       <button
         class="collapse-btn"
@@ -87,7 +82,13 @@
           <div class="brand-title">youth</div>
           <div class="drawer-sub">{{ roleLabel }} · {{ auth.account?.display_name }}</div>
         </div>
-        <el-button text circle aria-label="关闭导航菜单" @click="mobileNavOpen = false">关闭</el-button>
+        <el-button
+          text
+          circle
+          :icon="CloseIcon"
+          aria-label="关闭导航菜单"
+          @click="mobileNavOpen = false"
+        />
       </div>
       <el-menu
         :default-active="route.path"
@@ -95,19 +96,14 @@
         class="mobile-nav-menu"
         @select="mobileNavOpen = false"
       >
-        <el-menu-item index="/admin">仪表盘</el-menu-item>
-        <el-menu-item index="/admin/users">
-          <span>用户核验</span>
-          <el-badge v-if="pendingCount > 0" :value="pendingCount" class="badge" />
+        <el-menu-item v-for="item in visibleNavItems" :key="item.path" :index="item.path">
+          <span>{{ item.label }}</span>
+          <el-badge
+            v-if="item.showPending && pendingCount > 0"
+            :value="pendingCount"
+            class="badge"
+          />
         </el-menu-item>
-        <el-menu-item index="/admin/merchants">商家管理</el-menu-item>
-        <el-menu-item index="/admin/templates">券模板</el-menu-item>
-        <el-menu-item index="/admin/coupons">券列表</el-menu-item>
-        <el-menu-item index="/admin/redemptions">核销流水</el-menu-item>
-        <el-menu-item index="/admin/points">志愿时长</el-menu-item>
-        <el-menu-item v-if="isSuper" index="/admin/accounts">账号管理</el-menu-item>
-        <el-menu-item v-if="isSuper" index="/admin/audit">审计日志</el-menu-item>
-        <el-menu-item index="/admin/settings">账号设置</el-menu-item>
       </el-menu>
       <el-button class="drawer-logout" plain type="danger" @click="onLogout">退出登录</el-button>
     </el-drawer>
@@ -117,7 +113,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu as MenuIcon } from '@element-plus/icons-vue'
+import { Close as CloseIcon, Menu as MenuIcon } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 import api from '../api'
 import { roleLabel as mapRole } from '../utils/format'
@@ -131,19 +127,26 @@ const isSuper = computed(() => auth.account?.role === 'super_admin')
 const roleLabel = computed(() => mapRole(auth.account?.role))
 const pendingCount = ref(0)
 
-const titles = {
-  '/admin': '仪表盘',
-  '/admin/users': '用户核验',
-  '/admin/merchants': '商家管理',
-  '/admin/templates': '券模板',
-  '/admin/coupons': '券列表',
-  '/admin/redemptions': '核销流水',
-  '/admin/points': '志愿服务时长',
-  '/admin/accounts': '账号管理',
-  '/admin/audit': '审计日志',
-  '/admin/settings': '账号设置',
-}
-const pageTitle = computed(() => titles[route.path] || '管理端')
+/** Single source of truth for sidebar + mobile drawer menus. */
+const navItems = [
+  { path: '/admin', label: '仪表盘' },
+  { path: '/admin/users', label: '用户核验', showPending: true },
+  { path: '/admin/merchants', label: '商家管理' },
+  { path: '/admin/templates', label: '券模板' },
+  { path: '/admin/coupons', label: '券列表' },
+  { path: '/admin/redemptions', label: '核销流水' },
+  { path: '/admin/points', label: '志愿时长', title: '志愿服务时长' },
+  { path: '/admin/accounts', label: '账号管理', superOnly: true },
+  { path: '/admin/audit', label: '审计日志', superOnly: true },
+  { path: '/admin/settings', label: '账号设置' },
+]
+const visibleNavItems = computed(() =>
+  navItems.filter((item) => !item.superOnly || isSuper.value),
+)
+const pageTitle = computed(() => {
+  const item = navItems.find((entry) => entry.path === route.path)
+  return item?.title || item?.label || '管理端'
+})
 
 async function loadPending() {
   try {

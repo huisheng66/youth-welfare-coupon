@@ -266,7 +266,8 @@ const selectedApproved = computed(() => selected.value.filter((r) => r.verify_st
 const compactViewport = ref(false)
 const viewportWidth = ref(0)
 const actionColumnWidth = computed(() => {
-  if (!compactViewport.value) return 156
+  // Keep desktop spacious; only tighten on compact viewports.
+  if (!compactViewport.value) return 240
   return Math.min(132, Math.max(108, Math.round(viewportWidth.value * 0.34)))
 })
 let compactMedia = null
