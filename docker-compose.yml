@@ -1,0 +1,85 @@
+# Youth Welfare Coupon — Docker Compose
+# 一键起停整套服务（api + web + redis）。
+# 用法：
+#   cp .env.docker.example .env  # 填好密钥与域名
+#   docker compose up -d --build
+#   docker compose logs -f api
+#   docker compose down
+#
+# 生产建议：
+#   - 在 .env 中设 APP_ENV=production、SECRET_KEY、FIELD_ENCRYPTION_KEY
+#   - 关闭 OPENAPI_ENABLED、SEED_DEMO_ACCOUNTS
+#   - CORS_ORIGINS 填正式域名
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: welfare-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内固定：数据库文件走 volume 持久化
+      - DATABASE_URL=sqlite:///./data/app.db
+      - RATE_LIMIT_FILE_PATH=./data/rate_limit.db
+      # Redis 在 compose 网络内
+      - REDIS_URL=redis://redis:6379/0
+      - RATE_LIMIT_BACKEND=redis
+    volumes:
+      - api-data:/app/data
+    networks:
+      - welfare-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:19001/api/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: welfare-web
+    restart: unless-stopped
+    ports:
+      # 对外暴露 80；如需 HTTPS 在前面加 nginx/caddy 反代或用 traefik
+      - "80:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - welfare-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: welfare-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - welfare-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+networks:
+  welfare-net:
+    driver: bridge
+
+volumes:
+  api-data:
+    # 后端 SQLite + 限流文件持久化
+  redis-data:
+    # Redis AOF 持久化

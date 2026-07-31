@@ -16,5 +16,5 @@ PyMySQL==1.1.1
 cryptography==49.0.0
 # 测试 / TestClient
 httpx==0.28.1
-# 可选：生产登录限流 Redis 后端
-# redis>=5.0.0
+# 可选：生产登录限流 Redis 后端（Docker 部署默认启用 redis 限流）
+redis>=5.0.0
