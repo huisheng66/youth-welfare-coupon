@@ -1,3 +1,4 @@
+import logging
 import secrets
 import string
 from datetime import date as date_cls
@@ -38,6 +39,8 @@ from app.services.audit import write_audit
 from app.services.live_code import create_live_code, decode_live_code, looks_like_live_code
 
 router = APIRouter(prefix="/coupons", tags=["优惠券"])
+
+logger = logging.getLogger(__name__)
 
 
 def _gen_code(length: int = 10) -> str:
@@ -269,6 +272,16 @@ def issue_coupons(
         detail=f"template={template.id}, qty={body.quantity}, merchant={template.merchant_id}",
     )
     db.commit()
+    logger.info(
+        "coupon.issue",
+        extra={
+            "operator_id": admin.id,
+            "user_id": user.id,
+            "template_id": template.id,
+            "merchant_id": template.merchant_id,
+            "quantity": body.quantity,
+        },
+    )
     loaded = _preload_coupons(db, [c.id for c in created])
     return [coupon_to_out(c) for c in loaded]
 
@@ -595,6 +608,15 @@ def redeem(
         detail=code,
     )
     db.commit()
+    logger.info(
+        "coupon.redeem",
+        extra={
+            "coupon_id": coupon.id,
+            "merchant_id": account.merchant_id,
+            "operator_id": account.id,
+            "user_id": coupon.user_id,
+        },
+    )
     coupon = db.get(CouponInstance, coupon.id)
     assert coupon is not None
     return RedeemOut(message="核销成功", coupon=coupon_to_out(coupon))

@@ -1,11 +1,31 @@
-﻿import { defineConfig } from 'vite'
+import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+import AutoImport from 'unplugin-auto-import/vite'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
-// HTTPS 寮€鍙戯細鎵嬫満鐢ㄥ眬鍩熺綉 IP 璁块棶鏃朵篃鑳借皟鎽勫儚澶达紙闇€娴忚鍣ㄤ俊浠昏嚜绛捐瘉涔︿竴娆★級
-// API 浠嶇敱鏈満 Vite 浠ｇ悊鍒?http://127.0.0.1:19001
+// HTTPS dev: so phones on LAN IP can also open camera (browser needs to trust self-signed cert once)
+// API is proxied by Vite dev server to http://127.0.0.1:19001
+const analyze = process.argv.includes('--mode=analyze')
+const visualizer = analyze
+  ? (await import('rollup-plugin-visualizer')).visualizer({
+      open: true,
+      filename: 'dist/stats.html',
+      gzipSize: true,
+      brotliSize: true,
+    })
+  : null
+
 export default defineConfig({
-  plugins: [vue(), basicSsl()],
+  plugins: [
+    vue(),
+    basicSsl(),
+    // Element Plus 按需引入：组件自动注册，ElMessage/ElMessageBox 等 API 自动导入
+    AutoImport({ resolvers: [ElementPlusResolver()] }),
+    Components({ resolvers: [ElementPlusResolver()] }),
+    ...(visualizer ? [visualizer] : []),
+  ],
   server: {
     host: '0.0.0.0',
     port: 5173,
@@ -27,5 +47,16 @@ export default defineConfig({
     port: 5173,
     https: true,
   },
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        // Only split vue core; element-plus is on-demand imported by unplugin,
+        // let Vite auto-chunk its components alongside the views that use them.
+        manualChunks: {
+          'vendor-vue': ['vue', 'vue-router'],
+        },
+      },
+    },
+  },
 })
-

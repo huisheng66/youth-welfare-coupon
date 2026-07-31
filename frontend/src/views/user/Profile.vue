@@ -111,7 +111,6 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import api from '../../api'
 import { useAuth } from '../../auth'
 import StatusTag from '../../components/StatusTag.vue'

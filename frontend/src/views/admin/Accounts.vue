@@ -108,7 +108,6 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 import { roleLabel } from '../../utils/format'

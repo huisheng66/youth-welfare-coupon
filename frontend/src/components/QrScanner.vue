@@ -41,10 +41,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Html5Qrcode } from 'html5-qrcode'
-
+import { computed, onBeforeUnmount, ref } from 'vue'
 const emit = defineEmits(['scan'])
 
 const secureContext = ref(typeof window !== 'undefined' && !!window.isSecureContext)
@@ -63,8 +60,10 @@ const httpsHint = computed(() => {
   return `https://${hostname}${p}/`
 })
 
-function createScanner() {
+async function createScanner() {
   if (!scanner) {
+    // 动态 import：让 html5-qrcode 独立 chunk，不进首屏
+    const { Html5Qrcode } = await import('html5-qrcode')
     scanner = new Html5Qrcode('qr-reader', { verbose: false })
   }
   return scanner
@@ -77,7 +76,7 @@ async function start() {
   }
   starting.value = true
   try {
-    const s = createScanner()
+    const s = await createScanner()
     if (running.value) return
     await s.start(
       { facingMode: 'environment' },
@@ -132,7 +131,7 @@ function onDecoded(text) {
 async function scanBlob(file) {
   if (!file) return
   try {
-    const s = createScanner()
+    const s = await createScanner()
     if (running.value) await stop()
     const text = await s.scanFile(file, true)
     onDecoded(text)
@@ -147,10 +146,6 @@ function onNativeFile(ev) {
   ev.target.value = ''
   scanBlob(file)
 }
-
-onMounted(() => {
-  createScanner()
-})
 
 onBeforeUnmount(async () => {
   await stop()

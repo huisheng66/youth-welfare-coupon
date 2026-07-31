@@ -61,7 +61,6 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import api, { AUTH_SLOW_TIMEOUT } from '../api'
 import { useAuth } from '../auth'
 import { roleLabel as mapRole } from '../utils/format'

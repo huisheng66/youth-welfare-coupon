@@ -229,7 +229,6 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { downloadFile } from '../../api'
 import { useAuth } from '../../auth'
 import StatusTag from '../../components/StatusTag.vue'

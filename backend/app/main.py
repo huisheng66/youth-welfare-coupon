@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from app.api import auth, coupons, export, merchants, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
 import app.core.database as db
+from app.core.logging import request_id_var, setup_logging
 from app.core.migrate import apply_migrations
 from app.seed import seed_if_empty
 from app.services.rate_limit import get_ip_limiter, reset_limiters
@@ -89,9 +91,40 @@ class CsrfProtectMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RequestIdMiddleware:
+    """纯 ASGI 中间件：为每个请求注入 request_id 到 contextvars + 响应头。
+
+    用纯 ASGI 而非 BaseHTTPMiddleware，避免后者在 call_next 跨任务执行时
+    contextvars 不传播的坑。所有 logger 输出自动带 request_id，可串联单次请求全链路。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers") or [])
+        rid = headers.get(b"x-request-id", b"").decode("ascii", "ignore") or uuid.uuid4().hex[:12]
+        token = request_id_var.set(rid)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", []).append((b"x-request-id", rid.encode("ascii")))
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            request_id_var.reset(token)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     assert_secure_startup(settings)
+    # 结构化日志：生产 JSON Lines + request_id，开发人类可读
+    setup_logging()
 
     # Ensure SQLite directory exists
     if settings.database_url.startswith("sqlite:///./"):
@@ -150,6 +183,8 @@ def create_app() -> FastAPI:
     app.add_middleware(CsrfProtectMiddleware)
     if settings.global_ip_max_requests > 0:
         app.add_middleware(GlobalIpRateLimitMiddleware)
+    # RequestIdMiddleware 最后添加 = 最外层，确保所有内层中间件与路由日志都带 request_id
+    app.add_middleware(RequestIdMiddleware)
 
     app.include_router(auth.router, prefix="/api")
     app.include_router(users.router, prefix="/api")

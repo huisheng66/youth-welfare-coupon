@@ -90,7 +90,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import api from '../../api'
 import QrCode from '../../components/QrCode.vue'
 import EmptyState from '../../components/EmptyState.vue'

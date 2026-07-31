@@ -1,26 +1,28 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth, homePathByRole } from '../auth'
 import Login from '../views/Login.vue'
-import AdminLayout from '../layouts/AdminLayout.vue'
-import UserLayout from '../layouts/UserLayout.vue'
-import MerchantLayout from '../layouts/MerchantLayout.vue'
-import Dashboard from '../views/admin/Dashboard.vue'
-import Users from '../views/admin/Users.vue'
-import Merchants from '../views/admin/Merchants.vue'
-import Templates from '../views/admin/Templates.vue'
-import Coupons from '../views/admin/Coupons.vue'
-import Redemptions from '../views/admin/Redemptions.vue'
-import AuditLogs from '../views/admin/AuditLogs.vue'
-import Accounts from '../views/admin/Accounts.vue'
-import AdminPoints from '../views/admin/Points.vue'
-import UserHome from '../views/user/Home.vue'
-import UserProfile from '../views/user/Profile.vue'
-import UserCoupons from '../views/user/Coupons.vue'
-import UserPoints from '../views/user/Points.vue'
-import MerchantRedeem from '../views/merchant/Redeem.vue'
-import MerchantLogs from '../views/merchant/Logs.vue'
-import Settings from '../views/Settings.vue'
-import NotFound from '../views/NotFound.vue'
+
+// 路由懒加载：按角色拆 chunk，首屏仅加载登录页
+const AdminLayout = () => import('../layouts/AdminLayout.vue')
+const UserLayout = () => import('../layouts/UserLayout.vue')
+const MerchantLayout = () => import('../layouts/MerchantLayout.vue')
+const Dashboard = () => import('../views/admin/Dashboard.vue')
+const Users = () => import('../views/admin/Users.vue')
+const Merchants = () => import('../views/admin/Merchants.vue')
+const Templates = () => import('../views/admin/Templates.vue')
+const Coupons = () => import('../views/admin/Coupons.vue')
+const Redemptions = () => import('../views/admin/Redemptions.vue')
+const AuditLogs = () => import('../views/admin/AuditLogs.vue')
+const Accounts = () => import('../views/admin/Accounts.vue')
+const AdminPoints = () => import('../views/admin/Points.vue')
+const UserHome = () => import('../views/user/Home.vue')
+const UserProfile = () => import('../views/user/Profile.vue')
+const UserCoupons = () => import('../views/user/Coupons.vue')
+const UserPoints = () => import('../views/user/Points.vue')
+const MerchantRedeem = () => import('../views/merchant/Redeem.vue')
+const MerchantLogs = () => import('../views/merchant/Logs.vue')
+const Settings = () => import('../views/Settings.vue')
+const NotFound = () => import('../views/NotFound.vue')
 
 const router = createRouter({
   history: createWebHistory(),

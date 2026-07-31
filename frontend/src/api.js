@@ -1,5 +1,4 @@
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
 import router from './router'
 
 /** 登录 / 改密 / 重置密码等含 bcrypt 的接口，网络抖动时给更长窗口 */

@@ -1,3 +1,4 @@
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -31,9 +32,11 @@ from app.schemas.common import MessageOut, Page, TokenOut
 from app.services.audit import write_audit
 from app.services.mail import consume_email_code, issue_email_code, send_test_email
 from app.services.rate_limit import get_login_limiter
-from app.services.sanitize import sanitize_plain_text
+from app.services.sanitize import mask_email, sanitize_plain_text
 
 router = APIRouter(prefix="/auth", tags=["认证"])
+
+logger = logging.getLogger(__name__)
 
 
 def _login_user_key(username: str) -> str:
@@ -307,14 +310,26 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
     account = _find_by_login(db, login_id)
     if not account or not verify_password(body.password, account.password_hash):
         _record_login_fail(ip, login_id)
+        logger.warning(
+            "login.failed",
+            extra={"login_id": mask_email(login_id) if "@" in login_id else login_id, "ip": ip, "reason": "bad_credentials"},
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱/用户名或密码错误")
     if not account.is_active:
         _record_login_fail(ip, login_id)
+        logger.warning(
+            "login.failed",
+            extra={"user_id": account.id, "ip": ip, "reason": "inactive"},
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号已停用")
     _clear_login_fail(ip, login_id)
     token = create_access_token(account.id, {"role": account.role.value})
     # 主路径：HttpOnly Cookie 下发 token，前端 JS 不可读，防 XSS 窃取
     set_auth_cookie(response, token)
+    logger.info(
+        "login.success",
+        extra={"user_id": account.id, "role": account.role.value, "ip": ip},
+    )
     # 过渡期仍返回 access_token，兼容尚未改造的前端/小程序
     return TokenOut(access_token=token)
 

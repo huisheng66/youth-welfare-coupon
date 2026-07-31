@@ -119,7 +119,6 @@
 <script setup>
 import { onUnmounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import api, { AUTH_SLOW_TIMEOUT } from '../api'
 import { homePathByRole, login, register } from '../auth'
 

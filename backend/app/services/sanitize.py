@@ -64,3 +64,24 @@ def validate_password_strength(password: str, *, min_length: int = 8) -> str:
 
 def password_has_letter_and_digit(password: str) -> bool:
     return bool(_HAS_LETTER.search(password or "") and _HAS_DIGIT.search(password or ""))
+
+
+# —— 日志脱敏：避免把完整邮箱/验证码/卡号写进日志 ——
+
+def mask_email(email: str | None) -> str:
+    """脱敏邮箱：foo@bar.com → f**@bar.com；空或异常返回 ***。"""
+    if not email or "@" not in email:
+        return "***"
+    local, _, domain = email.partition("@")
+    if not local:
+        return "***@" + domain
+    return local[0] + "***@" + domain
+
+
+def mask_code(code: str | None) -> str:
+    """脱敏验证码/动态码：保留前2后2，中间用 *** 代替；过短直接 ***。"""
+    if not code:
+        return "***"
+    if len(code) <= 4:
+        return "***"
+    return code[:2] + "***" + code[-2:]

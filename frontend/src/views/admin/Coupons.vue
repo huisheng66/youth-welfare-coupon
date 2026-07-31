@@ -73,7 +73,6 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { dateRangeParams, downloadFile } from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'

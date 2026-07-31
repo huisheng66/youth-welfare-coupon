@@ -91,3 +91,49 @@ jobs:
         with:
           name: zap-baseline-report
           path: reports/zap-baseline-ci.html
+
+  # Nuclei with youth-owned templates (auth-401 / login-sqli / role-idor).
+  # Manual: trigger after staging is up; set repo variable NUCLEI_TARGET.
+  # Local equivalent: bash scripts/run-nuclei.sh <staging-url>
+  nuclei-scan:
+    name: Nuclei (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check target
+        env:
+          TARGET: ${{ vars.NUCLEI_TARGET }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            echo "Set repository variable NUCLEI_TARGET to staging URL, or skip this job."
+            echo "Local: bash scripts/run-nuclei.sh <target>"
+            exit 0
+          fi
+      - name: Run nuclei with youth templates
+        env:
+          TARGET: ${{ vars.NUCLEI_TARGET }}
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v "$(pwd)/tools/nuclei-templates:/templates:ro" \
+            -v "$(pwd)/reports:/out:rw" \
+            projectdiscovery/nuclei:latest \
+            -t /templates -u "$TARGET" -j -o /out/nuclei.jsonl -silent || true
+      - name: Check findings
+        run: |
+          if [ -s reports/nuclei.jsonl ]; then
+            echo "==> findings:"
+            cat reports/nuclei.jsonl
+            echo
+            echo "==> $(wc -l < reports/nuclei.jsonl) finding(s) — investigate before release"
+            exit 1
+          else
+            echo "==> no findings, all clear"
+          fi
+      - name: Upload report
+        if: hashFiles('reports/nuclei.jsonl') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuclei-report
+          path: reports/nuclei.jsonl

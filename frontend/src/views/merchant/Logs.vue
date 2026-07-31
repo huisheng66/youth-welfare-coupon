@@ -53,7 +53,6 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import api, { downloadFile } from '../../api'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, redeemResultType } from '../../utils/format'

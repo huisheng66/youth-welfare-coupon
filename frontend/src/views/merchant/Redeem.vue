@@ -110,7 +110,6 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../../api'
 import QrScanner from '../../components/QrScanner.vue'
 import StatusTag from '../../components/StatusTag.vue'
