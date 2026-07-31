@@ -1,0 +1,51 @@
+# HTTPS overlay：叠加在 docker-compose.yml 之上，用 Caddy 自动签发并续期 Let's Encrypt 证书
+# 用法：
+#   1. 在 .env 中设置 WELFARE_DOMAIN=coupon.example.com（你的正式域名）
+#   2. 确保域名 A 记录已指向本机公网 IP，且 80/443 端口对外可达
+#   3. 启动：
+#        docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#   4. Caddy 会自动申请证书，首次访问 https://<域名> 可能需等 10-30 秒
+#
+# 说明：
+#   - Caddy 同时接管 80（用于 ACME HTTP-01 校验）和 443（HTTPS 服务）
+#   - web 容器不再直接映射宿主机 80，改由 Caddy 反代到 web:8080
+#   - 证书与配置持久化到 caddy-data 卷，重启不丢失
+
+services:
+  web:
+    # 覆盖基础 compose：取消端口映射，改由 caddy 反代
+    ports: !reset []
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: welfare-caddy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "80:80"     # ACME HTTP-01 校验 + HTTP→HTTPS 跳转
+      - "443:443"   # HTTPS 服务
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data         # 证书 + ACME 账户
+      - caddy-config:/config     # Caddy 运行时配置
+    networks:
+      - frontend-net
+    depends_on:
+      web:
+        condition: service_healthy
+    mem_limit: 128m
+    mem_reservation: 64m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  caddy-data:
+  caddy-config:

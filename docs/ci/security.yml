@@ -137,3 +137,71 @@ jobs:
         with:
           name: nuclei-report
           path: reports/nuclei.jsonl
+
+  # Docker 构建验证：确保 Dockerfile 始终可构建（不推送镜像）
+  # 失败常见原因：依赖更新、基础镜像版本变化、.dockerignore 误排除
+  docker-build:
+    name: Docker build (api + web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build api image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          tags: welfare-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: welfare-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Validate compose config
+        run: docker compose -f docker-compose.yml config --quiet
+
+  # trivy 镜像扫描：扫描 HIGH/CRITICAL 漏洞
+  # 依赖 docker-build job 产出的镜像
+  trivy-scan:
+    name: Trivy image scan
+    needs: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Rebuild api image (from gha cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: welfare-api:ci
+          cache-from: type=gha
+      - name: Rebuild web image (from gha cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          load: true
+          tags: welfare-web:ci
+          cache-from: type=gha
+      - name: Trivy scan api
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: welfare-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Trivy scan web
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: welfare-web:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+

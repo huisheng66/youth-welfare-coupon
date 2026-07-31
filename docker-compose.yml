@@ -13,14 +13,28 @@ name: welfare
 #   - 在 .env 中设 APP_ENV=production、SECRET_KEY、FIELD_ENCRYPTION_KEY
 #   - 关闭 OPENAPI_ENABLED、SEED_DEMO_ACCOUNTS
 #   - CORS_ORIGINS 填正式域名
+#   - HTTPS：叠加 docker-compose.https.yml（Caddy 自动 TLS）
+
+# x- 锚点：复用日志与资源限制配置，避免每个 service 重复
+x-logging: &default-logging
+  driver: json-file
+  options:
+    # 单文件最大 10MB，保留 3 份 → 每容器日志上限 ~30MB，防止磁盘被撑爆
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &default-restart
+  unless-stopped
 
 services:
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: welfare-api:latest
     container_name: welfare-api
-    restart: unless-stopped
+    restart: *default-restart
+    logging: *default-logging
     env_file:
       - .env
     environment:
@@ -33,7 +47,15 @@ services:
     volumes:
       - api-data:/app/data
     networks:
-      - welfare-net
+      # 仅接入 backend-net，不对外暴露，web 通过同网络反代访问
+      - backend-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    # 资源限制：单容器上限，防止单服务异常吃光宿主机内存/CPU
+    mem_limit: 512m
+    mem_reservation: 256m
+    cpus: 1.5
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:19001/api/health', timeout=3).status==200 else 1)"]
       interval: 30s
@@ -45,16 +67,22 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: welfare-web:latest
     container_name: welfare-web
-    restart: unless-stopped
+    restart: *default-restart
+    logging: *default-logging
     ports:
-      # 对外暴露 80；如需 HTTPS 在前面加 nginx/caddy 反代或用 traefik
+      # 对外暴露 80；如需 HTTPS 叠加 docker-compose.https.yml 用 Caddy
       - "80:8080"
     depends_on:
       api:
         condition: service_healthy
     networks:
-      - welfare-net
+      - frontend-net   # 对外网络（端口映射）
+      - backend-net    # 反代到 api 必须接入
+    mem_limit: 128m
+    mem_reservation: 64m
+    cpus: 0.5
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
       interval: 30s
@@ -65,12 +93,17 @@ services:
   redis:
     image: redis:7-alpine
     container_name: welfare-redis
-    restart: unless-stopped
+    restart: *default-restart
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis-data:/data
     networks:
-      - welfare-net
+      # 仅 backend-net，外部完全不可达
+      - backend-net
+    mem_limit: 96m
+    mem_reservation: 32m
+    cpus: 0.5
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -78,8 +111,13 @@ services:
       retries: 3
 
 networks:
-  welfare-net:
+  # 对外网络：仅 web 接入（端口映射 80）
+  frontend-net:
     driver: bridge
+  # 内部网络：api + redis + web 反代通道，外部无法直接访问 api/redis
+  backend-net:
+    driver: bridge
+    internal: false   # 设 true 会断网（无法拉镜像/装包），保持 false 依赖宿主机防火墙隔离
 
 volumes:
   api-data:

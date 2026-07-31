@@ -128,20 +128,97 @@ docker compose down
 docker compose down -v
 ```
 
+## 常用命令快捷方式
+
+项目提供两套等价的快捷命令封装，避免记长串 `docker compose` 参数：
+
+| 操作 | Makefile（Linux/macOS） | PowerShell（Windows） |
+|------|------------------------|----------------------|
+| 启动 dev | `make up` | `.\scripts\docker.ps1 up` |
+| 启动 prod | `make up-prod` | `.\scripts\docker.ps1 up-prod` |
+| 启动 HTTPS | `make up-https` | `.\scripts\docker.ps1 up-https` |
+| 停止 | `make down` | `.\scripts\docker.ps1 down` |
+| 查看日志 | `make logs-api` | `.\scripts\docker.ps1 logs api` |
+| 进入容器 | `make shell-api` | `.\scripts\docker.ps1 shell api` |
+| 备份数据库 | `make backup` | `.\scripts\docker.ps1 backup` |
+| 恢复数据库 | `make restore FILE=./backup/xxx.db` | `.\scripts\docker.ps1 restore FILE=.\backup\xxx.db` |
+| 镜像扫描 | `make scan` | `.\scripts\docker.ps1 scan` |
+| 校验配置 | `make validate` | `.\scripts\docker.ps1 validate` |
+
+运行 `make help` 或 `.\scripts\docker.ps1 help` 查看完整命令列表。
+
+## 开发 vs 生产配置
+
+Compose 默认会自动加载 `docker-compose.override.yml`，提供开发便利：
+
+| 配置项 | 开发（override） | 生产（base） |
+|--------|------------------|--------------|
+| api 端口 | 暴露 19001 | 仅内部网络 |
+| redis 端口 | 暴露 6379 | 仅内部网络 |
+| 启动命令 | `uvicorn --reload`（热重载） | `alembic upgrade head && uvicorn --workers 2` |
+| APP_ENV | development | production |
+| OpenAPI | 开启 | 关闭 |
+| 演示数据 | 自动 seed | 不 seed |
+| 资源限制 | 无 | api 512MB/1.5核, web 128MB/0.5核, redis 96MB/0.5核 |
+
+启动生产模式（跳过 override）：
+
+```bash
+docker compose -f docker-compose.yml up -d --build
+# 或
+make up-prod
+```
+
+## 资源限制与日志轮转
+
+生产 compose 已为每个服务配置：
+
+**资源限制**（防止单容器吃光宿主机资源）：
+- api: 内存 512MB / CPU 1.5 核
+- web: 内存 128MB / CPU 0.5 核
+- redis: 内存 96MB / CPU 0.5 核
+
+**日志轮转**（防止日志撑爆磁盘）：
+- 驱动：json-file
+- 单文件最大 10MB，保留 3 份
+- 每容器日志上限约 30MB
+
+如需调整，编辑 `docker-compose.yml` 中对应服务的 `mem_limit`、`cpus`、`logging.options`。
+
+## 网络隔离
+
+生产 compose 拆分两个网络：
+
+```
+┌─────────────────────────────────────────────┐
+│  frontend-net（对外）                        │
+│    └─ web (80→8080)                          │
+│         │                                    │
+│         │ 反代 /api/                         │
+│         ▼                                    │
+│  backend-net（内部）                          │
+│    ├─ api (19001，无端口映射，外部不可达)     │
+│    └─ redis (6379，无端口映射，外部不可达)    │
+└─────────────────────────────────────────────┘
+```
+
+- **api 和 redis 不暴露任何端口**到宿主机，只能通过 web 容器反代访问
+- web 同时接入两个网络：frontend-net 接收外部请求，backend-net 反代到 api
+- 依赖顺序：redis healthy → api 启动 → api healthy → web 启动
+
 ## 数据库备份与恢复
 
 ### 备份
 
 ```bash
-# 备份 SQLite
-docker compose exec api python -c "
-import shutil
-shutil.copy('/app/data/app.db', '/app/data/backup-$(date +%Y%m%d).db')
-print('backup done')
-"
+# 用快捷命令（推荐）
+make backup
+# 或 PowerShell
+.\scripts\docker.ps1 backup
 
-# 拷出容器
-docker compose cp api:/app/data/backup-20260731.db ./backup-20260731.db
+# 手动执行
+docker compose exec -T api python -c "import shutil; shutil.copy('/app/data/app.db','/app/data/backup-$(date +%Y%m%d).db')"
+docker compose cp api:/app/data/backup-20260731.db ./backup/backup-20260731.db
 ```
 
 ### 恢复
@@ -168,38 +245,31 @@ docker compose restart api
 
 ## HTTPS 配置
 
-容器内 web 服务只监听 80。HTTPS 建议在前面加一层反代：
+容器内 web 服务只监听 80。项目已内置 Caddy overlay 方案，自动签发并续期 Let's Encrypt 证书。
 
-### 方案 A：Caddy（自动 HTTPS）
+### 方案 A：Caddy 自动 HTTPS（推荐，项目已内置）
 
-```yaml
-# docker-compose.https.yml（overlay）
-services:
-  caddy:
-    image: caddy:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy-data:/data
-    depends_on:
-      - web
-    networks:
-      - welfare-net
+项目已提供 `docker-compose.https.yml` 和 `Caddyfile`，开箱即用：
 
-volumes:
-  caddy-data:
-```
+1. 在 `.env` 中设置正式域名：
+   ```
+   WELFARE_DOMAIN=coupon.example.com
+   ```
+2. 确保域名 A 记录已指向本机公网 IP，且 80/443 端口对外可达
+3. 启动：
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+   # 或
+   make up-https
+   ```
 
-```
-# Caddyfile
-coupon.example.com {
-    reverse_proxy web:8080
-}
-```
+Caddy 会自动：
+- 向 Let's Encrypt 申请证书（首次访问触发，约 10-30 秒）
+- 自动续期（到期前 30 天）
+- 80 端口所有请求跳转到 443
+- 注入 HSTS / X-Content-Type-Options 等安全响应头
 
-启动：`docker compose -f docker-compose.yml -f docker-compose.https.yml up -d`
+`Caddyfile` 可按需自定义（如添加多个域名、访问日志等）。
 
 ### 方案 B：外部 Nginx + Certbot
 
