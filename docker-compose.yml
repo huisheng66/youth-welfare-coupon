@@ -14,8 +14,15 @@ name: welfare
 #   - 关闭 OPENAPI_ENABLED、SEED_DEMO_ACCOUNTS
 #   - CORS_ORIGINS 填正式域名
 #   - HTTPS：叠加 docker-compose.https.yml（Caddy 自动 TLS）
+#
+# 安全基线（对照 CIS Docker Benchmark §5 容器运行时）：
+#   - 非 root 用户（Dockerfile 内 USER app，uid 1001）
+#   - security_opt: no-new-privileges（禁止 setuid 提权）
+#   - cap_drop: ALL（丢弃全部 Linux capabilities）
+#   - read_only: true（根文件系统只读，仅 tmpfs/volume 可写）
+#   - pids_limit + mem_limit + memswap_limit（防 fork 炸弹 / OOM 殃及宿主机）
 
-# x- 锚点：复用日志与资源限制配置，避免每个 service 重复
+# x- 锚点：复用日志与安全配置，避免每个 service 重复
 x-logging: &default-logging
   driver: json-file
   options:
@@ -24,7 +31,18 @@ x-logging: &default-logging
     max-file: "3"
 
 x-restart: &default-restart
-  unless-stopped
+  # on-failure:5 — OWASP Docker Rule #7：限制重启次数防异常循环
+  # 5 次重试足够覆盖瞬时故障（端口占用、依赖未就绪），又不会因配置错误无限重启撑爆日志
+  on-failure:5
+
+# 运行时安全基线（CIS §5.1-5.5,5.10,5.12）
+x-security: &default-security
+  security_opt:
+    - no-new-privileges:true   # 禁止通过 setuid/setgid 提权
+  cap_drop:
+    - ALL                       # 丢弃所有 Linux capabilities
+  pids_limit: 100               # 限制容器内进程数，防 fork 炸弹
+  read_only: true               # 根文件系统只读
 
 services:
   api:
@@ -35,6 +53,9 @@ services:
     container_name: welfare-api
     restart: *default-restart
     logging: *default-logging
+    <<: *default-security
+    # init: tini 作为 PID 1，正确转发信号 + 回收僵尸进程（Docker 官方推荐）
+    init: true
     env_file:
       - .env
     environment:
@@ -44,17 +65,37 @@ services:
       # Redis 在 compose 网络内
       - REDIS_URL=redis://redis:6379/0
       - RATE_LIMIT_BACKEND=redis
+      # 只读根文件系统下，Python 临时目录指向 tmpfs
+      - TMPDIR=/tmp
+      # Docker secrets：pydantic-settings 从 /run/secrets/<field_name> 读取敏感配置
+      # 优先级：env > secrets_dir > .env > defaults，故 .env 同名值会被 secrets 覆盖
+      - SECRETS_DIR=/run/secrets
+    # Docker secrets（OWASP Rule #12）：敏感密钥走 /run/secrets，不进 env_file
+    secrets:
+      - secret_key
+      - field_encryption_key
+      - mail_password
     volumes:
       - api-data:/app/data
+    # tmpfs：可写的临时目录（read_only 根文件系统下必需）
+    tmpfs:
+      - /tmp
+    # ulimits：补齐文件描述符与进程数限制（OWASP Rule #7 / CIS）
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 65536
+      nproc: 100
     networks:
       # 仅接入 backend-net，不对外暴露，web 通过同网络反代访问
       - backend-net
     depends_on:
       redis:
         condition: service_healthy
-    # 资源限制：单容器上限，防止单服务异常吃光宿主机内存/CPU
+    # 资源限制：单容器上限 + 禁 swap，防止单服务异常吃光宿主机内存/CPU
     mem_limit: 512m
     mem_reservation: 256m
+    memswap_limit: 512m        # 等于 mem_limit → 禁止 swap
     cpus: 1.5
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:19001/api/health', timeout=3).status==200 else 1)"]
@@ -71,6 +112,10 @@ services:
     container_name: welfare-web
     restart: *default-restart
     logging: *default-logging
+    <<: *default-security
+    # nginx-unprivileged 以 uid 101 运行，无需 cap_add（CIS §5.3 capabilities 最小化）
+    # init: tini 作为 PID 1，正确转发信号 + 回收僵尸进程
+    init: true
     ports:
       # 对外暴露 80；如需 HTTPS 叠加 docker-compose.https.yml 用 Caddy
       - "80:8080"
@@ -80,8 +125,28 @@ services:
     networks:
       - frontend-net   # 对外网络（端口映射）
       - backend-net    # 反代到 api 必须接入
+    # nginx-unprivileged (uid 101) 只读根文件系统下需要可写的路径
+    # tmpfs 用 mode=1777（sticky+rwx，类似 /tmp），让非 root nginx 进程可写缓存与 pid 目录
+    volumes:
+      - type: tmpfs
+        target: /tmp
+      - type: tmpfs
+        target: /var/cache/nginx
+        tmpfs:
+          mode: 1777
+      - type: tmpfs
+        target: /var/run
+        tmpfs:
+          mode: 1777
+    # ulimits：补齐文件描述符与进程数限制（OWASP Rule #7 / CIS）
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 65536
+      nproc: 100
     mem_limit: 128m
     mem_reservation: 64m
+    memswap_limit: 128m
     cpus: 0.5
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
@@ -91,18 +156,43 @@ services:
       retries: 3
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: welfare-redis
     restart: *default-restart
     logging: *default-logging
+    # redis 保留除 read_only 外的安全配置：appendonlydir 在 /data 下动态创建，
+    # read_only 会阻止 redis 进程创建该目录导致启动失败
+    # cap_add SETUID/SETGID：redis entrypoint 用 setpriv 从 root 降权到 redis 用户需要这两项
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    pids_limit: 100
+    # init: tini 作为 PID 1（redis-server 信号处理 OK，init 主要回收僵尸子进程）
+    init: true
+    # ulimits：补齐文件描述符与进程数限制（OWASP Rule #7 / CIS）
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 65536
+      nproc: 100
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    # expose：仅在 backend-net 内可见，不映射到宿主机端口（对照 Docker 官方 awesome-compose nginx-flask-mysql）
+    expose:
+      - "6379"
     volumes:
       - redis-data:/data
+    tmpfs:
+      - /tmp
     networks:
       # 仅 backend-net，外部完全不可达
       - backend-net
     mem_limit: 96m
     mem_reservation: 32m
+    memswap_limit: 96m
     cpus: 0.5
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -119,8 +209,21 @@ networks:
     driver: bridge
     internal: false   # 设 true 会断网（无法拉镜像/装包），保持 false 依赖宿主机防火墙隔离
 
+secrets:
+  # 敏感配置走 Docker secrets（OWASP Rule #12），文件内容即密钥值（不带换行）
+  # 部署准备：cp secrets/<name>.txt.example secrets/<name>.txt 并填入实际值
+  # 文件不存在时 compose up 会报错，必须先创建
+  # pydantic-settings 从 /run/secrets/<field_name> 读取，优先级高于 .env
+  secret_key:
+    file: ./secrets/secret_key.txt
+  field_encryption_key:
+    file: ./secrets/field_encryption_key.txt
+  mail_password:
+    file: ./secrets/mail_password.txt
+
 volumes:
   api-data:
     # 后端 SQLite + 限流文件持久化
   redis-data:
     # Redis AOF 持久化
+

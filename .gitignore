@@ -34,3 +34,6 @@ tools/**/__pycache__/
 # Docker
 .env
 docker-compose.override.yml
+# Docker secrets：实际密钥文件不入库，仅保留 .example 模板
+secrets/*.txt
+!secrets/*.txt.example

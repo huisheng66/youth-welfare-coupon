@@ -1,8 +1,9 @@
 from functools import lru_cache
+import os
 from typing import Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 # Known weak / placeholder secrets that must never ship in production
 INSECURE_SECRET_KEYS = frozenset(
@@ -17,8 +18,42 @@ INSECURE_SECRET_KEYS = frozenset(
 )
 
 
+def _resolve_secrets_dir() -> str | None:
+    """
+    Docker secrets 目录解析（OWASP Docker Rule #12）。
+    - compose 通过 SECRETS_DIR=/run/secrets 启用
+    - 目录不存在时返回 None，避免本地开发或未配置 secrets 时启动报错
+    - pydantic-settings 读取 /run/secrets/<field_name>，优先级高于 .env
+    """
+    d = os.environ.get("SECRETS_DIR", "").strip()
+    if not d:
+        return None
+    if not os.path.isdir(d):
+        return None
+    return d
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        secrets_dir=_resolve_secrets_dir(),
+        extra="ignore",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Docker secrets 优先于环境变量与 .env（OWASP Rule #12）
+        # 仅对 secrets_dir 中存在的字段生效（secret_key/field_encryption_key/mail_password），
+        # 非敏感字段（APP_ENV/CORS_ORIGINS 等）不在 secrets_dir 中，仍走 env_settings
+        return (init_settings, file_secret_settings, env_settings, dotenv_settings)
 
     app_name: str = "youth"
     # development | production — drives secure defaults when explicit flags are omitted
