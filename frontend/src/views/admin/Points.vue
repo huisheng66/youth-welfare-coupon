@@ -6,6 +6,9 @@
           <h2 class="page-title">志愿服务时长</h2>
           <p class="page-desc">为正入账、为负扣减；可对多名已通过用户批量调整</p>
         </div>
+        <div class="filters">
+          <el-button type="primary" plain @click="openImportPoints">导入时长</el-button>
+        </div>
       </div>
 
       <el-form label-width="100px" style="max-width:560px" @submit.prevent="grant">
@@ -95,12 +98,43 @@
         />
       </div>
     </div>
+
+    <el-dialog v-model="importPointsVisible" title="批量导入时长" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px"
+        title="支持 .xlsx / .csv / .txt / .docx；每行：用户标识、时长(小时)、说明（可选）"
+        description="用户标识支持用户名 / 邮箱 / 手机 / 学号；时长可两位小数，负数为扣减；仅核验通过的用户可入账。"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="默认说明">
+          <el-input v-model="importPointsForm.reason" placeholder="行内未填说明时使用" />
+        </el-form-item>
+      </el-form>
+      <el-upload
+        drag
+        :auto-upload="false"
+        :limit="1"
+        accept=".xlsx,.csv,.txt,.docx"
+        :on-change="onImportPointsFile"
+        :on-remove="() => (importPointsFile = null)"
+      >
+        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
+      </el-upload>
+      <template #footer>
+        <el-button @click="downloadPointsTemplate">下载模板</el-button>
+        <el-button type="primary" :loading="importing" :disabled="!importPointsFile" @click="doImportPoints">
+          开始导入
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <ImportResultDialog v-model="importResultVisible" :result="importResult" />
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import api, { downloadFile } from '../../api'
+import ImportResultDialog from '../../components/ImportResultDialog.vue'
 import { formatHours, formatTime } from '../../utils/format'
 
 const users = ref([])
@@ -199,6 +233,62 @@ async function loadLedger() {
 async function onExportLedger() {
   await downloadFile('/export/points-ledger', 'points_ledger.csv')
   ElMessage.success('已开始下载')
+}
+
+// ---- 批量导入时长（名单文件：xlsx / csv / txt / docx）----
+const importPointsVisible = ref(false)
+const importResultVisible = ref(false)
+const importPointsFile = ref(null)
+const importing = ref(false)
+const importResult = ref(null)
+const importPointsForm = reactive({ reason: '志愿服务时长入账' })
+const IMPORT_TIMEOUT = 60000
+
+function onImportPointsFile(uploadFile) {
+  importPointsFile.value = uploadFile?.raw || null
+}
+
+function openImportPoints() {
+  importPointsFile.value = null
+  importPointsVisible.value = true
+}
+
+function downloadPointsTemplate() {
+  const blob = new Blob(
+    [
+      '\ufeff' +
+        ['用户标识（用户名/邮箱/手机/学号）,时长(小时),说明', 'youth1,2.5,社区志愿服务', '13800000001,-1,'].join('\n'),
+    ],
+    { type: 'text/csv;charset=utf-8' },
+  )
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = '时长导入模板.csv'
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+async function doImportPoints() {
+  const fd = new FormData()
+  fd.append('file', importPointsFile.value)
+  fd.append('reason', importPointsForm.reason)
+  importing.value = true
+  try {
+    const res = await api.post('/points/grant-import', fd, { timeout: IMPORT_TIMEOUT })
+    importPointsVisible.value = false
+    importResult.value = res.data
+    importResultVisible.value = true
+    if (res.data.succeeded > 0) {
+      loadLedger()
+      loadUsers()
+    }
+  } finally {
+    importing.value = false
+  }
 }
 
 onMounted(async () => {

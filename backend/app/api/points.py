@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import require_roles
 from app.models.entities import (
@@ -17,6 +18,7 @@ from app.models.entities import (
     UserProfile,
     VerifyStatus,
 )
+from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import MessageOut, Page
 from app.schemas.coupon import CouponOut
 from app.schemas.points import (
@@ -29,6 +31,13 @@ from app.schemas.points import (
 )
 from app.services.audit import write_audit
 from app.services.points import apply_points, get_or_create_account, quantize_hours
+from app.services.import_file import (
+    KIND_POINTS,
+    map_columns,
+    parse_table_file,
+    read_upload_bytes,
+    resolve_user,
+)
 import secrets
 import string
 
@@ -195,6 +204,87 @@ def grant_points_batch(
     if failed:
         msg += f"，失败 {len(failed)}：{'; '.join(failed[:5])}"
     return MessageOut(message=msg)
+
+
+@router.post("/grant-import", response_model=ImportResultOut)
+def grant_points_import(
+    file: UploadFile = File(..., description="时长名单（.xlsx / .csv / .txt / .docx）"),
+    reason: str = Form("志愿服务时长入账", description="行内未填说明时使用的默认说明"),
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> ImportResultOut:
+    """按名单文件调整时长：每行「用户标识、时长(小时)、说明(可选)」。
+
+    复用单人发放的全部校验（核验状态、两位小数、余额不为负），单行失败
+    记入 errors 不中断；时长支持负数（扣减）。
+    """
+    settings = get_settings()
+    try:
+        data = read_upload_bytes(file.file)
+        rows = parse_table_file(file.filename or "", data, max_rows=settings.import_max_rows)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    header = map_columns(rows[0], KIND_POINTS)
+    data_rows = rows[1:] if header else rows
+
+    def cell_of(row: list[str], logical: str, position: int | None) -> str:
+        idx = header.get(logical) if header else position
+        if idx is None or idx >= len(row):
+            return ""
+        return row[idx]
+
+    default_reason = (reason or "").strip()[:255] or "志愿服务时长入账"
+    errors: list[ImportRowError] = []
+    ok = 0
+    for lineno, row in enumerate(data_rows, start=1):
+        token = cell_of(row, "identifier", 0)
+        hours_raw = cell_of(row, "hours", 1)
+        row_reason = cell_of(row, "reason", 2)[:255] or default_reason
+        if not token:
+            errors.append(ImportRowError(row=lineno, identifier=hours_raw, reason="用户标识为空"))
+            continue
+        user = resolve_user(db, token)
+        if not user:
+            errors.append(
+                ImportRowError(
+                    row=lineno,
+                    identifier=token,
+                    reason="用户不存在或无法唯一识别（支持用户名/邮箱/手机/学号）",
+                )
+            )
+            continue
+        try:
+            amount = Decimal(hours_raw)
+        except (InvalidOperation, ValueError):
+            errors.append(ImportRowError(row=lineno, identifier=token, reason=f"时长格式无效：{hours_raw}"))
+            continue
+        try:
+            _grant_one(db, user_id=user.id, amount=amount, reason=row_reason, admin=admin)
+        except (ValueError, ArithmeticError) as exc:
+            errors.append(ImportRowError(row=lineno, identifier=token, reason=str(exc)))
+            continue
+        ok += 1
+
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="grant_points_import",
+        target_type="account",
+        detail=f"rows={len(data_rows)}, ok={ok}, fail={len(errors)}",
+    )
+    db.commit()
+    shown = errors[:100]
+    message = f"按名单时长调整完成：共 {len(data_rows)} 行，成功 {ok} 行，失败 {len(errors)} 行"
+    if len(errors) > len(shown):
+        message += "（错误明细仅显示前 100 条）"
+    return ImportResultOut(
+        total=len(data_rows),
+        succeeded=ok,
+        failed=len(errors),
+        errors=shown,
+        message=message,
+    )
 
 
 @router.get("/catalog")

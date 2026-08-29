@@ -17,6 +17,8 @@
         <el-button type="success" :disabled="!selectedApproved.length" @click="openBatchIssue">
           批量发券 ({{ selectedApproved.length }})
         </el-button>
+        <el-button @click="openImportUsers">导入名单</el-button>
+        <el-button @click="openImportIssue">按名单发券</el-button>
         <el-button @click="onExportUsers">导出用户</el-button>
       </div>
     </div>
@@ -274,6 +276,75 @@
         <el-button type="primary" @click="doBatchIssue">确认批量发券</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="importUsersVisible" title="导入用户名单" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px"
+        title="支持 .xlsx / .csv / .txt / .docx；列：姓名、学号、用户名、手机、组织、备注（首行可为表头）"
+        description="导入用户直接视为核验通过（可直接发券/入账时长），统一初始密码见导入结果。用户名缺省时自动用学号或手机号。"
+      />
+      <el-upload
+        drag
+        :auto-upload="false"
+        :limit="1"
+        accept=".xlsx,.csv,.txt,.docx"
+        :on-change="onImportUsersFile"
+        :on-remove="() => (importUsersFile = null)"
+      >
+        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
+      </el-upload>
+      <el-checkbox v-model="importDryRun" style="margin-top:12px">仅校验不写入（试运行）</el-checkbox>
+      <template #footer>
+        <el-button @click="downloadUsersTemplate">下载模板</el-button>
+        <el-button type="primary" :loading="importing" :disabled="!importUsersFile" @click="doImportUsers">
+          {{ importDryRun ? '开始校验' : '开始导入' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="importIssueVisible" title="按名单发券" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px"
+        title="文件每行一个用户标识（用户名 / 邮箱 / 手机 / 学号）"
+        description="仅核验通过的用户可发券；查无此人、未核验的行会跳过并在结果中说明。"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="券模板">
+          <el-select v-model="importIssueForm.template_id" style="width:100%" filterable>
+            <el-option
+              v-for="t in templates"
+              :key="t.id"
+              :label="`${t.name}（${t.merchant_name}）`"
+              :value="t.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="每人数量">
+          <el-input-number v-model="importIssueForm.quantity" :min="1" :max="10" />
+        </el-form-item>
+      </el-form>
+      <el-upload
+        drag
+        :auto-upload="false"
+        :limit="1"
+        accept=".xlsx,.csv,.txt,.docx"
+        :on-change="onImportIssueFile"
+        :on-remove="() => (importIssueFile = null)"
+      >
+        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
+      </el-upload>
+      <template #footer>
+        <el-button @click="downloadIssueTemplate">下载模板</el-button>
+        <el-button
+          type="primary"
+          :loading="importing"
+          :disabled="!importIssueFile || !importIssueForm.template_id"
+          @click="doImportIssue"
+        >
+          开始发放
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <ImportResultDialog v-model="importResultVisible" :result="importResult" />
   </div>
 </template>
 
@@ -281,6 +352,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import api, { downloadFile } from '../../api'
 import { useAuth } from '../../auth'
+import ImportResultDialog from '../../components/ImportResultDialog.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
 
@@ -555,6 +627,104 @@ async function doBatchIssue() {
   const fail = res.data.failed?.length || 0
   ElMessage.success(`批量完成：生成 ${ok} 张券，失败 ${fail} 人`)
   batchIssueVisible.value = false
+}
+
+// ---- 批量导入（名单文件：xlsx / csv / txt / docx）----
+const importUsersVisible = ref(false)
+const importIssueVisible = ref(false)
+const importResultVisible = ref(false)
+const importUsersFile = ref(null)
+const importIssueFile = ref(null)
+const importDryRun = ref(false)
+const importing = ref(false)
+const importResult = ref(null)
+const importIssueForm = reactive({ template_id: '', quantity: 1 })
+const IMPORT_TIMEOUT = 60000
+
+function onImportUsersFile(uploadFile) {
+  importUsersFile.value = uploadFile?.raw || null
+}
+
+function onImportIssueFile(uploadFile) {
+  importIssueFile.value = uploadFile?.raw || null
+}
+
+function openImportUsers() {
+  importUsersFile.value = null
+  importDryRun.value = false
+  importUsersVisible.value = true
+}
+
+function openImportIssue() {
+  importIssueFile.value = null
+  importIssueForm.template_id = importIssueForm.template_id || templates.value[0]?.id || ''
+  importIssueForm.quantity = 1
+  importIssueVisible.value = true
+}
+
+function _downloadTextCsv(filename, lines) {
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function downloadUsersTemplate() {
+  _downloadTextCsv('用户名单模板.csv', [
+    '姓名,学号,用户名,手机,组织,备注',
+    '张三,20260001,zhangsan,13800000001,某某大学,',
+    '李四,20260002,,13800000002,某某大学,班长',
+  ])
+}
+
+function downloadIssueTemplate() {
+  _downloadTextCsv('发券名单模板.csv', ['用户标识（用户名/邮箱/手机/学号）', 'youth1', '13800000001'])
+}
+
+function showImportResult(res) {
+  importResult.value = res.data
+  importResultVisible.value = true
+}
+
+async function doImportUsers() {
+  const fd = new FormData()
+  fd.append('file', importUsersFile.value)
+  fd.append('dry_run', importDryRun.value ? 'true' : 'false')
+  importing.value = true
+  try {
+    const res = await api.post('/users/import', fd, { timeout: IMPORT_TIMEOUT })
+    importUsersVisible.value = false
+    showImportResult(res)
+    if (!importDryRun.value && res.data.succeeded > 0) load()
+  } finally {
+    importing.value = false
+  }
+}
+
+async function doImportIssue() {
+  if (!importIssueForm.template_id) {
+    ElMessage.warning('请选择模板')
+    return
+  }
+  const fd = new FormData()
+  fd.append('file', importIssueFile.value)
+  fd.append('template_id', importIssueForm.template_id)
+  fd.append('quantity', String(importIssueForm.quantity))
+  importing.value = true
+  try {
+    const res = await api.post('/coupons/issue-import', fd, { timeout: IMPORT_TIMEOUT })
+    importIssueVisible.value = false
+    showImportResult(res)
+    if (res.data.succeeded > 0) load()
+  } finally {
+    importing.value = false
+  }
 }
 
 onMounted(async () => {

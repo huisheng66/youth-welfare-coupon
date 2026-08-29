@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import require_roles
+from app.core.security import hash_password
 from app.models.entities import Account, Role, UserProfile, UserVerification, VerifyStatus, utcnow
+from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import MessageOut, Page
 from app.schemas.user import (
     BankCardIn,
@@ -19,6 +22,15 @@ from app.schemas.user import (
 )
 from app.services.audit import write_audit
 from app.services.crypto import decrypt_text, encrypt_text, mask_bank_card, validate_bank_card
+from app.services.import_file import KIND_USERS, map_columns, parse_table_file, read_upload_bytes
+from app.services.points import get_or_create_account
+from app.services.sanitize import (
+    password_has_letter_and_digit,
+    sanitize_note,
+    sanitize_plain_text,
+    strip_control_chars,
+    validate_password_strength,
+)
 
 router = APIRouter(prefix="/users", tags=["用户核验"])
 
@@ -336,6 +348,162 @@ def pending_verifications(
         .all()
     )
     return [_enrich_verification(db, r) for r in rows]
+
+
+@router.post("/import", response_model=ImportResultOut)
+def import_users(
+    file: UploadFile = File(..., description="用户名单（.xlsx / .csv / .txt / .docx）"),
+    dry_run: bool = Form(False, description="仅校验不写入"),
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> ImportResultOut:
+    """按文件批量导入用户名单：导入即视为核验通过，使用统一初始密码。
+
+    列（首行可为表头，无表头按此顺序）：姓名、学号、用户名、手机、组织、备注。
+    用户名缺省时依次回退学号、手机；逐行校验并收集错误，不因单行失败中断。
+    """
+    settings = get_settings()
+    password = settings.import_initial_password
+    try:
+        validate_password_strength(password)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"IMPORT_INITIAL_PASSWORD 配置无效：{exc}") from exc
+    if not password_has_letter_and_digit(password):
+        raise HTTPException(status_code=500, detail="IMPORT_INITIAL_PASSWORD 配置无效：需同时包含字母和数字")
+
+    try:
+        data = read_upload_bytes(file.file)
+        rows = parse_table_file(file.filename or "", data, max_rows=settings.import_max_rows)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    header = map_columns(rows[0], KIND_USERS)
+    data_rows = rows[1:] if header else rows
+
+    def cell_of(row: list[str], logical: str, position: int | None) -> str:
+        idx = header.get(logical) if header else position
+        if idx is None or idx >= len(row):
+            return ""
+        return row[idx]
+
+    errors: list[ImportRowError] = []
+    ok = 0
+    seen_usernames: set[str] = set()
+    seen_phones: set[str] = set()
+    seen_emails: set[str] = set()
+
+    for lineno, row in enumerate(data_rows, start=1):
+        real_name = sanitize_plain_text(cell_of(row, "real_name", 0), max_length=64)
+        student_no = strip_control_chars(cell_of(row, "student_no", 1)).strip()[:64]
+        username_raw = strip_control_chars(cell_of(row, "username", 2)).strip()
+        phone = strip_control_chars(cell_of(row, "phone", 3)).strip()
+        organization = sanitize_plain_text(cell_of(row, "organization", 4), max_length=128)
+        remark = sanitize_note(cell_of(row, "remark", 5))
+        email = strip_control_chars(cell_of(row, "email", None)).strip().lower()
+        identifier = real_name or username_raw or phone or f"第{lineno}行"
+
+        def fail(reason: str) -> None:
+            errors.append(ImportRowError(row=lineno, identifier=identifier, reason=reason))
+
+        if not real_name:
+            fail("姓名为空")
+            continue
+
+        username = username_raw or (student_no if len(student_no) >= 3 else "") or (phone if len(phone) >= 5 else "")
+        username = sanitize_plain_text(username, max_length=64)
+        if len(username) < 3:
+            fail("无法确定用户名（用户名/学号/手机均缺失或过短，需 ≥3 位）")
+            continue
+
+        if phone and (not phone.isdigit() or not 5 <= len(phone) <= 20):
+            fail("手机号格式无效")
+            continue
+        if email and ("@" not in email or len(email) > 128):
+            fail("邮箱格式无效")
+            continue
+
+        # 文件内重复 / 库内重复（dry_run=False 时 autoflush 会看到本批已建账号）
+        if username in seen_usernames:
+            fail("用户名在文件内重复")
+            continue
+        if phone and phone in seen_phones:
+            fail("手机号在文件内重复")
+            continue
+        if email and email in seen_emails:
+            fail("邮箱在文件内重复")
+            continue
+        if db.query(Account).filter(Account.username == username).first():
+            fail("用户名已存在")
+            continue
+        if phone and db.query(Account).filter(Account.phone == phone).first():
+            fail("手机号已被占用")
+            continue
+        if email and db.query(Account).filter(Account.email == email).first():
+            fail("邮箱已被占用")
+            continue
+
+        seen_usernames.add(username)
+        if phone:
+            seen_phones.add(phone)
+        if email:
+            seen_emails.add(email)
+
+        if not dry_run:
+            account = Account(
+                username=username,
+                email=email or None,
+                password_hash=hash_password(password),
+                role=Role.user,
+                display_name=real_name,
+                phone=phone or None,
+            )
+            db.add(account)
+            db.flush()
+            db.add(
+                UserProfile(
+                    account_id=account.id,
+                    real_name=real_name,
+                    student_no=student_no,
+                    organization=organization,
+                    remark=remark,
+                    verify_status=VerifyStatus.approved,
+                )
+            )
+            get_or_create_account(db, account.id)
+            write_audit(
+                db,
+                actor_id=admin.id,
+                action="user_import",
+                target_type="account",
+                target_id=account.id,
+                detail=f"username={username}, real_name={real_name}",
+            )
+        ok += 1
+
+    if dry_run:
+        db.rollback()
+    else:
+        write_audit(
+            db,
+            actor_id=admin.id,
+            action="user_import_batch",
+            target_type="account",
+            detail=f"rows={len(data_rows)}, ok={ok}, fail={len(errors)}, dry_run={dry_run}",
+        )
+        db.commit()
+
+    shown = errors[:100]
+    message = f"{'校验' if dry_run else '导入'}完成：共 {len(data_rows)} 行，成功 {ok} 行，失败 {len(errors)} 行"
+    if len(errors) > len(shown):
+        message += "（错误明细仅显示前 100 条）"
+    return ImportResultOut(
+        total=len(data_rows),
+        succeeded=ok,
+        failed=len(errors),
+        errors=shown,
+        message=message,
+        default_password=password if ok else None,
+    )
 
 
 def _apply_review(

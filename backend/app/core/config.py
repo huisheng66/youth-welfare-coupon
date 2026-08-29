@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     live_code_expire_seconds: int = 30
 
+    # 批量导入（用户名单 / 按名单发券 / 按名单发时长）
+    import_max_rows: int = 1000
+    # 导入用户的统一初始密码（须 ≥8 位且含字母和数字），管理员在结果页分发并提醒用户修改
+    import_initial_password: str = "youth123456"
+
     # 认证 Cookie：将 JWT 从 localStorage 迁到 HttpOnly Cookie，消除 XSS 窃取 token 的链路
     auth_cookie_name: str = "token"
     # 留空=不设置 Domain（仅当前主机）；跨子域如 api.x.com ↔ www.x.com 可设 ".x.com"

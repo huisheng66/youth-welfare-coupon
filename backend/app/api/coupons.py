@@ -4,10 +4,11 @@ import string
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import get_current_account, require_roles
 from app.models.entities import (
@@ -21,6 +22,7 @@ from app.models.entities import (
     UserProfile,
     VerifyStatus,
 )
+from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import Page
 from app.schemas.coupon import (
     BatchIssueCouponIn,
@@ -39,6 +41,13 @@ from app.schemas.coupon import (
 from app.services.audit import write_audit
 from app.services.live_code import create_live_code, decode_live_code, looks_like_live_code
 from app.services.coupons import expire_stale_coupons
+from app.services.import_file import (
+    KIND_ISSUE,
+    map_columns,
+    parse_table_file,
+    read_upload_bytes,
+    resolve_user,
+)
 
 router = APIRouter(prefix="/coupons", tags=["优惠券"])
 
@@ -326,6 +335,85 @@ def issue_coupons_batch(
     loaded = _preload_coupons(db, [c.id for c in all_created])
     issued = [coupon_to_out(c) for c in loaded]
     return BatchIssueResult(issued=issued, failed=failed)
+
+
+@router.post("/issue-import", response_model=ImportResultOut)
+def issue_coupons_import(
+    file: UploadFile = File(..., description="用户标识名单（.xlsx / .csv / .txt / .docx）"),
+    template_id: str = Form(...),
+    quantity: int = Form(1, ge=1, le=10),
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> ImportResultOut:
+    """按名单文件发券：每行一个用户标识（用户名 / 邮箱 / 手机 / 学号）。
+
+    复用单用户发券的全部校验（核验状态、模板/商家可用性），单行失败记入
+    errors 不中断；未核验、查无此人的行会明确报错。
+    """
+    settings = get_settings()
+    template = db.get(CouponTemplate, template_id)
+    if not template or not template.is_active:
+        raise HTTPException(status_code=400, detail="券模板不可用")
+    merchant = db.get(Merchant, template.merchant_id)
+    if not merchant or not merchant.is_active:
+        raise HTTPException(status_code=400, detail="关联商家不可用")
+
+    try:
+        data = read_upload_bytes(file.file)
+        rows = parse_table_file(file.filename or "", data, max_rows=settings.import_max_rows)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    header = map_columns(rows[0], KIND_ISSUE)
+    data_rows = rows[1:] if header else rows
+    ident_idx = (header or {}).get("identifier", 0)
+
+    errors: list[ImportRowError] = []
+    ok = 0
+    created_all: list[CouponInstance] = []
+    for lineno, row in enumerate(data_rows, start=1):
+        token = row[ident_idx].strip() if ident_idx < len(row) else ""
+        if not token:
+            errors.append(ImportRowError(row=lineno, identifier="", reason="用户标识为空"))
+            continue
+        user = resolve_user(db, token)
+        if not user:
+            errors.append(
+                ImportRowError(
+                    row=lineno,
+                    identifier=token,
+                    reason="用户不存在或无法唯一识别（支持用户名/邮箱/手机/学号）",
+                )
+            )
+            continue
+        try:
+            created = _issue_for_user(db, user=user, template=template, quantity=quantity, admin=admin)
+        except ValueError as exc:
+            errors.append(ImportRowError(row=lineno, identifier=token, reason=str(exc)))
+            continue
+        created_all.extend(created)
+        ok += 1
+
+    write_audit(
+        db,
+        actor_id=admin.id,
+        action="issue_coupon_import",
+        target_type="template",
+        target_id=template.id,
+        detail=f"rows={len(data_rows)}, qty_each={quantity}, ok={ok}, fail={len(errors)}",
+    )
+    db.commit()
+    shown = errors[:100]
+    message = f"按名单发券完成：共 {len(data_rows)} 行，成功 {ok} 人（{len(created_all)} 张券），失败 {len(errors)} 行"
+    if len(errors) > len(shown):
+        message += "（错误明细仅显示前 100 条）"
+    return ImportResultOut(
+        total=len(data_rows),
+        succeeded=ok,
+        failed=len(errors),
+        errors=shown,
+        message=message,
+    )
 
 
 @router.get("/preview", response_model=CouponOut)
