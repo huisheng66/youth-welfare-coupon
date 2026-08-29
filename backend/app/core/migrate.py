@@ -10,6 +10,8 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger("app.migrate")
 
+LEGACY_BASELINE_REVISION = "2c984c17c453"
+
 
 def run_alembic_upgrade() -> None:
     """以编程方式执行 `alembic upgrade head`，复用项目 engine。
@@ -18,7 +20,7 @@ def run_alembic_upgrade() -> None:
     不依赖 alembic CLI，部署脚本只需启动服务即可。
 
     已有库平滑切换：若业务表已存在但尚未接入 alembic（无 alembic_version 表），
-    先 `stamp head` 标记为基线，再执行 upgrade，避免 baseline 的 create_table
+    先标记到固定 baseline revision，再执行 upgrade head，避免 baseline 的 create_table
     因表已存在而失败。
     """
     from alembic import command
@@ -39,8 +41,11 @@ def run_alembic_upgrade() -> None:
     has_business_tables = bool(tables - {"alembic_version"})
     if not has_alembic_version and has_business_tables:
         # 历史库（create_all 建表）首次接入 alembic：标记为基线，不执行 DDL
-        logger.info("legacy database detected — alembic stamp head as baseline")
-        command.stamp(cfg, "head")
+        logger.info(
+            "legacy database detected — alembic stamp %s as baseline",
+            LEGACY_BASELINE_REVISION,
+        )
+        command.stamp(cfg, LEGACY_BASELINE_REVISION)
 
     logger.info("running alembic upgrade head")
     command.upgrade(cfg, "head")
@@ -282,13 +287,24 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")
     _migrate_hours_to_decimal(engine)
+    _ensure_indexes(engine)
+
+
+def _ensure_indexes(engine: Engine) -> None:
+    """Bring existing development databases up to ORM-declared indexes."""
+    from app.core.database import Base
+    import app.models  # noqa: F401
+
+    for table in Base.metadata.sorted_tables:
+        for index in sorted(table.indexes, key=lambda item: item.name or ""):
+            index.create(bind=engine, checkfirst=True)
 
 
 def apply_migrations(engine: Engine, *, production: bool) -> None:
     """按环境应用 schema 迁移。
 
     - 生产：执行 `alembic upgrade head`，schema 由版本化迁移管理；
-      历史库需先 `alembic stamp head` 标记基线（见 baseline 迁移注释）。
+      历史库自动标记到固定 baseline revision，再应用后续增量迁移。
     - 开发：保留 `create_all` + `ensure_schema` 兼容空库与历史库，
       避免本地迭代时频繁生成迁移。
     """

@@ -5,6 +5,7 @@ from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -37,6 +38,7 @@ from app.schemas.coupon import (
 )
 from app.services.audit import write_audit
 from app.services.live_code import create_live_code, decode_live_code, looks_like_live_code
+from app.services.coupons import expire_stale_coupons
 
 router = APIRouter(prefix="/coupons", tags=["优惠券"])
 
@@ -388,6 +390,12 @@ def _day_bounds(date_from: date_cls | None, date_to: date_cls | None) -> tuple[d
     return start, end
 
 
+def _literal_like_pattern(value: str) -> str:
+    """Wrap a literal substring for LIKE without treating user input as wildcards."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 @router.get("/instances", response_model=Page[CouponOut])
 def list_instances(
     status: CouponStatus | None = None,
@@ -401,6 +409,8 @@ def list_instances(
     db: Session = Depends(get_db),
     account: Account = Depends(get_current_account),
 ) -> Page[CouponOut]:
+    # Keep expiry state current without loading every coupon into Python.
+    expire_stale_coupons(db)
     query = (
         db.query(CouponInstance)
         .options(
@@ -408,7 +418,7 @@ def list_instances(
             joinedload(CouponInstance.template),
             joinedload(CouponInstance.merchant),
         )
-        .order_by(CouponInstance.issued_at.desc())
+        .order_by(CouponInstance.issued_at.desc(), CouponInstance.id.desc())
     )
     if account.role == Role.user:
         query = query.filter(CouponInstance.user_id == account.id)
@@ -428,25 +438,18 @@ def list_instances(
         query = query.filter(CouponInstance.issued_at <= end)
     if status:
         query = query.filter(CouponInstance.status == status)
-    rows = query.all()
-    for r in rows:
-        _maybe_expire(r)
-    db.commit()
-    # re-filter status after expire
-    if status:
-        rows = [r for r in rows if r.status == status]
     if q and q.strip():
-        keyword = q.strip().lower()
-        rows = [
-            r
-            for r in rows
-            if keyword in (r.code or "").lower()
-            or keyword in (r.user.username if r.user else "").lower()
-            or keyword in (r.user.display_name if r.user else "").lower()
-        ]
-    total = len(rows)
-    page = rows[skip : skip + limit]
-    return Page(total=total, items=[coupon_to_out(r) for r in page])
+        keyword = _literal_like_pattern(q.strip())
+        query = query.join(Account, CouponInstance.user_id == Account.id).filter(
+            or_(
+                CouponInstance.code.ilike(keyword, escape="\\"),
+                Account.username.ilike(keyword, escape="\\"),
+                Account.display_name.ilike(keyword, escape="\\"),
+            )
+        )
+    total = query.order_by(None).count()
+    rows = query.offset(skip).limit(limit).all()
+    return Page(total=total, items=[coupon_to_out(r) for r in rows])
 
 
 @router.get("/my", response_model=list[CouponOut])
@@ -455,7 +458,8 @@ def my_coupons(
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.user)),
 ) -> list[CouponOut]:
-    rows = (
+    expire_stale_coupons(db)
+    query = (
         db.query(CouponInstance)
         .options(
             joinedload(CouponInstance.user),
@@ -463,14 +467,13 @@ def my_coupons(
             joinedload(CouponInstance.merchant),
         )
         .filter(CouponInstance.user_id == account.id)
-        .order_by(CouponInstance.issued_at.desc())
-        .all()
+        .order_by(CouponInstance.issued_at.desc(), CouponInstance.id.desc())
     )
-    for r in rows:
-        _maybe_expire(r)
-    db.commit()
     if status:
-        rows = [r for r in rows if r.status == status]
+        query = query.filter(CouponInstance.status == status)
+    rows = (
+        query.all()
+    )
     return [coupon_to_out(r) for r in rows]
 
 

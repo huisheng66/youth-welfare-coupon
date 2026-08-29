@@ -1,10 +1,13 @@
-"""Email sending via fastapi-mail, with console fallback for local dev."""
+"""Email sending via aiosmtplib, with console fallback for local dev."""
 
 from __future__ import annotations
 
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.utils import formataddr
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -31,14 +34,11 @@ def _aware(dt: datetime) -> datetime:
     return dt
 
 
-def build_mail_config(settings: Settings | None = None):
-    """Build fastapi-mail ConnectionConfig (only when SMTP is configured)."""
+def build_mail_config(settings: Settings | None = None) -> dict[str, Any]:
+    """Build validated aiosmtplib connection options."""
     settings = settings or get_settings()
     if not settings.smtp_configured:
         raise RuntimeError("SMTP 未配置完整（需要 MAIL_SERVER / 账号 / 密码）")
-
-    from fastapi_mail import ConnectionConfig
-    from pydantic import SecretStr
 
     sender = settings.mail_sender
     if not sender or "@" not in sender:
@@ -48,19 +48,16 @@ def build_mail_config(settings: Settings | None = None):
     ssl_tls = bool(settings.mail_ssl_tls)
     starttls = bool(settings.mail_starttls) and not ssl_tls
 
-    return ConnectionConfig(
-        MAIL_USERNAME=settings.mail_username or sender,
-        MAIL_PASSWORD=SecretStr(settings.mail_password or ""),
-        MAIL_FROM=sender,
-        MAIL_FROM_NAME=settings.mail_from_name or settings.app_name,
-        MAIL_PORT=settings.mail_port,
-        MAIL_SERVER=settings.mail_server.strip(),
-        MAIL_STARTTLS=starttls,
-        MAIL_SSL_TLS=ssl_tls,
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=True,
-        TIMEOUT=30,
-    )
+    return {
+        "hostname": settings.mail_server.strip(),
+        "port": settings.mail_port,
+        "username": settings.mail_username or sender,
+        "password": settings.mail_password or "",
+        "start_tls": starttls,
+        "use_tls": ssl_tls,
+        "validate_certs": True,
+        "timeout": 30,
+    }
 
 
 async def send_email_html(*, to: str, subject: str, html: str, settings: Settings | None = None) -> None:
@@ -69,17 +66,19 @@ async def send_email_html(*, to: str, subject: str, html: str, settings: Setting
         logger.info("[mail:console] to=%s subject=%s\n%s", to, subject, html)
         return
 
-    from fastapi_mail import FastMail, MessageSchema, MessageType
+    from aiosmtplib import send
 
     conf = build_mail_config(settings)
-    message = MessageSchema(
-        subject=subject,
-        recipients=[to],
-        body=html,
-        subtype=MessageType.html,
+    sender = settings.mail_sender
+    message = EmailMessage()
+    message["From"] = formataddr(
+        (settings.mail_from_name or settings.app_name, sender)
     )
-    fm = FastMail(conf)
-    await fm.send_message(message)
+    message["To"] = to
+    message["Subject"] = subject
+    message.set_content("请使用支持 HTML 的邮件客户端查看此邮件。")
+    message.add_alternative(html, subtype="html")
+    await send(message, sender=sender, recipients=[to], **conf)
 
 
 def _check_send_limits(db: Session, email: str, purpose: EmailCodePurpose, settings: Settings) -> None:

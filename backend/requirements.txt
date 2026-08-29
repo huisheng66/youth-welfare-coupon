@@ -1,6 +1,7 @@
 fastapi==0.140.7
 uvicorn[standard]==0.34.0
-sqlalchemy==2.0.36
+# Current stable 2.0 release with Python 3.14 typing compatibility.
+sqlalchemy==2.0.51
 # Schema 迁移：alembic 替代 create_all + 手写 ALTER 补丁
 alembic==1.18.5
 pydantic==2.13.4
@@ -10,10 +11,10 @@ PyJWT==2.13.0
 bcrypt==4.2.1
 python-multipart==0.0.31
 email-validator==2.3.0
-fastapi-mail==1.6.5
+aiosmtplib==5.1.2
 # MySQL（Ubuntu 生产）
 PyMySQL==1.1.1
-cryptography==49.0.0
+cryptography==50.0.0
 # 测试 / TestClient
 httpx==0.28.1
 # 可选：生产登录限流 Redis 后端

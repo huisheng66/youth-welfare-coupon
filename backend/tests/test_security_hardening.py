@@ -75,7 +75,12 @@ class TestProductionGuards(unittest.TestCase):
         # Disable startup seed/DB side effects for docs-only check
         skip_app_lifespan(app)
         client = TestClient(app)
-        self.assertEqual(client.get("/docs").status_code, 404)
+        docs = client.get("/docs")
+        self.assertEqual(docs.status_code, 404)
+        self.assertEqual(
+            docs.headers.get("strict-transport-security"),
+            "max-age=31536000; includeSubDomains",
+        )
         self.assertEqual(client.get("/openapi.json").status_code, 404)
         self.assertEqual(client.get("/redoc").status_code, 404)
 
@@ -292,6 +297,25 @@ class TestRateLimiter(unittest.TestCase):
             a.clear(key)
             self.assertTrue(b.check(key)[0])
 
+    def test_file_acquire_is_atomic_across_instances(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from app.services.rate_limit import FileRateLimiter
+
+        with tempfile.TemporaryDirectory() as td:
+            path = str(Path(td) / "rl.db")
+            limiters = [FileRateLimiter(path, window_sec=60, max_hits=5) for _ in range(4)]
+            key = "atomic-client"
+
+            def acquire(i: int) -> bool:
+                return limiters[i % len(limiters)].acquire(key)[0]
+
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                allowed = list(pool.map(acquire, range(20)))
+
+            self.assertEqual(sum(allowed), 5)
+            self.assertEqual(limiters[0].count(key), 5)
+
     def test_login_endpoint_returns_429(self) -> None:
         """Hit shipped /api/auth/login until 429; success path clears counter."""
         td = tempfile.mkdtemp()
@@ -424,6 +448,36 @@ class TestSecurityHeadersAndHealth(unittest.TestCase):
         self.assertEqual(r.headers.get("x-content-type-options"), "nosniff")
         self.assertEqual(r.headers.get("x-frame-options"), "DENY")
         self.assertEqual(r.headers.get("referrer-policy"), "strict-origin-when-cross-origin")
+        self.assertEqual(r.headers.get("permissions-policy"), "camera=(self), microphone=(), geolocation=()")
+
+        valid = client.get("/api/health", headers={"X-Request-ID": "trace-123"})
+        self.assertEqual(valid.headers.get("x-request-id"), "trace-123")
+        invalid = client.get("/api/health", headers={"X-Request-ID": "../../bad id"})
+        self.assertRegex(invalid.headers.get("x-request-id", ""), r"^[0-9a-f]{12}$")
+
+        auth = client.get("/api/auth/me")
+        self.assertEqual(auth.status_code, 401)
+        self.assertEqual(auth.headers.get("cache-control"), "no-store")
+        self.assertEqual(auth.headers.get("pragma"), "no-cache")
+
+
+class TestCsvExportSafety(unittest.TestCase):
+    def test_formula_prefixes_are_neutralized(self) -> None:
+        from app.api.export import _safe_csv_cell
+
+        for value in (
+            "=1+1",
+            "+SUM(A1:A2)",
+            "-2+3",
+            "@cmd",
+            "  =HYPERLINK(\"https://example.invalid\")",
+            "\t=1+1",
+            "\r@cmd",
+        ):
+            self.assertEqual(_safe_csv_cell(value), "'" + value)
+        self.assertEqual(_safe_csv_cell("normal text"), "normal text")
+        self.assertEqual(_safe_csv_cell("  normal text"), "  normal text")
+        self.assertEqual(_safe_csv_cell(12), 12)
 
 
 class TestFrontendNoVHtml(unittest.TestCase):
@@ -457,6 +511,49 @@ class TestEnvExampleDocumentsKeys(unittest.TestCase):
         self.assertIn("location = /docs", conf)
         self.assertIn("return 404", conf)
         self.assertIn("X-Content-Type-Options", conf)
+        self.assertIn("Content-Security-Policy", conf)
+        self.assertIn("https://api.qrserver.com", conf)
+        self.assertIn("gzip on", conf)
+        self.assertIn("location ^~ /assets/", conf)
+        self.assertIn("expires 1y", conf)
+
+
+class TestAlembicUpgradePath(unittest.TestCase):
+    def test_legacy_database_gets_post_baseline_indexes(self) -> None:
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import inspect, text
+
+        import app.core.database as dbmod
+        from app.core.config import get_settings
+        from app.core.migrate import LEGACY_BASELINE_REVISION, run_alembic_upgrade
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "legacy.db"
+            _fresh_settings(
+                APP_ENV="development",
+                DATABASE_URL=f"sqlite:///{db_path.as_posix()}",
+                GLOBAL_IP_MAX_REQUESTS="0",
+            )
+            dbmod.init_engine(get_settings())
+            cfg = Config(str(BACKEND_ROOT / "alembic.ini"))
+            cfg.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
+            cfg.set_main_option("prepend_sys_path", str(BACKEND_ROOT))
+            command.upgrade(cfg, LEGACY_BASELINE_REVISION)
+            with dbmod.engine.begin() as conn:
+                conn.execute(text("DROP TABLE alembic_version"))
+
+            run_alembic_upgrade()
+
+            indexes = {i["name"] for i in inspect(dbmod.engine).get_indexes("coupon_instances")}
+            self.assertIn("ix_coupon_instances_status_expires_at", indexes)
+            with dbmod.engine.connect() as conn:
+                revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            self.assertEqual(revision, "7f21c3a8e6b1")
+            dbmod.engine.dispose()
+
+        _fresh_settings(APP_ENV="development", DATABASE_URL="sqlite:///./data/app.db")
+        dbmod.init_engine(get_settings())
 
 
 class TestPhase4Artifacts(unittest.TestCase):

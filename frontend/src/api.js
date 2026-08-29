@@ -107,8 +107,11 @@ export async function downloadFile(path, fallbackName = 'export.csv') {
   const a = document.createElement('a')
   a.href = url
   a.download = name
+  a.style.display = 'none'
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /** 将日期区间转为 API 的 date_from / date_to (YYYY-MM-DD) */

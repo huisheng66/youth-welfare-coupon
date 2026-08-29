@@ -7,8 +7,8 @@ point_accounts / point_ledgers / email_codes。
 
 部署说明：
 - 新机器空库：直接 `alembic upgrade head` 即可建表。
-- 已有库（曾用 create_all + ensure_schema）：执行 `alembic stamp head`
-  把当前 schema 标记为已应用 baseline，不实际执行 DDL，后续新增迁移正常增量应用。
+- 已有库（曾用 create_all + ensure_schema）：执行 `alembic stamp 2c984c17c453`
+  只把当前 schema 标记到 baseline，不实际执行 DDL，再执行 `alembic upgrade head`。
 - baseline 的 downgrade 会删表，仅在全新部署的清理场景使用，生产数据请勿 downgrade。
 
 Revision ID: 2c984c17c453

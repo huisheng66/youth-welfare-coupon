@@ -1,11 +1,22 @@
 import { reactive } from 'vue'
 import api, { AUTH_SLOW_TIMEOUT } from './api'
 
+function readStoredAccount() {
+  try {
+    return JSON.parse(localStorage.getItem('account') || 'null')
+  } catch {
+    localStorage.removeItem('account')
+    localStorage.removeItem('token')
+    return null
+  }
+}
+
 // JWT 现由后端 HttpOnly Cookie 承载，前端不可读；localStorage 仅保留登录标记与账号信息。
 // token 字段为 '1' 表示已登录（用于路由守卫），不再是真实 JWT。
+const storedAccount = readStoredAccount()
 const state = reactive({
-  token: localStorage.getItem('token') || '',
-  account: JSON.parse(localStorage.getItem('account') || 'null'),
+  token: storedAccount ? localStorage.getItem('token') || '' : '',
+  account: storedAccount,
 })
 
 export function useAuth() {

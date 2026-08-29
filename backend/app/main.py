@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +21,8 @@ from app.services.rate_limit import get_ip_limiter, reset_limiters
 
 logger = logging.getLogger(__name__)
 
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
 # LAN / local origin regex for optional CORS (dev / explicit CORS_ALLOW_LAN)
 LAN_ORIGIN_REGEX = (
     r"https?://(localhost|127\.0\.0\.1|"
@@ -35,12 +38,21 @@ def apply_security_headers(response: Response) -> Response:
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("X-XSS-Protection", "0")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    if get_settings().is_production:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
     return response
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
+        if request.url.path.startswith("/api/auth") or "/bank-card" in request.url.path:
+            response.headers.setdefault("Cache-Control", "no-store")
+            response.headers.setdefault("Pragma", "no-cache")
         return apply_security_headers(response)
 
 
@@ -55,7 +67,7 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
         if limiter is None:
             return await call_next(request)
         ip = get_client_ip(request)
-        allowed, retry = limiter.check(ip)
+        allowed, retry = limiter.acquire(ip)
         if not allowed:
             # Early return must still carry security headers (outer middleware may not run)
             return apply_security_headers(
@@ -66,7 +78,6 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry)},
                 )
             )
-        limiter.hit(ip)
         return await call_next(request)
 
 
@@ -106,12 +117,19 @@ class RequestIdMiddleware:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
-        rid = headers.get(b"x-request-id", b"").decode("ascii", "ignore") or uuid.uuid4().hex[:12]
+        incoming_rid = headers.get(b"x-request-id", b"").decode("ascii", "ignore")
+        rid = incoming_rid if REQUEST_ID_RE.fullmatch(incoming_rid) else uuid.uuid4().hex[:12]
         token = request_id_var.set(rid)
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                message.setdefault("headers", []).append((b"x-request-id", rid.encode("ascii")))
+                response_headers = [
+                    (key, value)
+                    for key, value in message.setdefault("headers", [])
+                    if key.lower() != b"x-request-id"
+                ]
+                response_headers.append((b"x-request-id", rid.encode("ascii")))
+                message["headers"] = response_headers
             await send(message)
 
         try:
@@ -173,8 +191,9 @@ def create_app() -> FastAPI:
     cors_kwargs: dict = {
         "allow_origins": origins if origins else [],
         "allow_credentials": True,
-        "allow_methods": ["*"],
-        "allow_headers": ["*"],
+        "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        "allow_headers": ["Accept", "Authorization", "Content-Type", "X-Requested-With", "X-Request-ID"],
+        "expose_headers": ["Content-Disposition", "Retry-After", "X-Export-Truncated", "X-Request-ID"],
     }
     if settings.effective_cors_allow_lan:
         cors_kwargs["allow_origin_regex"] = LAN_ORIGIN_REGEX

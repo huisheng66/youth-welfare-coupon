@@ -290,6 +290,40 @@ class TestCouponLifecycle(unittest.TestCase):
                 )
                 self.assertEqual(r.status_code, 400, r.text)
 
+    def test_coupon_list_searches_and_paginates_in_database(self) -> None:
+        with TempApp() as ta:
+            admin_token = ta.login("issuer", "issuer123")
+            coupon_id, _ = _first_coupon_of(ta, "youth1")
+            with ta.session() as db:
+                from app.models.entities import CouponInstance
+
+                coupon = db.get(CouponInstance, coupon_id)
+                assert coupon is not None
+                coupon.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+                db.commit()
+
+            with ta.client() as c:
+                response = c.get(
+                    "/api/coupons/instances",
+                    headers=ta.bearer(admin_token),
+                    params={"status": "expired", "q": "youth1", "limit": 1},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                data = response.json()
+                self.assertGreaterEqual(data["total"], 1)
+                self.assertEqual(len(data["items"]), 1)
+                self.assertEqual(data["items"][0]["username"], "youth1")
+                self.assertEqual(data["items"][0]["status"], "expired")
+
+                for wildcard in ("%", "_"):
+                    literal = c.get(
+                        "/api/coupons/instances",
+                        headers=ta.bearer(admin_token),
+                        params={"q": wildcard},
+                    )
+                    self.assertEqual(literal.status_code, 200, literal.text)
+                    self.assertEqual(literal.json()["total"], 0)
+
     # ---- 时长兑换 ----
     def test_exchange_coupon_with_points(self) -> None:
         """youth1 用志愿服务时长兑换券。"""

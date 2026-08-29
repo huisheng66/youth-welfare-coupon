@@ -52,6 +52,37 @@ class TestAuthz(unittest.TestCase):
                 r4 = c.get(f"/api/users/{_youth1_id(ta)}/bank-card")
                 self.assertEqual(r4.status_code, 401, r4.text)
 
+    def test_pending_review_includes_complete_masked_profile(self) -> None:
+        with TempApp() as ta:
+            admin_token = ta.login("admin", "admin123")
+            with ta.client() as c:
+                response = c.get(
+                    "/api/users/pending-verifications",
+                    headers=ta.bearer(admin_token),
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            pending = next(item for item in response.json() if item["username"] == "youth2")
+            for field in (
+                "display_name",
+                "real_name",
+                "phone",
+                "student_no",
+                "organization",
+                "remark",
+                "verify_status",
+                "account_created_at",
+                "bank_card_bound",
+                "bank_card_masked",
+                "bank_card_bank_name",
+                "bank_card_bound_at",
+                "reviewer_name",
+            ):
+                self.assertIn(field, pending)
+            self.assertEqual(pending["verify_status"], "pending")
+            self.assertNotIn("bank_card_encrypted", pending)
+            self.assertNotIn("card_number", pending)
+
     # ---- 用户只能看自己的券 ----
     def test_user_only_sees_own_coupons(self) -> None:
         """youth1 不应看到 youth2 的券（这里 youth2 无券，但接口过滤必须生效）。"""

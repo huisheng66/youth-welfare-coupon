@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.deps import require_roles
@@ -27,6 +27,15 @@ router = APIRouter(prefix="/export", tags=["导出"])
 EXPORT_LIMIT = 5000
 
 
+def _safe_csv_cell(value: object) -> object:
+    """Prevent spreadsheet formula execution for user-controlled text."""
+    if isinstance(value, str):
+        trimmed = value.lstrip(" \t\r\n\v\f")
+        if value[:1] in {"\t", "\r", "\n"} or trimmed[:1] in {"=", "+", "-", "@"}:
+            return "'" + value
+    return value
+
+
 def _day_bounds(date_from: date_cls | None, date_to: date_cls | None) -> tuple[datetime | None, datetime | None]:
     start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc) if date_from else None
     end = datetime.combine(date_to, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) if date_to else None
@@ -38,7 +47,7 @@ def _csv_response(filename: str, rows: list[list], *, truncated: bool = False) -
     buf.write("\ufeff")
     writer = csv.writer(buf)
     for row in rows:
-        writer.writerow(row)
+        writer.writerow(_safe_csv_cell(cell) for cell in row)
     data = buf.getvalue().encode("utf-8")
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if truncated:
@@ -78,11 +87,19 @@ def export_redemptions(
         query = query.filter(RedemptionLog.created_at <= end)
     total = query.count()
     rows = query.limit(EXPORT_LIMIT).all()
+    merchant_ids = {r.merchant_id for r in rows if r.merchant_id}
+    account_ids = {r.user_id for r in rows if r.user_id} | {r.operator_id for r in rows if r.operator_id}
+    merchants = {
+        m.id: m for m in db.query(Merchant).filter(Merchant.id.in_(merchant_ids)).all()
+    } if merchant_ids else {}
+    accounts = {
+        a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()
+    } if account_ids else {}
     out: list[list] = [["时间", "券码", "结果", "说明", "商家", "用户", "操作员", "券ID"]]
     for r in rows:
-        merchant = db.get(Merchant, r.merchant_id) if r.merchant_id else None
-        user = db.get(Account, r.user_id) if r.user_id else None
-        operator = db.get(Account, r.operator_id) if r.operator_id else None
+        merchant = merchants.get(r.merchant_id) if r.merchant_id else None
+        user = accounts.get(r.user_id) if r.user_id else None
+        operator = accounts.get(r.operator_id) if r.operator_id else None
         out.append(
             [
                 _fmt(r.created_at),
@@ -123,13 +140,23 @@ def export_coupons(
         query = query.filter(CouponInstance.issued_at <= end)
     total = query.count()
     rows = query.limit(EXPORT_LIMIT).all()
+    user_ids = {c.user_id for c in rows if c.user_id}
+    template_ids = {c.template_id for c in rows if c.template_id}
+    merchant_ids = {c.merchant_id for c in rows if c.merchant_id}
+    users = {a.id: a for a in db.query(Account).filter(Account.id.in_(user_ids)).all()} if user_ids else {}
+    templates = {
+        t.id: t for t in db.query(CouponTemplate).filter(CouponTemplate.id.in_(template_ids)).all()
+    } if template_ids else {}
+    merchants = {
+        m.id: m for m in db.query(Merchant).filter(Merchant.id.in_(merchant_ids)).all()
+    } if merchant_ids else {}
     out: list[list] = [
         ["券码", "状态", "用户", "模板", "商家", "发放时间", "过期时间", "核销时间", "作废原因"]
     ]
     for c in rows:
-        user = db.get(Account, c.user_id)
-        template = db.get(CouponTemplate, c.template_id)
-        merchant = db.get(Merchant, c.merchant_id)
+        user = users.get(c.user_id)
+        template = templates.get(c.template_id)
+        merchant = merchants.get(c.merchant_id)
         out.append(
             [
                 c.code,
@@ -158,18 +185,20 @@ def export_users(
 ) -> StreamingResponse:
     query = (
         db.query(Account)
+        .join(UserProfile, UserProfile.account_id == Account.id)
+        .options(joinedload(Account.profile))
         .filter(Account.role == Role.user)
         .order_by(Account.created_at.desc())
     )
+    if verify_status:
+        query = query.filter(UserProfile.verify_status == verify_status)
     accounts = query.limit(EXPORT_LIMIT).all()
     out: list[list] = [
         ["用户名", "昵称", "手机", "姓名", "学号", "组织", "核验状态", "银行卡脱敏", "开户行", "注册时间", "备注"]
     ]
     for acc in accounts:
-        profile = db.query(UserProfile).filter(UserProfile.account_id == acc.id).first()
+        profile = acc.profile
         if not profile:
-            continue
-        if verify_status and profile.verify_status != verify_status:
             continue
         card_mask = (
             f"**** **** **** {profile.bank_card_last4}"
@@ -205,10 +234,16 @@ def export_points_ledger(
         query = query.filter(PointLedger.user_id == user_id)
     total = query.count()
     rows = query.limit(EXPORT_LIMIT).all()
+    user_ids = {r.user_id for r in rows if r.user_id}
+    operator_ids = {r.operator_id for r in rows if r.operator_id}
+    account_ids = user_ids | operator_ids
+    accounts = {
+        a.id: a for a in db.query(Account).filter(Account.id.in_(account_ids)).all()
+    } if account_ids else {}
     out: list[list] = [["时间", "用户", "变动", "余额", "说明", "类型", "操作员"]]
     for r in rows:
-        user = db.get(Account, r.user_id)
-        op = db.get(Account, r.operator_id) if r.operator_id else None
+        user = accounts.get(r.user_id)
+        op = accounts.get(r.operator_id) if r.operator_id else None
         out.append(
             [
                 _fmt(r.created_at),

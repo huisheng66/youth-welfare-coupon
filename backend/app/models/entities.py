@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -51,6 +51,7 @@ class CouponStatus(str, enum.Enum):
 
 class Account(Base):
     __tablename__ = "accounts"
+    __table_args__ = (Index("ix_accounts_role_created_at", "role", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -107,6 +108,10 @@ class UserProfile(Base):
 
 class UserVerification(Base):
     __tablename__ = "user_verifications"
+    __table_args__ = (
+        Index("ix_user_verifications_profile_created_at", "profile_id", "created_at"),
+        Index("ix_user_verifications_status_created_at", "status", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     profile_id: Mapped[str] = mapped_column(String(36), ForeignKey("user_profiles.id"), index=True)
@@ -118,10 +123,12 @@ class UserVerification(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     profile = relationship("UserProfile", back_populates="verifications")
+    reviewer = relationship("Account", foreign_keys=[reviewer_id])
 
 
 class CouponTemplate(Base):
     __tablename__ = "coupon_templates"
+    __table_args__ = (Index("ix_coupon_templates_merchant_created_at", "merchant_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(128))
@@ -139,7 +146,13 @@ class CouponTemplate(Base):
 
 class CouponInstance(Base):
     __tablename__ = "coupon_instances"
-    __table_args__ = (UniqueConstraint("code", name="uq_coupon_code"),)
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_coupon_code"),
+        Index("ix_coupon_instances_user_issued_at", "user_id", "issued_at"),
+        Index("ix_coupon_instances_merchant_issued_at", "merchant_id", "issued_at"),
+        Index("ix_coupon_instances_status_issued_at", "status", "issued_at"),
+        Index("ix_coupon_instances_status_expires_at", "status", "expires_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     code: Mapped[str] = mapped_column(String(32), index=True)
@@ -161,6 +174,10 @@ class CouponInstance(Base):
 
 class RedemptionLog(Base):
     __tablename__ = "redemption_logs"
+    __table_args__ = (
+        Index("ix_redemption_logs_merchant_created_at", "merchant_id", "created_at"),
+        Index("ix_redemption_logs_result_created_at", "result", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     coupon_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("coupon_instances.id"), nullable=True, index=True)
@@ -175,6 +192,7 @@ class RedemptionLog(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created_at", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     actor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id"), nullable=True)
@@ -200,6 +218,7 @@ class PointLedger(Base):
     """Volunteer service hours / points ledger."""
 
     __tablename__ = "point_ledgers"
+    __table_args__ = (Index("ix_point_ledgers_user_created_at", "user_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
@@ -222,6 +241,7 @@ class EmailCode(Base):
     """One-time email verification codes (register / reset / bind)."""
 
     __tablename__ = "email_codes"
+    __table_args__ = (Index("ix_email_codes_email_purpose_created_at", "email", "purpose", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(128), index=True)
@@ -231,4 +251,3 @@ class EmailCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-

@@ -85,6 +85,42 @@ class TestEmailCode(unittest.TestCase):
             self.assertIsNotNone(debug)
             self.assertEqual(len(debug), 6)
 
+    def test_smtp_send_uses_tls_and_validates_certificates(self) -> None:
+        from unittest import mock
+
+        from app.core.config import Settings
+        from app.services.mail import send_email_html
+
+        settings = Settings(
+            mail_server="smtp.example.invalid",
+            mail_port=465,
+            mail_username="sender@example.invalid",
+            mail_password="app-password",
+            mail_from="sender@example.invalid",
+            mail_from_name="Youth",
+            mail_ssl_tls=True,
+            mail_starttls=True,
+        )
+        with mock.patch("aiosmtplib.send", new_callable=mock.AsyncMock) as smtp_send:
+            asyncio.run(
+                send_email_html(
+                    to="recipient@example.invalid",
+                    subject="Verification",
+                    html="<p>123456</p>",
+                    settings=settings,
+                )
+            )
+
+        message = smtp_send.await_args.args[0]
+        kwargs = smtp_send.await_args.kwargs
+        self.assertEqual(message["From"], "Youth <sender@example.invalid>")
+        self.assertEqual(message["To"], "recipient@example.invalid")
+        self.assertTrue(message.is_multipart())
+        self.assertTrue(kwargs["use_tls"])
+        self.assertFalse(kwargs["start_tls"])
+        self.assertTrue(kwargs["validate_certs"])
+        self.assertEqual(kwargs["timeout"], 30)
+
     def test_send_cooldown_blocks_rapid_resend(self) -> None:
         """同一邮箱同用途连续发码，第二次应 429。"""
         from fastapi import HTTPException

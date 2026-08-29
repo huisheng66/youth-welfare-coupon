@@ -57,9 +57,13 @@
         @selection-change="onPendingSelect"
       >
         <el-table-column type="selection" width="48" />
+        <el-table-column prop="username" label="用户名" width="120" />
+        <el-table-column prop="display_name" label="昵称" width="110" show-overflow-tooltip />
         <el-table-column prop="real_name" label="姓名" width="100" />
-        <el-table-column prop="username" label="用户" width="120" />
-        <el-table-column prop="material_note" label="核验材料" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="phone" label="手机" width="130" />
+        <el-table-column prop="student_no" label="学号" width="120" show-overflow-tooltip />
+        <el-table-column prop="organization" label="单位/组织" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="material_note" label="本次核验材料" min-width="220" show-overflow-tooltip />
         <el-table-column label="提交时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
@@ -117,13 +121,15 @@
       />
     </div>
 
-    <el-dialog v-model="detailVisible" title="用户详情" width="640px">
+    <el-dialog v-model="detailVisible" title="用户详情" width="760px">
       <el-descriptions v-if="current" :column="1" border>
         <el-descriptions-item label="用户名">{{ current.username }}</el-descriptions-item>
+        <el-descriptions-item label="昵称">{{ current.display_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="姓名">{{ current.real_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="手机">{{ current.phone || '-' }}</el-descriptions-item>
         <el-descriptions-item label="学号">{{ current.student_no || '-' }}</el-descriptions-item>
         <el-descriptions-item label="组织">{{ current.organization || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="注册时间">{{ formatTime(current.created_at) }}</el-descriptions-item>
         <el-descriptions-item label="银行卡">
           <span v-if="current.bank_card_bound">
             {{ current.bank_card_masked || '已绑定' }}
@@ -145,6 +151,7 @@
           <code>{{ revealedCard }}</code>
           <span class="muted" style="margin-left:8px">（已记审计，请勿截图传播）</span>
         </el-descriptions-item>
+        <el-descriptions-item label="绑卡时间">{{ formatTime(current.bank_card_bound_at) }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ current.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="核验状态">
           <StatusTag :text="verifyStatusText(current.verify_status)" :type="verifyStatusType(current.verify_status)" />
@@ -163,15 +170,58 @@
         <el-table-column label="提交" width="150">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
+        <el-table-column prop="reviewer_name" label="审核人" width="110" show-overflow-tooltip />
+        <el-table-column label="审核时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.reviewed_at) }}</template>
+        </el-table-column>
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="reviewVisible" title="审核用户" width="520px">
-      <el-descriptions :column="1" border style="margin-bottom:12px">
-        <el-descriptions-item label="用户">{{ current?.username }} / {{ current?.real_name }}</el-descriptions-item>
-        <el-descriptions-item label="组织">{{ current?.organization || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="核验材料">{{ reviewMaterial || '-' }}</el-descriptions-item>
+    <el-dialog v-model="reviewVisible" title="审核用户" width="760px">
+      <el-descriptions :column="compactViewport ? 1 : 2" border style="margin-bottom:12px">
+        <el-descriptions-item label="用户名">{{ current?.username || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="昵称">{{ current?.display_name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="姓名">{{ current?.real_name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="手机">{{ current?.phone || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="学号">{{ current?.student_no || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="单位/组织">{{ current?.organization || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="注册时间">{{ formatTime(current?.account_created_at) }}</el-descriptions-item>
+        <el-descriptions-item label="当前状态">
+          <StatusTag :text="verifyStatusText(current?.verify_status)" :type="verifyStatusType(current?.verify_status)" />
+        </el-descriptions-item>
+        <el-descriptions-item label="银行卡">
+          <span v-if="current?.bank_card_bound">
+            {{ current.bank_card_masked || '已绑定' }}
+            <span v-if="current.bank_card_bank_name" class="muted"> · {{ current.bank_card_bank_name }}</span>
+          </span>
+          <span v-else class="muted">未绑定</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="绑定时间">{{ formatTime(current?.bank_card_bound_at) }}</el-descriptions-item>
+        <el-descriptions-item label="个人备注" :span="compactViewport ? 1 : 2">
+          <span class="review-material">{{ current?.remark || '-' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="本次核验材料" :span="compactViewport ? 1 : 2">
+          <span class="review-material">{{ reviewMaterial || '-' }}</span>
+        </el-descriptions-item>
       </el-descriptions>
+      <h3 class="review-section-title">历史申请与审核记录</h3>
+      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240">
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="material_note" label="材料说明" min-width="190" show-overflow-tooltip />
+        <el-table-column prop="review_note" label="审核备注" min-width="150" show-overflow-tooltip />
+        <el-table-column label="提交时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="reviewer_name" label="审核人" width="110" show-overflow-tooltip />
+        <el-table-column label="审核时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.reviewed_at) }}</template>
+        </el-table-column>
+      </el-table>
+      <h3 class="review-section-title">本次审核意见</h3>
       <el-input v-model="reviewNote" type="textarea" rows="3" placeholder="审核备注（驳回时建议填写原因）" />
       <template #footer>
         <el-button @click="doReview(false)">驳回</el-button>
@@ -356,29 +406,31 @@ async function openDetail(row) {
 }
 
 async function openReview(row) {
-  current.value = row
   reviewNote.value = ''
   const detail = await api.get(`/users/${row.id}/verifications`)
+  detailHistory.value = detail.data || []
   const pending = detail.data.find((v) => v.status === 'pending')
   if (!pending) {
     ElMessage.warning('未找到待审记录')
     return
   }
+  current.value = { ...row, ...pending, id: row.id }
   pendingMap.value[row.id] = pending.id
   reviewMaterial.value = pending.material_note || row.latest_material_note || ''
   reviewVisible.value = true
 }
 
-function openReviewByPending(row) {
-  current.value = {
-    id: row.user_id,
-    username: row.username,
-    real_name: row.real_name,
-    organization: row.organization,
-  }
+async function openReviewByPending(row) {
+  current.value = { ...row, id: row.user_id }
   reviewNote.value = ''
   pendingMap.value[row.user_id] = row.id
   reviewMaterial.value = row.material_note || ''
+  try {
+    const history = await api.get(`/users/${row.user_id}/verifications`)
+    detailHistory.value = history.data || []
+  } catch {
+    detailHistory.value = [row]
+  }
   reviewVisible.value = true
 }
 
@@ -542,6 +594,16 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.review-section-title {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+}
+
+.review-material {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .row-actions {

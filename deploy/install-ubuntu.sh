@@ -140,7 +140,7 @@ from app.core.database import engine, SessionLocal
 from app.core.migrate import apply_migrations
 from app.seed import seed_if_empty
 # 生产环境用 alembic upgrade head 管理 schema；
-# 历史库（曾用 create_all）会自动 stamp head 标记基线后增量升级。
+# 历史库（曾用 create_all）会自动标记到固定 baseline revision 后增量升级。
 apply_migrations(engine, production=True)
 db = SessionLocal()
 try:

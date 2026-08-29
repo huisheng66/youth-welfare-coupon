@@ -31,6 +31,13 @@ class RateLimiter(ABC):
     def count(self, key: str) -> int:
         ...
 
+    def acquire(self, key: str) -> tuple[bool, int]:
+        """Atomically allow and record one hit where the backend supports it."""
+        allowed, retry = self.check(key)
+        if allowed:
+            self.hit(key)
+        return allowed, retry
+
 
 class MemoryRateLimiter(RateLimiter):
     def __init__(self, window_sec: int = 300, max_hits: int = 8) -> None:
@@ -55,6 +62,17 @@ class MemoryRateLimiter(RateLimiter):
                 oldest = min(recent)
                 retry = max(1, int(self.window_sec - (now - oldest)))
                 return False, retry
+            return True, 0
+
+    def acquire(self, key: str) -> tuple[bool, int]:
+        now = time.time()
+        with self._lock:
+            recent = self._prune(key, now)
+            if len(recent) >= self.max_hits:
+                oldest = min(recent)
+                retry = max(1, int(self.window_sec - (now - oldest)))
+                return False, retry
+            self._hits.setdefault(key, []).append(now)
             return True, 0
 
     def hit(self, key: str) -> None:
@@ -132,6 +150,27 @@ class FileRateLimiter(RateLimiter):
             finally:
                 conn.close()
 
+    def acquire(self, key: str) -> tuple[bool, int]:
+        """Use a write transaction so separate workers cannot pass the same check."""
+        now = time.time()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                recent = self._prune_conn(conn, key, now)
+                if len(recent) >= self.max_hits:
+                    conn.commit()
+                    retry = max(1, int(self.window_sec - (now - recent[0])))
+                    return False, retry
+                conn.execute("INSERT INTO rate_hits(key, ts) VALUES (?, ?)", (key, now))
+                conn.commit()
+                return True, 0
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def hit(self, key: str) -> None:
         now = time.time()
         with self._lock:
@@ -202,6 +241,35 @@ class RedisRateLimiter(RateLimiter):
                 retry = self.window_sec
             return False, retry
         return True, 0
+
+    def acquire(self, key: str) -> tuple[bool, int]:
+        """Atomically prune, check, and record through a Redis Lua script."""
+        rkey = self._k(key)
+        now = time.time()
+        member = f"{now}:{threading.get_ident()}"
+        script = self._client.register_script(
+            """
+            local key = KEYS[1]
+            local now = tonumber(ARGV[1])
+            local cutoff = now - tonumber(ARGV[2])
+            local max_hits = tonumber(ARGV[3])
+            redis.call('ZREMRANGEBYSCORE', key, 0, cutoff)
+            local count = redis.call('ZCARD', key)
+            if count >= max_hits then
+                local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+                local retry = tonumber(ARGV[2])
+                if oldest[2] then
+                    retry = math.max(1, tonumber(ARGV[2]) - (now - tonumber(oldest[2])))
+                end
+                return {0, math.floor(retry)}
+            end
+            redis.call('ZADD', key, now, ARGV[4])
+            redis.call('EXPIRE', key, tonumber(ARGV[2]) + 5)
+            return {1, 0}
+            """
+        )
+        allowed, retry = script(keys=[rkey], args=[now, self.window_sec, self.max_hits, member])
+        return bool(int(allowed)), int(retry)
 
     def hit(self, key: str) -> None:
         rkey = self._k(key)

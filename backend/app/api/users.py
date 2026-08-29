@@ -84,15 +84,31 @@ def _user_item(
 
 def _enrich_verification(db: Session, verification: UserVerification) -> VerificationOut:
     data = VerificationOut.model_validate(verification)
-    profile = db.get(UserProfile, verification.profile_id)
+    # List endpoints eager-load this graph; retain a lazy fallback for single-row writes.
+    profile = verification.profile
     if profile:
-        acc = db.get(Account, profile.account_id)
+        acc = profile.account
         data.user_id = profile.account_id
         data.real_name = profile.real_name
         data.organization = profile.organization
+        data.student_no = profile.student_no
+        data.remark = profile.remark
+        data.verify_status = profile.verify_status
+        data.bank_card_bound = bool(profile.bank_card_encrypted)
+        data.bank_card_masked = (
+            f"**** **** **** {profile.bank_card_last4}"
+            if profile.bank_card_encrypted and profile.bank_card_last4
+            else ("****" if profile.bank_card_encrypted else None)
+        )
+        data.bank_card_bank_name = profile.bank_card_bank_name or None
+        data.bank_card_bound_at = profile.bank_card_bound_at
         if acc:
             data.username = acc.username
+            data.display_name = acc.display_name
             data.phone = acc.phone
+            data.account_created_at = acc.created_at
+    if verification.reviewer:
+        data.reviewer_name = verification.reviewer.display_name or verification.reviewer.username
     return data
 
 
@@ -226,6 +242,10 @@ def my_verifications(
         raise HTTPException(status_code=404, detail="资料不存在")
     rows = (
         db.query(UserVerification)
+        .options(
+            joinedload(UserVerification.profile).joinedload(UserProfile.account),
+            joinedload(UserVerification.reviewer),
+        )
         .filter(UserVerification.profile_id == profile.id)
         .order_by(UserVerification.created_at.desc())
         .all()
@@ -307,6 +327,10 @@ def pending_verifications(
 ) -> list[VerificationOut]:
     rows = (
         db.query(UserVerification)
+        .options(
+            joinedload(UserVerification.profile).joinedload(UserProfile.account),
+            joinedload(UserVerification.reviewer),
+        )
         .filter(UserVerification.status == VerifyStatus.pending)
         .order_by(UserVerification.created_at.asc())
         .all()
@@ -409,6 +433,10 @@ def user_verifications(
         raise HTTPException(status_code=404, detail="用户不存在")
     rows = (
         db.query(UserVerification)
+        .options(
+            joinedload(UserVerification.profile).joinedload(UserProfile.account),
+            joinedload(UserVerification.reviewer),
+        )
         .filter(UserVerification.profile_id == profile.id)
         .order_by(UserVerification.created_at.desc())
         .all()

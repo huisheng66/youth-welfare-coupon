@@ -51,7 +51,7 @@ class PointLedgerOut(ORMModel):
 class GrantPointsIn(BaseModel):
     user_id: str
     # 正数入账，负数扣减（调整）；支持两位小数
-    amount: Decimal = Field(ne=0, ge=-100000, le=100000, max_digits=12, decimal_places=2)
+    amount: Decimal = Field(ge=-100000, le=100000, max_digits=12, decimal_places=2)
     reason: str = Field(default="志愿服务时长入账", max_length=255)
 
     @field_validator("amount", mode="before")
@@ -65,7 +65,7 @@ class GrantPointsIn(BaseModel):
 
 class BatchGrantPointsIn(BaseModel):
     user_ids: list[str] = Field(min_length=1, max_length=100)
-    amount: Decimal = Field(ne=0, ge=-100000, le=100000, max_digits=12, decimal_places=2)
+    amount: Decimal = Field(ge=-100000, le=100000, max_digits=12, decimal_places=2)
     reason: str = Field(default="志愿服务时长入账", max_length=255)
 
     @field_validator("amount", mode="before")

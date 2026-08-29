@@ -95,9 +95,20 @@ class VerificationOut(ORMModel):
     # enriched fields for admin review
     user_id: str | None = None
     username: str | None = None
+    display_name: str | None = None
     real_name: str | None = None
     phone: str | None = None
+    student_no: str | None = None
     organization: str | None = None
+    remark: str | None = None
+    verify_status: VerifyStatus | None = None
+    account_created_at: datetime | None = None
+    # 仅返回脱敏银行卡信息；完整卡号仍走单独的超管审计接口
+    bank_card_bound: bool = False
+    bank_card_masked: str | None = None
+    bank_card_bank_name: str | None = None
+    bank_card_bound_at: datetime | None = None
+    reviewer_name: str | None = None
 
 
 class UserListItem(ORMModel):

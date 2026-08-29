@@ -5,25 +5,20 @@ from sqlalchemy.orm import Session
 from app.models.entities import CouponInstance, CouponStatus
 
 
-def expire_stale_coupons(db: Session, *, limit: int = 5000) -> int:
-    """Mark unused coupons past expires_at as expired. Returns count updated."""
+def expire_stale_coupons(db: Session) -> int:
+    """Mark all expired unused coupons in one database update."""
     now = datetime.now(timezone.utc)
-    rows = (
+    updated = (
         db.query(CouponInstance)
-        .filter(CouponInstance.status == CouponStatus.unused)
-        .limit(limit)
-        .all()
+        .filter(
+            CouponInstance.status == CouponStatus.unused,
+            CouponInstance.expires_at <= now,
+        )
+        .update(
+            {CouponInstance.status: CouponStatus.expired},
+            synchronize_session=False,
+        )
     )
-    n = 0
-    for c in rows:
-        exp = c.expires_at
-        if exp is None:
-            continue
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < now:
-            c.status = CouponStatus.expired
-            n += 1
-    if n:
+    if updated:
         db.commit()
-    return n
+    return int(updated)

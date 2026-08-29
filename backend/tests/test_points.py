@@ -107,6 +107,17 @@ class TestPoints(unittest.TestCase):
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertIn("余额不足", r.json()["detail"])
 
+    def test_grant_zero_is_rejected(self) -> None:
+        with TempApp() as ta:
+            admin_token = ta.login("admin", "admin123")
+            with ta.client() as c:
+                response = c.post(
+                    "/api/points/grant",
+                    headers=ta.bearer(admin_token),
+                    json={"user_id": _youth1_id(ta), "amount": "0", "reason": "无效调整"},
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+
     # ---- 兑换 ----
     def test_exchange_coupon_success(self) -> None:
         """youth1 用 2 时长兑换餐饮券，余额 10→8。"""
