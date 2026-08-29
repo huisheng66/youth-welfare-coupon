@@ -330,8 +330,9 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         "login.success",
         extra={"user_id": account.id, "role": account.role.value, "ip": ip},
     )
-    # 过渡期仍返回 access_token，兼容尚未改造的前端/小程序
-    return TokenOut(access_token=token)
+    # 生产默认不在 JSON 回传 JWT；开发/显式开关下保留 body token 以兼容测试与旧客户端
+    body_token = token if get_settings().effective_auth_return_token_in_body else ""
+    return TokenOut(access_token=body_token)
 
 
 @router.post("/logout", response_model=MessageOut)

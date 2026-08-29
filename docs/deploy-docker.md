@@ -46,7 +46,8 @@ chmod 600 secrets/*.txt
 ### 2. 构建并启动
 
 ```bash
-docker compose up -d --build
+# 生产请显式指定 base 文件，勿依赖自动 override
+docker compose -f docker-compose.yml up -d --build
 ```
 
 首次启动会：
@@ -167,9 +168,9 @@ docker compose down -v
 
 ## 开发 vs 生产配置
 
-Compose 默认会自动加载 `docker-compose.override.yml`，提供开发便利：
+开发叠加文件为 **`docker-compose.dev.yml`（不会自动加载）**，须显式 `-f` 或用 `make up` / `docker.ps1 up`，避免生产机误开调试端口：
 
-| 配置项 | 开发（override） | 生产（base） |
+| 配置项 | 开发（`docker-compose.dev.yml`） | 生产（base） |
 |--------|------------------|--------------|
 | api 端口 | 暴露 19001 | 仅内部网络 |
 | redis 端口 | 暴露 6379 | 仅内部网络 |
@@ -178,10 +179,17 @@ Compose 默认会自动加载 `docker-compose.override.yml`，提供开发便利
 | OpenAPI | 开启 | 关闭 |
 | 演示数据 | 自动 seed | 不 seed |
 | 资源限制 | 无 | api 512MB/1.5核, web 128MB/0.5核, redis 96MB/0.5核 |
+| 可信反代 | 同 base（`TRUSTED_PROXY_CIDRS` 内网段） | web→api 可读真实访客 IP |
 
-启动生产模式（跳过 override）：
+启动开发 / 生产：
 
 ```bash
+# 开发（显式叠加 dev 文件，不会自动加载）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# 或
+make up
+
+# 生产（仅 base）
 docker compose -f docker-compose.yml up -d --build
 # 或
 make up-prod

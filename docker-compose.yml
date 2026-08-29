@@ -65,6 +65,8 @@ services:
       # Redis 在 compose 网络内
       - REDIS_URL=redis://redis:6379/0
       - RATE_LIMIT_BACKEND=redis
+      # web(nginx) → api 走 Docker bridge（非 loopback），须信任内网反代头才能拿到真实访客 IP
+      - TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
       # 只读根文件系统下，Python 临时目录指向 tmpfs
       - TMPDIR=/tmp
       # Docker secrets：pydantic-settings 从 /run/secrets/<field_name> 读取敏感配置

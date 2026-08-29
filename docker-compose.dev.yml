@@ -1,0 +1,47 @@
+# 开发环境叠加配置（不会被 docker compose 自动加载，避免生产误用）
+# 与生产区别：
+#   - api 暴露 19001 便于本地直连调试
+#   - api 用 --reload 热重载，改后端代码即时生效
+#   - redis 暴露 6379 便于本地工具连接
+#   - 关闭资源限制（dev 机器资源充足）
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   make up
+#   .\scripts\docker.ps1 up
+#
+# 生产（切勿叠加本文件）：
+#   docker compose -f docker-compose.yml up -d
+#   make up-prod
+
+services:
+  api:
+    ports:
+      - "19001:19001"
+    environment:
+      # dev 模式：开启 OpenAPI 文档、演示 seed、控制台邮件
+      - APP_ENV=development
+      - OPENAPI_ENABLED=true
+      - SEED_DEMO_ACCOUNTS=true
+      - MAIL_CONSOLE=true
+      - GLOBAL_IP_MAX_REQUESTS=0
+    # 覆盖启动命令：跳过 alembic 迁移（dev 用 create_all），启用热重载
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "19001", "--reload", "--reload-dir", "/app/app"]
+    volumes:
+      # 挂载源码，配合 --reload 实现热重载
+      - ./backend/app:/app/app:ro
+      - api-data:/app/data
+    mem_limit: !reset null
+    cpus: !reset null
+
+  web:
+    ports:
+      - "5173:8080"   # 用 5173 端口，避免与本地 vite dev server 冲突
+    mem_limit: !reset null
+    cpus: !reset null
+
+  redis:
+    ports:
+      - "6379:6379"
+    mem_limit: !reset null
+    cpus: !reset null

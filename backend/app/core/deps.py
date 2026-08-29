@@ -13,12 +13,12 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _extract_token(request: Request, creds: HTTPAuthorizationCredentials | None) -> str | None:
-    """优先读 HttpOnly Cookie；过渡期回落 Authorization: Bearer。"""
+    """优先读 HttpOnly Cookie；可选回落 Authorization: Bearer（见 effective_auth_allow_bearer）。"""
     s = get_settings()
     cookie_token = request.cookies.get(s.auth_cookie_name)
     if cookie_token:
         return cookie_token
-    if s.auth_allow_bearer and creds is not None and creds.credentials:
+    if s.effective_auth_allow_bearer and creds is not None and creds.credentials:
         return creds.credentials
     return None
 

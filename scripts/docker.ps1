@@ -25,8 +25,8 @@ switch ($Command.ToLower()) {
         Write-Host "用法: .\scripts\docker.ps1 <command>"
         Write-Host ""
         Write-Host "启动:"
-        Write-Host "  up          启动开发环境（含 dev override）"
-        Write-Host "  up-prod     启动生产模式（无 dev override）"
+        Write-Host "  up          启动开发环境（显式叠加 docker-compose.dev.yml）"
+        Write-Host "  up-prod     启动生产模式（仅 base compose）"
         Write-Host "  up-https    启动生产 + HTTPS（Caddy，需设 WELFARE_DOMAIN）"
         Write-Host "  down        停止容器（保留数据）"
         Write-Host "  down-clean  停止并删除数据卷（⚠️ 丢失数据库）"
@@ -54,7 +54,7 @@ switch ($Command.ToLower()) {
         Write-Host "  validate    校验 compose 配置"
         Write-Host "  scan        trivy 镜像扫描（需安装 trivy）"
     }
-    "up"       { Invoke-Docker @("up", "-d", "--build") }
+    "up"       { Invoke-Docker @("-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "up", "-d", "--build") }
     "up-prod"  { Invoke-Docker @("-f", "docker-compose.yml", "up", "-d", "--build") }
     "up-https" { Invoke-Docker @("-f", "docker-compose.yml", "-f", "docker-compose.https.yml", "up", "-d", "--build") }
     "down"     { Invoke-Docker @("down") }

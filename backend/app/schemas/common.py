@@ -15,7 +15,8 @@ class MessageOut(BaseModel):
 
 
 class TokenOut(BaseModel):
-    access_token: str
+    # 生产可为空字符串：会话仅靠 HttpOnly Cookie，避免 body 泄露 JWT
+    access_token: str = ""
     token_type: str = "bearer"
 
 

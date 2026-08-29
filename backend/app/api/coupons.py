@@ -429,23 +429,32 @@ def list_instances(
     if status:
         query = query.filter(CouponInstance.status == status)
     rows = query.all()
+    # 搜索字段在 commit 前从已 joinedload 的关系取出，避免 expire_on_commit 后 N+1
+    matched_ids: set[str] | None = None
+    if q and q.strip():
+        keyword = q.strip().lower()
+        matched_ids = set()
+        for r in rows:
+            uname = (r.user.username if r.user else "") or ""
+            dname = (r.user.display_name if r.user else "") or ""
+            if (
+                keyword in (r.code or "").lower()
+                or keyword in uname.lower()
+                or keyword in dname.lower()
+            ):
+                matched_ids.add(r.id)
     for r in rows:
         _maybe_expire(r)
     db.commit()
     # re-filter status after expire
     if status:
         rows = [r for r in rows if r.status == status]
-    if q and q.strip():
-        keyword = q.strip().lower()
-        rows = [
-            r
-            for r in rows
-            if keyword in (r.code or "").lower()
-            or keyword in (r.user.username if r.user else "").lower()
-            or keyword in (r.user.display_name if r.user else "").lower()
-        ]
+    if matched_ids is not None:
+        rows = [r for r in rows if r.id in matched_ids]
     total = len(rows)
     page = rows[skip : skip + limit]
+    # commit 会 expire 关系缓存；按页重新 joinedload，避免 coupon_to_out N+1
+    page = _preload_coupons(db, [r.id for r in page])
     return Page(total=total, items=[coupon_to_out(r) for r in page])
 
 
@@ -471,6 +480,8 @@ def my_coupons(
     db.commit()
     if status:
         rows = [r for r in rows if r.status == status]
+    # commit 后重新预加载，避免 expire_on_commit 触发 N+1
+    rows = _preload_coupons(db, [r.id for r in rows])
     return [coupon_to_out(r) for r in rows]
 
 

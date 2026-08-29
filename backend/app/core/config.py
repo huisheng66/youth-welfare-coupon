@@ -90,8 +90,15 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool | None = None
     # lax 覆盖绝大多数 CSRF 场景；strict 会断开外链跳转后的会话
     auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
-    # 是否仍允许 Authorization: Bearer 头读取 token（过渡期兼容小程序/旧前端，1-2 版本后关闭）
-    auth_allow_bearer: bool = True
+    # None=auto：开发 True（兼容测试/脚本/小程序过渡），生产 False（仅 Cookie）
+    auth_allow_bearer: bool | None = None
+    # None=auto：与 effective_auth_allow_bearer 一致；生产默认不在登录 JSON 里回传 JWT
+    auth_return_token_in_body: bool | None = None
+
+    # 可信反代网段（逗号分隔 CIDR）。对端在这些网段内时才信任 X-Real-IP 等头。
+    # Docker Compose 内网反代示例：10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    # 留空则仅信任 loopback（裸机本机 Nginx）与 Cloudflare 回源段。
+    trusted_proxy_cidrs: str = ""
 
     # Rate limiting: auto | memory | file | redis
     rate_limit_backend: str = "auto"
@@ -210,6 +217,36 @@ class Settings(BaseSettings):
         if self.auth_cookie_secure is not None:
             return self.auth_cookie_secure
         return self.is_production
+
+    @property
+    def effective_auth_allow_bearer(self) -> bool:
+        """是否接受 Authorization: Bearer。生产默认关，开发默认开。"""
+        if self.auth_allow_bearer is not None:
+            return self.auth_allow_bearer
+        return not self.is_production
+
+    @property
+    def effective_auth_return_token_in_body(self) -> bool:
+        """登录响应是否包含 access_token。生产默认关，避免 XSS 从 body 窃取 JWT。"""
+        if self.auth_return_token_in_body is not None:
+            return self.auth_return_token_in_body
+        return self.effective_auth_allow_bearer
+
+    @property
+    def trusted_proxy_network_list(self) -> list:
+        """解析 trusted_proxy_cidrs 为 ip_network 列表（非法项跳过）。"""
+        import ipaddress
+
+        nets: list = []
+        for part in (self.trusted_proxy_cidrs or "").split(","):
+            cidr = part.strip()
+            if not cidr:
+                continue
+            try:
+                nets.append(ipaddress.ip_network(cidr, strict=False))
+            except ValueError:
+                continue
+        return nets
 
 
 @lru_cache

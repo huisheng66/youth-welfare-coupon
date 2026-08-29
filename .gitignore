@@ -33,7 +33,9 @@ tools/**/__pycache__/
 
 # Docker
 .env
+# 本地临时 override（若存在会被 compose 自动加载；正式开发请用 docker-compose.dev.yml）
 docker-compose.override.yml
 # Docker secrets：实际密钥文件不入库，仅保留 .example 模板
 secrets/*.txt
 !secrets/*.txt.example
+!secrets/.gitkeep

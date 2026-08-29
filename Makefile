@@ -11,41 +11,45 @@ help: ## 显示所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-# ---------- 启停 ----------
-up: build ## 启动开发环境（含 dev override，热重载 + 演示数据）
-	docker compose up -d
+# 开发叠加文件（显式指定，避免 docker-compose.override.yml 被生产误加载）
+COMPOSE_DEV := -f docker-compose.yml -f docker-compose.dev.yml
+COMPOSE_PROD := -f docker-compose.yml
 
-up-prod: build ## 启动生产模式（不叠加 dev override）
-	docker compose -f docker-compose.yml up -d
+# ---------- 启停 ----------
+up: build ## 启动开发环境（显式叠加 docker-compose.dev.yml）
+	docker compose $(COMPOSE_DEV) up -d
+
+up-prod: build ## 启动生产模式（仅 base compose）
+	docker compose $(COMPOSE_PROD) up -d
 
 up-https: build ## 启动生产 + HTTPS（Caddy 自动 TLS，需先设 WELFARE_DOMAIN）
-	docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+	docker compose $(COMPOSE_PROD) -f docker-compose.https.yml up -d
 
 down: ## 停止所有容器（保留数据）
-	docker compose down
+	docker compose $(COMPOSE_DEV) down 2>/dev/null || docker compose $(COMPOSE_PROD) down
 
 down-clean: ## 停止并删除数据卷（⚠️ 丢失数据库）
-	docker compose down -v
+	docker compose $(COMPOSE_DEV) down -v 2>/dev/null || docker compose $(COMPOSE_PROD) down -v
 
 # ---------- 构建 ----------
 build: ## 构建镜像（如有改动）
-	docker compose build
+	docker compose $(COMPOSE_PROD) build
 
 rebuild: ## 强制重新构建（无缓存）
-	docker compose build --no-cache
+	docker compose $(COMPOSE_PROD) build --no-cache
 
 # ---------- 观测 ----------
 ps: ## 查看容器状态
-	docker compose ps
+	docker compose $(COMPOSE_PROD) ps
 
 logs: ## 跟踪所有容器日志
-	docker compose logs -f --tail=100
+	docker compose $(COMPOSE_PROD) logs -f --tail=100
 
 logs-api: ## 跟踪 api 日志
-	docker compose logs -f --tail=100 api
+	docker compose $(COMPOSE_PROD) logs -f --tail=100 api
 
 logs-web: ## 跟踪 web 日志
-	docker compose logs -f --tail=100 web
+	docker compose $(COMPOSE_PROD) logs -f --tail=100 web
 
 health: ## 查看健康状态
 	@echo "=== API ==="
@@ -56,19 +60,19 @@ health: ## 查看健康状态
 
 # ---------- 调试 ----------
 shell-api: ## 进入 api 容器
-	docker compose exec api sh
+	docker compose $(COMPOSE_PROD) exec api sh
 
 shell-web: ## 进入 web 容器
-	docker compose exec web sh
+	docker compose $(COMPOSE_PROD) exec web sh
 
 shell-redis: ## 进入 redis 容器
-	docker compose exec redis sh
+	docker compose $(COMPOSE_PROD) exec redis sh
 
 db-shell: ## 连接 SQLite（api 容器内）
-	docker compose exec api python -c "import sqlite3; c=sqlite3.connect('/app/data/app.db'); import code; code.interact(local={'c':c,'cur':c.cursor()})"
+	docker compose $(COMPOSE_PROD) exec api python -c "import sqlite3; c=sqlite3.connect('/app/data/app.db'); import code; code.interact(local={'c':c,'cur':c.cursor()})"
 
 redis-cli: ## 连接 redis-cli
-	docker compose exec redis redis-cli
+	docker compose $(COMPOSE_PROD) exec redis redis-cli
 
 # ---------- 数据 ----------
 seed: ## 临时 seed 演示账号（生产慎用）

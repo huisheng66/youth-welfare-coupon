@@ -2,7 +2,7 @@
 可信客户端 IP 解析。
 
 规则（防 X-Forwarded-For 伪造）：
-1. TCP 对端若是本机反代（127.0.0.1 / ::1），才读取反代写入的头。
+1. TCP 对端若是本机反代（loopback）或 TRUSTED_PROXY_CIDRS 内网段，才读取反代写入的头。
 2. 优先 CF-Connecting-IP（Cloudflare 在回源时设置；直连伪造的头在未信任对端时忽略）。
 3. 其次 X-Real-IP（Nginx 应设为 $remote_addr；配合 real_ip 模块后为真实访客）。
 4. 不使用 X-Forwarded-For 的「第一段」（客户端可控）。
@@ -99,15 +99,30 @@ def is_loopback_peer(ip: str | None) -> bool:
         return False
 
 
+def is_trusted_proxy_peer(ip: str | None) -> bool:
+    """对端是否为可信任的反代（loopback 或配置的 CIDR，如 Docker bridge）。"""
+    if is_loopback_peer(ip):
+        return True
+    if not ip:
+        return False
+    try:
+        from app.core.config import get_settings
+
+        nets = get_settings().trusted_proxy_network_list
+    except Exception:
+        nets = []
+    if not nets:
+        return False
+    return _ip_in_networks(ip, nets)
+
+
 def get_client_ip(request: Request) -> str:
     """解析用于限流/审计的客户端 IP（不可被任意 XFF 第一段伪造）。"""
     peer = request.client.host if request.client else None
     peer_ip = _parse_ip(peer) or (peer or "unknown")
 
-    # TestClient / 直连应用：对端即客户端
-    if not is_loopback_peer(peer_ip):
-        # 对端是公网（含直连源站的攻击者）时：
-        # 仅当对端本身是 Cloudflare 才信任 CF-Connecting-IP
+    # 非可信对端：仅当对端本身是 Cloudflare 才信 CF 头，否则对端即客户端
+    if not is_trusted_proxy_peer(peer_ip):
         if is_cloudflare_ip(peer_ip):
             cf = _parse_ip(request.headers.get("cf-connecting-ip"))
             if cf:
@@ -118,7 +133,7 @@ def get_client_ip(request: Request) -> str:
         # 直连：忽略客户端伪造的 CF / XFF 头
         return peer_ip
 
-    # 对端是本机 Nginx：可读反代头，但仍不信任 XFF 第一段
+    # 对端是本机 Nginx / Docker 内网反代：可读反代头，但仍不信任 XFF 第一段
     cf = _parse_ip(request.headers.get("cf-connecting-ip"))
     if cf:
         # 可选：校验 X-Real-IP 是否为 CF（Nginx 未做 real_ip 时 X-Real-IP=CF 边缘）

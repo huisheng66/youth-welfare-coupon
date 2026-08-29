@@ -27,10 +27,17 @@ def set_auth_cookie(response: Response, token: str, settings: Settings | None = 
 
 
 def clear_auth_cookie(response: Response, settings: Settings | None = None) -> None:
-    """登出时清除 Cookie。"""
+    """登出时清除 Cookie。
+
+    必须与 set_auth_cookie 使用相同的 secure / httponly / samesite / path / domain，
+    否则生产 HTTPS 下浏览器可能拒绝覆盖删除 Secure Cookie，导致「退出仍登录」。
+    """
     s = settings or get_settings()
     response.delete_cookie(
         key=s.auth_cookie_name,
         path="/",
         domain=s.auth_cookie_domain or None,
+        secure=s.effective_auth_cookie_secure,
+        httponly=True,
+        samesite=s.auth_cookie_samesite,
     )

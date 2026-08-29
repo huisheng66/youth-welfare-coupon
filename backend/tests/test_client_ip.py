@@ -70,6 +70,36 @@ class TestClientIp(unittest.TestCase):
         )
         self.assertEqual(ip, "203.0.113.7")
 
+    def test_docker_bridge_peer_trusts_x_real_ip_when_configured(self) -> None:
+        """Compose web→api 对端是 172.x；配置 TRUSTED_PROXY_CIDRS 后应读 X-Real-IP。"""
+        os.environ["TRUSTED_PROXY_CIDRS"] = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        from app.core.config import clear_settings_cache
+
+        clear_settings_cache()
+        try:
+            ip = self._req(
+                "172.18.0.5",
+                {
+                    "X-Real-IP": "203.0.113.88",
+                    "X-Forwarded-For": "1.2.3.4, 172.18.0.5",
+                },
+            )
+            self.assertEqual(ip, "203.0.113.88")
+        finally:
+            os.environ.pop("TRUSTED_PROXY_CIDRS", None)
+            clear_settings_cache()
+
+    def test_docker_bridge_peer_without_config_ignores_headers(self) -> None:
+        os.environ.pop("TRUSTED_PROXY_CIDRS", None)
+        from app.core.config import clear_settings_cache
+
+        clear_settings_cache()
+        ip = self._req(
+            "172.18.0.5",
+            {"X-Real-IP": "203.0.113.88"},
+        )
+        self.assertEqual(ip, "172.18.0.5")
+
 
 class TestLoginRateByUser(unittest.TestCase):
     def setUp(self) -> None:
