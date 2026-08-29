@@ -14,7 +14,7 @@ def req(method, path, body=None, token=None, query=None):
     if query:
         url += "?" + query
     data = None
-    h = {"Accept": "application/json"}
+    h = {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
     if body is not None:
         data = json.dumps(body).encode()
         h["Content-Type"] = "application/json"

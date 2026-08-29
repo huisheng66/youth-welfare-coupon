@@ -77,18 +77,24 @@ def _cell_str(v) -> str:
 def _parse_xlsx(data: bytes) -> list[list[str]]:
     from openpyxl import load_workbook
 
-    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
-        ws = wb.worksheets[0]
-        return [[_cell_str(v) for v in row] for row in ws.iter_rows(values_only=True)]
-    finally:
-        wb.close()
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        try:
+            ws = wb.worksheets[0]
+            return [[_cell_str(v) for v in row] for row in ws.iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    except Exception as exc:  # BadZipFile / KeyError / InvalidFileException 等 → 统一 400
+        raise ValueError(f"xlsx 文件无法解析：{exc}") from exc
 
 
 def _parse_docx(data: bytes) -> list[list[str]]:
     import docx  # python-docx
 
-    document = docx.Document(io.BytesIO(data))
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except Exception as exc:  # BadZipFile / PackageNotFoundError 等 → 统一 400
+        raise ValueError(f"docx 文件无法解析：{exc}") from exc
     if document.tables:
         return [[_cell_str(cell.text) for cell in row.cells] for row in document.tables[0].rows]
     # 无表格：每个非空段落是一行，含分隔符时拆多列

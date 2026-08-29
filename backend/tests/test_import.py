@@ -210,6 +210,26 @@ class TestUserListImport(unittest.TestCase):
             self.assertEqual(r.status_code, 400, r.text)
             self.assertIn("文件过大", r.json()["detail"])
 
+    def test_import_rejects_corrupt_office_files(self) -> None:
+        """伪装 / 损坏的 xlsx、docx → 400 而非 500。"""
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("xl/workbook.xml", "broken")
+        broken_zip = buf.getvalue()
+        with TempApp() as ta:
+            token = ta.login("admin", "admin123")
+            for filename, data in (
+                ("evil.xlsx", b"not a real zip"),
+                ("broken.xlsx", broken_zip),
+                ("evil.docx", b"not a real zip"),
+            ):
+                r = _post_import(ta, token, "/users/import", filename, data)
+                self.assertEqual(r.status_code, 400, f"{filename}: {r.status_code} {r.text[:120]}")
+                self.assertIn("无法解析", r.json()["detail"])
+
     def test_import_row_limit_enforced(self) -> None:
         fresh_settings(IMPORT_MAX_ROWS="2")
         try:

@@ -53,7 +53,7 @@ def req(
     if raw_query is not None:
         url = f"{BASE}{path}?{raw_query}"
     data = None
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
