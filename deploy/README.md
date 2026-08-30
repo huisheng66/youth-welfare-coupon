@@ -122,6 +122,7 @@ curl -s http://127.0.0.1:19001/api/health
 | 脚本 | 用途 | 备注 |
 |------|------|------|
 | `install-ubuntu.sh` | Ubuntu 一键部署骨架（MySQL + API + 前端 + Nginx） | 首选入口；支持 `DOMAIN`/`DB_PASS`/`SKIP_FRONTEND_BUILD` 等 |
+| `backup-mysql.sh` | MySQL 每日备份（gzip + .env 副本，按天保留） | cron 安装在 `/etc/cron.d/welfare-backup`；`BACKUP_DIR`/`RETAIN_DAYS` 可覆盖 |
 | `remote-deploy.sh` | 服务器端解压 + 调用 `install-ubuntu.sh` | 由 `run-on-server.sh` / `run-on-public.sh` 触发 |
 | `run-on-server.sh` | 内网机部署封装 | 配合 `pack-and-upload.sh` |
 | `run-on-public.sh` | 公网机 root 部署封装 | 配合 `pack-and-upload-public.sh` |
@@ -172,6 +173,34 @@ curl -s http://127.0.0.1:19001/api/health
 1. 新环境用 MySQL 空库启动，自动建表  
 2. 演示数据会 seed；正式数据需自行导出/导入或业务重录  
 3. 不提供自动 SQLite→MySQL 迁移脚本（表结构简单，建议干净部署）
+
+## 备份与恢复
+
+`install-ubuntu.sh` 会安装 cron（每日 03:17）执行 `deploy/backup-mysql.sh`：
+
+- 备份内容：`mysqldump --single-transaction` 全库 gzip + `backend/.env` 副本（字段加密钥 `FIELD_ENCRYPTION_KEY` 必须随库备份，否则银行卡密文不可解密）
+- 位置：`/opt/welfare/backups/`，默认保留 14 天（`RETAIN_DAYS` 可覆盖）
+- 日志：`/var/log/welfare-backup.log`
+- 手动执行：`bash /opt/welfare/deploy/backup-mysql.sh`
+
+**恢复步骤**（新机器或本机回滚）：
+
+```bash
+# 1. 安装骨架（或已有环境跳过）；解压备份
+gunzip welfare-YYYYMMDD-HHMMSS.sql.gz
+
+# 2. 恢复数据库（注意字符集）
+mysql -u welfare -p welfare < welfare-YYYYMMDD-HHMMSS.sql
+
+# 3. 恢复 .env（先 diff 现有 .env，仅当加密钥丢失/回滚时覆盖）
+cp env-YYYYMMDD-HHMMSS.txt /opt/welfare/backend/.env && chmod 640 /opt/welfare/backend/.env
+
+# 4. 重启并验证
+systemctl restart welfare-api
+curl -s http://127.0.0.1:19001/api/health
+```
+
+> 恢复演练：建议每季度在测试机走一遍上述流程；`.env` 与数据库必须成对恢复，单换其一会导致加密字段不可读或密钥错配。
 
 ## 凭据注入与轮换（2026-08）
 

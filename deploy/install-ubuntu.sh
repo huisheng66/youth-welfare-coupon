@@ -114,6 +114,10 @@ GLOBAL_IP_MAX_REQUESTS=300
 GLOBAL_IP_WINDOW_SECONDS=60
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 LIVE_CODE_EXPIRE_SECONDS=30
+# 前端已全面使用 HttpOnly Cookie，生产关闭 Bearer 头兼容，缩小令牌攻击面
+AUTH_ALLOW_BEARER=false
+# 读取路径过期券扫描节流（秒）；0 = 每次请求都扫描
+COUPON_EXPIRE_SCAN_INTERVAL=30
 MAIL_CONSOLE=true
 MAIL_SERVER=
 MAIL_PORT=465
@@ -233,6 +237,16 @@ if command -v ufw >/dev/null 2>&1; then
   # 不自动 ufw --force enable，避免锁死远程会话；仅确保规则在启用后生效
 fi
 
+# 每日 03:17 自动备份数据库（含 .env 副本，字段加密钥必须随库备份）
+cat > /etc/cron.d/welfare-backup <<'CRON'
+# welfare MySQL 每日备份（保留 14 天），日志 /var/log/welfare-backup.log
+SHELL=/bin/bash
+17 3 * * * root bash /opt/welfare/deploy/backup-mysql.sh >> /var/log/welfare-backup.log 2>&1
+CRON
+chmod 644 /etc/cron.d/welfare-backup
+touch /var/log/welfare-backup.log && chmod 600 /var/log/welfare-backup.log
+bash /opt/welfare/deploy/backup-mysql.sh || echo "首次备份失败（可手动重跑 /opt/welfare/deploy/backup-mysql.sh）"
+
 sleep 2
 HEALTH="$(curl -sS -m 5 http://127.0.0.1:19001/api/health || true)"
 HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1/ || true)"
@@ -251,6 +265,7 @@ echo "   *** 请立即登录后修改密码，并妥善保存此输出 ***"
 echo " OpenAPI 已关闭；CORS 无局域网正则"
 echo " 邮件当前 MAIL_CONSOLE=true（验证码打日志）；上线请配 SMTP"
 echo " HTTPS: sudo certbot --nginx -d 你的域名"
+echo " 备份: /opt/welfare/backups（cron 每日 03:17，保留 14 天）；恢复见 deploy/README.md"
 echo " 服务: systemctl status welfare-api nginx"
 echo "=============================================="
 # 单独落盘一份可删的凭据提示（root only）

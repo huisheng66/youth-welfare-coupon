@@ -216,6 +216,9 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict:
         s = get_settings()
+        # 生产只暴露存活状态：数据库类型 / SMTP 配置 / 运行环境等都是无谓的指纹
+        if s.is_production:
+            return {"status": "ok"}
         url = s.database_url
         if url.startswith("sqlite"):
             db_engine = "sqlite"

@@ -39,21 +39,35 @@ def apply_points(
     ref_type: str = "",
     ref_id: str = "",
 ) -> PointAccount:
+    """余额变动唯一入口。用单条条件 UPDATE 原子变更余额：
+
+    - 扣减时 WHERE balance >= -change 由数据库判定，并发下不会透支；
+    - SET balance = balance + change 让数据库基于最新值计算，
+      多 worker 同时入账/扣减不会互相覆盖（避免读改写丢更新）。
+    SQLite/MySQL/Postgres 均支持同一语句内的列表达式。
+    """
     change = quantize_hours(change)
     if change == ZERO:
         raise ValueError("变动时长不能为 0")
     acc = get_or_create_account(db, user_id)
     current = quantize_hours(acc.balance)
-    new_balance = quantize_hours(current + change)
-    if new_balance < ZERO:
+
+    stmt = db.query(PointAccount).filter(PointAccount.user_id == user_id)
+    if change < ZERO:
+        stmt = stmt.filter(PointAccount.balance >= -change)
+    updated = stmt.update(
+        {PointAccount.balance: PointAccount.balance + change, PointAccount.updated_at: utcnow()},
+        synchronize_session=False,
+    )
+    if not updated:
         raise ValueError("时长余额不足")
-    acc.balance = new_balance
-    acc.updated_at = utcnow()
+    # identity map 里的余额已过期；账本记本次变更后的计算值
+    db.expire(acc)
     db.add(
         PointLedger(
             user_id=user_id,
             change=change,
-            balance_after=new_balance,
+            balance_after=quantize_hours(current + change),
             reason=reason,
             operator_id=operator_id,
             ref_type=ref_type,

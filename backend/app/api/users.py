@@ -497,6 +497,7 @@ def import_users(
                 role=Role.user,
                 display_name=real_name,
                 phone=phone or None,
+                must_change_password=True,
             )
             db.add(account)
             db.flush()

@@ -84,6 +84,7 @@ def account_to_out(account: Account) -> AccountOut:
         display_name=account.display_name,
         phone=account.phone,
         is_active=account.is_active,
+        must_change_password=account.must_change_password,
         merchant_id=account.merchant_id,
         verify_status=verify_status,
     )
@@ -404,6 +405,7 @@ def create_merchant_account(
         role=Role.merchant,
         display_name=body.display_name or body.username,
         merchant_id=body.merchant_id,
+        must_change_password=True,
     )
     db.add(account)
     write_audit(
@@ -436,6 +438,7 @@ def create_issue_admin(
         password_hash=hash_password(body.password),
         role=Role.issue_admin,
         display_name=body.display_name or body.username,
+        must_change_password=True,
     )
     db.add(account)
     write_audit(db, actor_id=admin.id, action="create_issue_admin", target_type="account", target_id=body.username)
@@ -456,6 +459,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     # 长度/策略由 ChangePasswordIn 校验（最少 8 位）
     account.password_hash = hash_password(body.new_password)
+    account.must_change_password = False
     write_audit(
         db,
         actor_id=account.id,
@@ -530,6 +534,7 @@ def reset_password(
     if target.role == Role.super_admin and target.id != admin.id:
         raise HTTPException(status_code=400, detail="不能重置其他超级管理员密码")
     target.password_hash = hash_password(body.new_password)
+    target.must_change_password = True
     write_audit(
         db,
         actor_id=admin.id,

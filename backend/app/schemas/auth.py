@@ -132,6 +132,8 @@ class AccountOut(ORMModel):
     display_name: str
     phone: str | None
     is_active: bool
+    # 登录后须先改密（导入账号 / 管理员重置 / 新建管理账号）
+    must_change_password: bool = False
     merchant_id: str | None
     verify_status: VerifyStatus | None = None
 

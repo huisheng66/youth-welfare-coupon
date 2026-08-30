@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     import_max_rows: int = 1000
     # 导入用户的统一初始密码（须 ≥8 位且含字母和数字），管理员在结果页分发并提醒用户修改
     import_initial_password: str = "youth123456"
+    # 读取路径过期券扫描节流（秒），0 = 每次列表请求都扫描
+    coupon_expire_scan_interval: int = 30
 
     # 认证 Cookie：将 JWT 从 localStorage 迁到 HttpOnly Cookie，消除 XSS 窃取 token 的链路
     auth_cookie_name: str = "token"

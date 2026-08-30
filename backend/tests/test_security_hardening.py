@@ -84,6 +84,10 @@ class TestProductionGuards(unittest.TestCase):
         )
         self.assertEqual(client.get("/openapi.json").status_code, 404)
         self.assertEqual(client.get("/redoc").status_code, 404)
+        # 生产健康检查只暴露存活状态，不泄露环境/数据库/SMTP 指纹
+        health = client.get("/api/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json(), {"status": "ok"})
 
     def test_openapi_enabled_in_dev(self) -> None:
         _fresh_settings(
@@ -513,7 +517,8 @@ class TestEnvExampleDocumentsKeys(unittest.TestCase):
         self.assertIn("return 404", conf)
         self.assertIn("X-Content-Type-Options", conf)
         self.assertIn("Content-Security-Policy", conf)
-        self.assertIn("https://api.qrserver.com", conf)
+        # 券码只在本机渲染，CSP 不得放行第三方 QR 服务
+        self.assertNotIn("qrserver.com", conf)
         self.assertIn("gzip on", conf)
         self.assertIn("location ^~ /assets/", conf)
         self.assertIn("expires 1y", conf)
@@ -550,7 +555,7 @@ class TestAlembicUpgradePath(unittest.TestCase):
             self.assertIn("ix_coupon_instances_status_expires_at", indexes)
             with dbmod.engine.connect() as conn:
                 revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            self.assertEqual(revision, "7f21c3a8e6b1")
+            self.assertEqual(revision, "9d4c17f2ab60")
             dbmod.engine.dispose()
 
         _fresh_settings(APP_ENV="development", DATABASE_URL="sqlite:///./data/app.db")

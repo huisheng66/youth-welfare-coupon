@@ -61,6 +61,8 @@ class Account(Base):
     display_name: Mapped[str] = mapped_column(String(64), default="")
     phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 统一初始密码/管理员重置后须强制改密（导入用户、重置密码、新建管理账号）
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     merchant_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("merchants.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

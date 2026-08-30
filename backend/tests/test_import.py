@@ -115,9 +115,12 @@ class TestUserListImport(unittest.TestCase):
                 self.assertEqual(items["zhangsan"]["real_name"], "张三")
                 self.assertEqual(items["lisi"]["student_no"], "20260002")
 
-                # 导入用户可立即用初始密码登录
+                # 导入用户可立即用初始密码登录，且须强制改密
                 login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
                 self.assertEqual(login.status_code, 200, login.text)
+                me = c.get("/api/auth/me", headers={"Authorization": f"Bearer {login.json()['access_token']}"})
+                self.assertEqual(me.status_code, 200, me.text)
+                self.assertTrue(me.json()["must_change_password"], me.text)
 
     def test_import_txt_tab_without_header(self) -> None:
         """无表头 txt（tab 分隔）：用户名缺省回退学号。"""

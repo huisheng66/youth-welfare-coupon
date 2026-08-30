@@ -49,6 +49,7 @@ def reset_env_defaults() -> None:
         FIELD_ENCRYPTION_KEY_PREVIOUS="",
         RATE_LIMIT_BACKEND="memory",
         GLOBAL_IP_MAX_REQUESTS="0",
+        COUPON_EXPIRE_SCAN_INTERVAL="0",
         DATABASE_URL="sqlite:///./data/app.db",
         LOGIN_MAX_FAILS="8",
         LOGIN_WINDOW_SECONDS="300",
@@ -90,6 +91,7 @@ class TempApp:
             SEED_DEMO_ACCOUNTS="true",
             RATE_LIMIT_BACKEND="memory",
             GLOBAL_IP_MAX_REQUESTS="0",
+            COUPON_EXPIRE_SCAN_INTERVAL="0",
             OPENAPI_ENABLED="false",
             LOGIN_MAX_FAILS="50",  # 测试期间避免 429
             LOGIN_WINDOW_SECONDS="300",

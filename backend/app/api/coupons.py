@@ -498,7 +498,7 @@ def list_instances(
     account: Account = Depends(get_current_account),
 ) -> Page[CouponOut]:
     # Keep expiry state current without loading every coupon into Python.
-    expire_stale_coupons(db)
+    expire_stale_coupons(db, interval_seconds=get_settings().coupon_expire_scan_interval)
     query = (
         db.query(CouponInstance)
         .options(
@@ -546,7 +546,7 @@ def my_coupons(
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.user)),
 ) -> list[CouponOut]:
-    expire_stale_coupons(db)
+    expire_stale_coupons(db, interval_seconds=get_settings().coupon_expire_scan_interval)
     query = (
         db.query(CouponInstance)
         .options(
