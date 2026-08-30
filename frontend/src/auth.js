@@ -44,6 +44,14 @@ export async function register(payload) {
   return login(payload.email, payload.password)
 }
 
+/** 重新拉取 /auth/me 并同步本地账号状态（改密后清除 must_change_password 等）。 */
+export async function refreshAccount() {
+  const me = await api.get('/auth/me', { timeout: AUTH_SLOW_TIMEOUT })
+  state.account = me.data
+  localStorage.setItem('account', JSON.stringify(me.data))
+  return me.data
+}
+
 export async function logout() {
   try {
     await api.post('/auth/logout')

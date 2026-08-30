@@ -33,3 +33,7 @@ tools/**/__pycache__/
 
 # ZCode workspace state
 .zcode/
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/

@@ -83,9 +83,9 @@ npm run dev
 ## 安全回归（开发）
 
 ```powershell
-# 硬化单元测试
+# 后端全量测试（pytest；或逐文件跑 tests/）
 cd backend
-.\.venv\Scripts\python.exe tests\test_security_hardening.py
+.\.venv\Scripts\python.exe -m pytest tests\ -v
 
 # 依赖 CVE（仓库根目录）
 .\scripts\dep_audit.ps1
@@ -94,7 +94,17 @@ cd backend
 .\.venv\Scripts\python.exe scripts\security_audit.py
 ```
 
-JWT 现存在浏览器 `localStorage`，须防 XSS；生产请 HTTPS。Cookie 方案评估见 `docs/security-ops.md`。
+CI：`.github/workflows/security.yml` 在 push/PR 时自动跑后端全量 pytest + pip-audit + npm audit（ZAP/Nuclei 为手动触发）。
+
+前端最小 E2E（Playwright，独立 e2e.db + 种子账号，自动拉起前后端）：
+
+```bash
+cd frontend
+npx playwright install chromium   # 首次
+npm run e2e                       # 登录跳转 / 出示动态券码 / 商家核销页
+```
+
+JWT 由 HttpOnly Cookie 承载（`localStorage` 仅存登录标记）；生产 `.env` 已关闭 Bearer 兼容（`AUTH_ALLOW_BEARER=false`）。Cookie 方案评估见 `docs/security-ops.md`。
 
 ### 邮箱验证码 / SMTP（腾讯企业邮）
 

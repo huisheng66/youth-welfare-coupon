@@ -14,6 +14,15 @@
       <el-descriptions-item label="角色">{{ roleLabel }}</el-descriptions-item>
     </el-descriptions>
 
+    <el-alert
+      v-if="auth.account?.must_change_password"
+      type="warning"
+      :closable="false"
+      title="您当前使用的是初始密码"
+      description="请在下方修改密码后再使用其他功能；修改成功后自动解除限制。"
+      style="max-width:480px;margin-bottom:20px"
+    />
+
     <h3 class="section-title">绑定 / 修改邮箱</h3>
     <el-form label-width="100px" style="max-width:480px;margin-bottom:28px" @submit.prevent="onEmail">
       <el-form-item label="邮箱">
@@ -62,7 +71,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import api, { AUTH_SLOW_TIMEOUT } from '../api'
-import { useAuth } from '../auth'
+import { refreshAccount, useAuth } from '../auth'
 import { roleLabel as mapRole } from '../utils/format'
 
 const auth = useAuth()
@@ -190,6 +199,12 @@ async function onSubmit() {
     )
     ElMessage.success('密码已修改，请使用新密码登录')
     resetForm()
+    // 同步 /auth/me：清除 must_change_password 后路由守卫放行其他页面
+    try {
+      await refreshAccount()
+    } catch {
+      // 刷新失败不影响改密结果
+    }
   } finally {
     loading.value = false
   }

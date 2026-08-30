@@ -87,6 +87,14 @@ router.beforeEach((to) => {
   if (roles && !roles.includes(auth.account.role)) {
     return homePathByRole(auth.account.role)
   }
+  // 统一初始密码/管理员重置后：改密前只能停留在账号设置页
+  if (auth.account.must_change_password) {
+    const prefix = auth.account.role === 'merchant' ? '/merchant' : auth.account.role === 'user' ? '/user' : '/admin'
+    const settingsPath = `${prefix}/settings`
+    if (to.path !== settingsPath) {
+      return settingsPath
+    }
+  }
   return true
 })
 
