@@ -19,3 +19,5 @@ class ImportResultOut(BaseModel):
     message: str = ""
     # 仅用户名单导入且成功时返回，供管理员分发给用户
     default_password: str | None = None
+    # 已排队发送开通邮件的人数（需名单含邮箱且已配置 SMTP）
+    email_queued: int = 0

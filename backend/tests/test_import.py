@@ -195,6 +195,67 @@ class TestUserListImport(unittest.TestCase):
                 login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
                 self.assertEqual(login.status_code, 400, login.text)
 
+    def test_import_skips_email_notify_without_smtp(self) -> None:
+        """控制台模式（未配 SMTP）：不排队邮件，结果中说明跳过。"""
+        data = _csv("姓名,用户名,邮箱\n张三,zhangsan,zhangsan@example.com\n")
+        with TempApp() as ta:
+            token = ta.login("admin", "admin123")
+            r = _post_import(ta, token, "/users/import", "users.csv", data)
+            self.assertEqual(r.status_code, 200, r.text)
+            body = r.json()
+            self.assertEqual(body["succeeded"], 1, body)
+            self.assertEqual(body["email_queued"], 0)
+            self.assertIn("跳过邮件通知", body["message"])
+
+    def test_import_sends_password_emails_when_smtp_configured(self) -> None:
+        """配置 SMTP 后：含邮箱行在响应后由后台任务发送开通邮件（含初始密码）。"""
+        import asyncio
+        from unittest import mock
+
+        data = _csv("姓名,用户名,邮箱\n张三,zhangsan,zhangsan@example.com\n李四,lisi,\n")
+        with TempApp() as ta:
+            fresh_settings(
+                MAIL_SERVER="smtp.example.invalid",
+                MAIL_PORT="465",
+                MAIL_USERNAME="noreply@example.invalid",
+                MAIL_PASSWORD="app-password",
+                MAIL_FROM="noreply@example.invalid",
+            )
+            try:
+                token = ta.login("admin", "admin123")
+                with mock.patch("aiosmtplib.send", new_callable=mock.AsyncMock) as smtp_send, ta.client() as c:
+                    r = c.post(
+                        "/api/users/import",
+                        headers=ta.bearer(token),
+                        files={"file": ("users.csv", data, "text/csv")},
+                        data={"dry_run": "false", "notify": "true"},
+                    )
+                    self.assertEqual(r.status_code, 200, r.text)
+                    body = r.json()
+                    self.assertEqual(body["succeeded"], 2, body)
+                    self.assertEqual(body["email_queued"], 1)
+                    self.assertIn("已排队向 1 人发送开通邮件", body["message"])
+
+                    # TestClient 会等后台任务完成：仅含邮箱的那行收到开通邮件
+                    smtp_send.assert_awaited_once()
+                    message = smtp_send.await_args.args[0]
+                    kwargs = smtp_send.await_args.kwargs
+                    self.assertEqual(kwargs["recipients"], ["zhangsan@example.com"])
+                    import base64
+
+                    html_part = message.get_payload()[1].get_payload()
+                    html = base64.b64decode(html_part).decode("utf-8")  # 含中文，传输为 base64
+                    self.assertIn("zhangsan", html)
+                    self.assertIn("youth123456", html)
+                    self.assertIn("修改密码", html)
+            finally:
+                fresh_settings(
+                    MAIL_SERVER=None,
+                    MAIL_USERNAME=None,
+                    MAIL_PASSWORD=None,
+                    MAIL_FROM=None,
+                )
+
     def test_import_rejects_bad_files(self) -> None:
         with TempApp() as ta:
             token = ta.login("admin", "admin123")

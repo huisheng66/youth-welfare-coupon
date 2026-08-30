@@ -279,8 +279,8 @@
 
     <el-dialog v-model="importUsersVisible" title="导入用户名单" width="560px">
       <el-alert type="info" :closable="false" style="margin-bottom:12px"
-        title="支持 .xlsx / .csv / .txt / .docx；列：姓名、学号、用户名、手机、组织、备注（首行可为表头）"
-        description="导入用户直接视为核验通过（可直接发券/入账时长），统一初始密码见导入结果。用户名缺省时自动用学号或手机号。"
+        title="支持 .xlsx / .csv / .txt / .docx；列：姓名、学号、用户名、手机、邮箱（可选）、组织、备注（首行可为表头）"
+        description="导入用户直接视为核验通过（可直接发券/入账时长），统一初始密码见导入结果。用户名缺省时自动用学号或手机号；名单含邮箱且系统已配置 SMTP 时可自动发送开通邮件。"
       />
       <el-upload
         drag
@@ -292,7 +292,10 @@
       >
         <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
       </el-upload>
-      <el-checkbox v-model="importDryRun" style="margin-top:12px">仅校验不写入（试运行）</el-checkbox>
+      <div style="margin-top:12px">
+        <el-checkbox v-model="importDryRun">仅校验不写入（试运行）</el-checkbox>
+        <el-checkbox v-model="importNotify">向含邮箱的用户发送开通邮件</el-checkbox>
+      </div>
       <template #footer>
         <el-button @click="downloadUsersTemplate">下载模板</el-button>
         <el-button type="primary" :loading="importing" :disabled="!importUsersFile" @click="doImportUsers">
@@ -636,6 +639,7 @@ const importResultVisible = ref(false)
 const importUsersFile = ref(null)
 const importIssueFile = ref(null)
 const importDryRun = ref(false)
+const importNotify = ref(true)
 const importing = ref(false)
 const importResult = ref(null)
 const importIssueForm = reactive({ template_id: '', quantity: 1 })
@@ -677,9 +681,9 @@ function _downloadTextCsv(filename, lines) {
 
 function downloadUsersTemplate() {
   _downloadTextCsv('用户名单模板.csv', [
-    '姓名,学号,用户名,手机,组织,备注',
-    '张三,20260001,zhangsan,13800000001,某某大学,',
-    '李四,20260002,,13800000002,某某大学,班长',
+    '姓名,学号,用户名,手机,邮箱,组织,备注',
+    '张三,20260001,zhangsan,13800000001,zhangsan@example.com,某某大学,',
+    '李四,20260002,,13800000002,,某某大学,班长',
   ])
 }
 
@@ -696,6 +700,7 @@ async function doImportUsers() {
   const fd = new FormData()
   fd.append('file', importUsersFile.value)
   fd.append('dry_run', importDryRun.value ? 'true' : 'false')
+  fd.append('notify', importNotify.value ? 'true' : 'false')
   importing.value = true
   try {
     const res = await api.post('/users/import', fd, { timeout: IMPORT_TIMEOUT })

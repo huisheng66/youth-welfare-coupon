@@ -1,6 +1,7 @@
+import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
@@ -23,6 +24,7 @@ from app.schemas.user import (
 from app.services.audit import write_audit
 from app.services.crypto import decrypt_text, encrypt_text, mask_bank_card, validate_bank_card
 from app.services.import_file import KIND_USERS, map_columns, parse_table_file, read_upload_bytes
+from app.services.mail import send_email_html
 from app.services.points import get_or_create_account
 from app.services.sanitize import (
     password_has_letter_and_digit,
@@ -33,6 +35,39 @@ from app.services.sanitize import (
 )
 
 router = APIRouter(prefix="/users", tags=["用户核验"])
+
+logger = logging.getLogger(__name__)
+
+
+async def _send_import_password_emails(
+    recipients: list[tuple[str, str, str]],
+    password: str,
+    *,
+    settings=None,
+) -> None:
+    """导入账号的开通通知邮件（含初始密码），响应后由后台任务逐个发送。
+
+    单个收件人失败只记日志，不影响其余；不重试。
+    """
+    from app.core.config import get_settings
+    from app.services.sanitize import mask_email
+
+    s = settings or get_settings()
+    for email, username, display_name in recipients:
+        subject = "「青年福利券系统」账号开通通知"
+        html = (
+            f"<p>{display_name or username}，您好：</p>"
+            "<p>管理员已为您开通「青年福利券系统」账号，可直接登录使用：</p>"
+            f"<p>用户名：<b>{username}</b><br/>初始密码：<b>{password}</b></p>"
+            "<p>请尽快登录并在「账号设置」中修改密码；本邮件包含敏感信息，请勿转发。</p>"
+        )
+        try:
+            await send_email_html(to=email, subject=subject, html=html, settings=s)
+        except Exception as exc:  # noqa: BLE001 — 后台通知失败不阻断导入结果
+            logger.warning(
+                "import notify email failed",
+                extra={"to": mask_email(email), "username": username, "error": str(exc)},
+            )
 
 
 def _latest_material(db: Session, profile_id: str) -> str | None:
@@ -354,14 +389,19 @@ def pending_verifications(
 def import_users(
     file: UploadFile = File(..., description="用户名单（.xlsx / .csv / .txt / .docx）"),
     dry_run: bool = Form(False, description="仅校验不写入"),
+    notify: bool = Form(True, description="向名单中含邮箱的用户发送开通邮件（需已配置 SMTP）"),
+    background: BackgroundTasks = None,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> ImportResultOut:
     """按文件批量导入用户名单：导入即视为核验通过，使用统一初始密码。
 
-    列（首行可为表头，无表头按此顺序）：姓名、学号、用户名、手机、组织、备注。
-    用户名缺省时依次回退学号、手机；逐行校验并收集错误，不因单行失败中断。
+    列（首行可为表头，无表头按此顺序）：姓名、学号、用户名、手机、组织、备注；
+    表头文件可额外包含「邮箱」列（开通邮件通知用）。用户名缺省时依次回退学号、
+    手机；逐行校验并收集错误，不因单行失败中断。
     """
+    if background is None:  # 直接调用（测试）时退化为无后台任务
+        background = BackgroundTasks()
     settings = get_settings()
     password = settings.import_initial_password
     try:
@@ -391,6 +431,7 @@ def import_users(
     seen_usernames: set[str] = set()
     seen_phones: set[str] = set()
     seen_emails: set[str] = set()
+    to_notify: list[tuple[str, str, str]] = []  # (email, username, display_name)
 
     for lineno, row in enumerate(data_rows, start=1):
         real_name = sanitize_plain_text(cell_of(row, "real_name", 0), max_length=64)
@@ -478,6 +519,8 @@ def import_users(
                 target_id=account.id,
                 detail=f"username={username}, real_name={real_name}",
             )
+            if email:
+                to_notify.append((email, username, real_name))
         ok += 1
 
     if dry_run:
@@ -496,6 +539,14 @@ def import_users(
     message = f"{'校验' if dry_run else '导入'}完成：共 {len(data_rows)} 行，成功 {ok} 行，失败 {len(errors)} 行"
     if len(errors) > len(shown):
         message += "（错误明细仅显示前 100 条）"
+    email_queued = 0
+    if to_notify and notify and not dry_run:
+        if settings.smtp_configured:
+            background.add_task(_send_import_password_emails, to_notify, password)
+            email_queued = len(to_notify)
+            message += f"；已排队向 {email_queued} 人发送开通邮件"
+        else:
+            message += "；未配置 SMTP，跳过邮件通知（初始密码请在结果中查看分发）"
     return ImportResultOut(
         total=len(data_rows),
         succeeded=ok,
@@ -503,6 +554,7 @@ def import_users(
         errors=shown,
         message=message,
         default_password=password if ok else None,
+        email_queued=email_queued,
     )
 
 
