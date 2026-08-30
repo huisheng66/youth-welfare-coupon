@@ -22,14 +22,14 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install -U pip
-          pip install -r requirements.txt
-      - name: Security hardening tests
+          pip install -r requirements-dev.txt
+      - name: Full test suite (security hardening, authz, coupons, points, import, perf)
         env:
           GLOBAL_IP_MAX_REQUESTS: "0"
           RATE_LIMIT_BACKEND: memory
           APP_ENV: development
           SEED_DEMO_ACCOUNTS: "false"
-        run: python tests/test_security_hardening.py
+        run: python -m pytest tests/ -q
 
   pip-audit:
     name: pip-audit

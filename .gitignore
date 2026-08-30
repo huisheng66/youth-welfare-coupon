@@ -30,3 +30,6 @@ backend/data/rate_limit*.db
 # Third-party scanner checkouts (clone locally; do not vendor)
 tools/sqlmap/
 tools/**/__pycache__/
+
+# ZCode workspace state
+.zcode/

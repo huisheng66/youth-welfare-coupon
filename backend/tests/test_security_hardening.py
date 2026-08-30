@@ -581,7 +581,9 @@ class TestPhase4Artifacts(unittest.TestCase):
         text = wf.read_text(encoding="utf-8")
         self.assertIn("pip_audit", text)
         self.assertIn("npm audit", text)
-        self.assertIn("test_security_hardening", text)
+        # CI 必须跑全量测试套件（含 hardening / import / performance），不是单文件
+        self.assertIn("requirements-dev.txt", text)
+        self.assertIn("pytest tests/", text)
 
 
 class TestProfileWritePathSanitizes(unittest.TestCase):
