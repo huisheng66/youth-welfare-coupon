@@ -3,7 +3,7 @@
 # Deploy IP/rate-limit fix + Cloudflare origin protect
 set -euo pipefail
 HOST="${HOST:-198.44.182.107}"
-PASS="${SSH_PASS:-1LMntnpAd0}"
+PASS="${SSH_PASS:?（归档脚本）历史密码已移除并应轮换；如确需重跑请 export SSH_PASS}"
 SRC="${SRC:-/mnt/d/卡系统}"
 
 TMP=$(mktemp -d)

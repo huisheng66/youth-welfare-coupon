@@ -99,9 +99,13 @@ echo "==> HTTP verify by Host"
 curl -sS -m 8 -H "Host: ${DOMAIN}" http://127.0.0.1/api/health
 echo
 curl -sS -o /dev/null -w "home=%{http_code}\n" -m 8 -H "Host: ${DOMAIN}" http://127.0.0.1/
-curl -sS -m 8 -X POST -H "Host: ${DOMAIN}" -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Admin@Welfare2026"}' \
-  http://127.0.0.1/api/auth/login | head -c 180
+if [[ -n "${ADMIN_PASS:-}" ]]; then
+  curl -sS -m 8 -X POST -H "Host: ${DOMAIN}" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${ADMIN_USER:-admin}\",\"password\":\"${ADMIN_PASS}\"}" \
+    http://127.0.0.1/api/auth/login | head -c 180
+else
+  echo "SKIP: ADMIN_PASS 未设置，跳过登录自检"
+fi
 echo
 
 # HTTPS：若 certbot 可用且 DNS 已指向本机

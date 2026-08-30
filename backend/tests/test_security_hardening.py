@@ -10,6 +10,7 @@ Run from backend/:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -584,6 +585,80 @@ class TestPhase4Artifacts(unittest.TestCase):
         # CI 必须跑全量测试套件（含 hardening / import / performance），不是单文件
         self.assertIn("requirements-dev.txt", text)
         self.assertIn("pytest tests/", text)
+
+
+class TestDeployNoHardcodedSecrets(unittest.TestCase):
+    """deploy/、scripts/ 的 shell 脚本禁止字面密码，一律经环境变量注入。
+
+    历史版本曾把 SSH/SMTP/管理员密码硬编码进脚本并进入 git 历史（已要求轮换，
+    见 deploy/README.md「凭据注入与轮换」）。以下结构规则防止再次引入。
+    """
+
+    @staticmethod
+    def _sh_files() -> list[Path]:
+        root = BACKEND_ROOT.parent
+        files: list[Path] = []
+        for sub in ("deploy", "scripts"):
+            base = root / sub
+            if base.is_dir():
+                files.extend(sorted(base.rglob("*.sh")))
+        return files
+
+    def test_sshpass_never_receives_literal(self) -> None:
+        pattern = re.compile(r"sshpass\s+(?:-\S+\s+)*-p\s*['\"](?!\$)")
+        for path in self._sh_files():
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                self.assertIsNone(
+                    pattern.search(line),
+                    f"{path.relative_to(BACKEND_ROOT.parent)}:{lineno}: sshpass 密码须来自环境变量",
+                )
+
+    def test_password_assignments_are_env_derived(self) -> None:
+        assign = re.compile(
+            r"^\s*(?:export\s+)?([A-Z0-9_]*(?:PASS|PASSWORD|TOKEN|SECRET)[A-Z0-9_]*)\s*=\s*(.+?)\s*$"
+        )
+        for path in self._sh_files():
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                m = assign.match(line)
+                if not m:
+                    continue
+                name, value = m.group(1), m.group(2)
+                if name.endswith(("_MINUTES", "_SECONDS", "_DAYS")):
+                    continue  # 过期时长等含 TOKEN/SECRET 字样但非机密的配置
+                stripped = value.strip().strip('"').strip("'")
+                ok = (
+                    stripped.startswith("$")
+                    or stripped == ""
+                    or (value.startswith('"') and "${" in value)
+                )
+                self.assertTrue(
+                    ok,
+                    f"{path.relative_to(BACKEND_ROOT.parent)}:{lineno}: {name} 疑似字面密码赋值",
+                )
+
+    def test_set_kv_password_is_env_derived(self) -> None:
+        # config-smtp-prod.sh 的 set_kv KEY VALUE 形式
+        pattern = re.compile(r"set_kv\s+[A-Za-z_]*PASSWORD[A-Za-z_]*\s+['\"](?!\$)")
+        for path in self._sh_files():
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                self.assertIsNone(
+                    pattern.search(line),
+                    f"{path.relative_to(BACKEND_ROOT.parent)}:{lineno}: set_kv 密码须来自环境变量",
+                )
+
+    def test_no_leaked_admin_password_prefix(self) -> None:
+        """曾泄露的超管密码前缀不得再出现在 deploy 与后端审计脚本中。"""
+        root = BACKEND_ROOT.parent
+        targets = list((root / "deploy").rglob("*")) if (root / "deploy").is_dir() else []
+        targets += list((root / "backend" / "scripts").glob("*.py"))
+        for path in targets:
+            if not path.is_file() or path.suffix not in {".sh", ".py", ".md", ".sql", ".conf"}:
+                continue
+            self.assertNotIn(
+                "Admin@",
+                path.read_text(encoding="utf-8", errors="ignore"),
+                f"{path.relative_to(root)}: 疑似残留真实管理员口令",
+            )
 
 
 class TestProfileWritePathSanitizes(unittest.TestCase):

@@ -5,7 +5,7 @@ export DEPLOY_HOME="${DEPLOY_HOME:-/root}"
 export DOMAIN="${DOMAIN:-198.44.182.107}"
 export SKIP_FRONTEND_BUILD="${SKIP_FRONTEND_BUILD:-1}"
 export BOOTSTRAP_ADMIN_USER="${BOOTSTRAP_ADMIN_USER:-admin}"
-export BOOTSTRAP_ADMIN_PASS="${BOOTSTRAP_ADMIN_PASS:-Admin@Welfare2026}"
+export BOOTSTRAP_ADMIN_PASS="${BOOTSTRAP_ADMIN_PASS:?请先 export BOOTSTRAP_ADMIN_PASS（首个超管初始密码）}"
 # 使用固定 DB 密码便于运维（写入 .env）
 export DB_PASS="${DB_PASS:-Welfare_$(openssl rand -hex 6)}"
 

@@ -3,7 +3,7 @@ set -euo pipefail
 SRC="${SRC:-/mnt/d/卡系统}"
 HOST="${HOST:-198.44.182.107}"
 USER_REMOTE="${USER_REMOTE:-root}"
-PASS="${SSH_PASS:-1LMntnpAd0}"
+PASS="${SSH_PASS:?请先 export SSH_PASS（公网服务器 root 密码）}"
 SSH_OPTS=(-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 
 if [[ ! -f "${SRC}/frontend/dist/index.html" ]]; then

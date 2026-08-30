@@ -62,8 +62,12 @@ curl -sS -m 5 -H 'Host: 198.44.182.107' http://127.0.0.1/ | head -c 300
 echo
 curl -sS -m 5 -H 'Host: 198.44.182.107' http://127.0.0.1/api/health
 echo
-curl -sS -m 8 -X POST -H 'Host: 198.44.182.107' -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Admin@Welfare2026"}' \
-  http://127.0.0.1/api/auth/login
+if [[ -n "${ADMIN_PASS:-}" ]]; then
+  curl -sS -m 8 -X POST -H 'Host: 198.44.182.107' -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${ADMIN_USER:-admin}\",\"password\":\"${ADMIN_PASS}\"}" \
+    http://127.0.0.1/api/auth/login
+else
+  echo "SKIP: ADMIN_PASS 未设置，跳过登录自检"
+fi
 echo
 systemctl is-active welfare-api

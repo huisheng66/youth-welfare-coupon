@@ -5,7 +5,7 @@ set -euo pipefail
 SRC="${SRC:-/mnt/d/卡系统}"
 HOST="${HOST:-192.168.159.130}"
 USER="${USER_REMOTE:-huisheng}"
-PASS="${SSH_PASS:-000000}"
+PASS="${SSH_PASS:?请先 export SSH_PASS（内网服务器密码）}"
 REMOTE_TGZ="welfare-prod.tgz"
 
 if [[ ! -d "${SRC}" ]]; then

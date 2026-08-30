@@ -4,7 +4,7 @@ set -euo pipefail
 SRC="${SRC:-/mnt/d/卡系统}"
 HOST="${HOST:-192.168.159.130}"
 USER_REMOTE="${USER_REMOTE:-huisheng}"
-PASS="${SSH_PASS:-000000}"
+PASS="${SSH_PASS:?请先 export SSH_PASS（内网服务器密码）}"
 REMOTE_DIR="/opt/welfare/frontend/dist"
 
 if [[ ! -f "${SRC}/frontend/dist/index.html" ]]; then

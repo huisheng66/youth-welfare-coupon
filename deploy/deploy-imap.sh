@@ -29,7 +29,7 @@ echo
 
 TOKEN=$(curl -sS -m 10 -X POST http://127.0.0.1:19001/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Admin@Welfare2026"}' \
+  -d "{\"username\":\"${ADMIN_USER:-admin}\",\"password\":\"${ADMIN_PASS:?请先 export ADMIN_PASS（超管密码）}\"}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))')
 
 if [[ -z "$TOKEN" ]]; then

@@ -3,7 +3,7 @@
 # Deploy decimal volunteer-hours (cost_points / balance) + frontend
 set -euo pipefail
 HOST="${HOST:-198.44.182.107}"
-PASS="${SSH_PASS:-1LMntnpAd0}"
+PASS="${SSH_PASS:?（归档脚本）历史密码已移除并应轮换；如确需重跑请 export SSH_PASS}"
 SRC="${SRC:-/mnt/d/卡系统}"
 SSH_OPTS=(-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new -o ConnectTimeout=25)
 

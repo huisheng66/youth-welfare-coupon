@@ -33,7 +33,7 @@ hash_password("BenchPass123!")
 print(f"verify+hash (change-password work): {time.time()-t0:.3f}s")
 
 # login with current admin password — try common, do NOT change password
-for pwd in ["Admin@Welfare2026", "admin123"]:
+for pwd in ["<历史泄露密码已移除>", "admin123"]:
     try:
         req = urllib.request.Request(
             "http://127.0.0.1:19001/api/auth/login",

@@ -323,7 +323,6 @@ def test_default_credentials(report: Report) -> None:
     print("[*] Default / weak credential probe (few attempts only)...")
     candidates = [
         ("admin", "admin123"),
-        ("admin", "Admin@Welfare2026"),
         ("admin", "password"),
         ("admin", "12345678"),
         ("issuer", "issuer123"),
@@ -331,6 +330,10 @@ def test_default_credentials(report: Report) -> None:
         ("youth1", "youth123"),
         ("test", "test1234"),
     ]
+    # 运维可显式提供疑似泄露口令做针对性检查（不落入代码/日志）
+    admin_probe = os.environ.get("ADMIN_PASS")
+    if admin_probe:
+        candidates.append(("admin", admin_probe))
     hits = []
     for u, p in candidates:
         code, text, _ = req("POST", "/auth/login", body={"username": u, "password": p})

@@ -173,6 +173,22 @@ curl -s http://127.0.0.1:19001/api/health
 2. 演示数据会 seed；正式数据需自行导出/导入或业务重录  
 3. 不提供自动 SQLite→MySQL 迁移脚本（表结构简单，建议干净部署）
 
+## 凭据注入与轮换（2026-08）
+
+历史版本曾把服务器密码硬编码进脚本并进入 git 历史（内网/公网 SSH 密码、超管初始密码、企业邮箱 SMTP 密码）。脚本现已全部改为**环境变量注入**（缺失即报错退出，不再有默认值）；`deploy/archive/` 归档脚本就地脱敏。**git 历史中的泄露仍在——以下凭据务必全部轮换**：
+
+| 凭据 | 注入变量 | 使用脚本（均需先 export） |
+|---|---|---|
+| 内网服务器 SSH 密码 | `SSH_PASS` | `pack-and-upload.sh`、`sync-frontend-prod.sh` |
+| 公网服务器 root SSH 密码 | `SSH_PASS` | `pack-and-upload-public.sh` |
+| 首个超管初始密码 | `BOOTSTRAP_ADMIN_PASS` | `run-on-public.sh` |
+| 超管登录密码（自检用，可选） | `ADMIN_PASS`（未设则跳过登录自检） | `verify-prod.sh`、`bind-youth-domain.sh`、`fix-nginx-welfare.sh`、`config-smtp-prod.sh` |
+| 企业邮箱 SMTP 专用密码 | `SMTP_PASSWORD` | `config-smtp-prod.sh` |
+
+- 防回归：`backend/tests/test_security_hardening.py::TestDeployNoHardcodedSecrets` 会扫描全部 shell 脚本，禁止 `sshpass -p <字面量>`、字面密码赋值与真实管理员口令再次入库。
+- 推荐：公网机已装公钥，改用 **SSH 密钥登录并禁用密码登录**（`PasswordAuthentication no`）；SMTP 用「客户端专用密码」并定期重置。
+- 轮换检查：改密后跑 `bash deploy/verify-prod.sh <base-url>`（带 `ADMIN_PASS=新密码`）确认旧行为已失效。
+
 ## 安全清单
 
 - [ ] `APP_ENV=production`，强随机 `SECRET_KEY` + 独立 `FIELD_ENCRYPTION_KEY`（备份 `.env`）  

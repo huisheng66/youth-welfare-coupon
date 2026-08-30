@@ -25,7 +25,7 @@ set_kv MAIL_PORT 465
 set_kv MAIL_SSL_TLS true
 set_kv MAIL_STARTTLS false
 set_kv MAIL_USERNAME 'huisheng@51huisheng.top'
-set_kv MAIL_PASSWORD '9SVmpefyJHGy5iyg'
+set_kv MAIL_PASSWORD "${SMTP_PASSWORD:?请先 export SMTP_PASSWORD（企业邮箱 SMTP 专用密码）}"
 set_kv MAIL_FROM 'huisheng@51huisheng.top'
 set_kv MAIL_FROM_NAME '青年福利券系统'
 set_kv MAIL_CONSOLE false
@@ -47,9 +47,14 @@ echo
 
 # 登录超管后打测试发信（若密码已改则跳过测试）
 echo "==> try admin login + smtp-status"
-TOKEN=$(curl -sS -m 10 -X POST http://127.0.0.1:19001/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Admin@Welfare2026"}' | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)
+TOKEN=""
+if [[ -n "${ADMIN_PASS:-}" ]]; then
+  TOKEN=$(curl -sS -m 10 -X POST http://127.0.0.1:19001/api/auth/login \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${ADMIN_USER:-admin}\",\"password\":\"${ADMIN_PASS}\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)
+else
+  echo "skip: ADMIN_PASS 未设置，跳过超管自检（SMTP 配置已写入）"
+fi
 
 if [[ -z "$TOKEN" ]]; then
   echo "admin login failed (password may have changed); SMTP env written, please test in UI"
