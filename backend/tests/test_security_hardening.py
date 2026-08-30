@@ -576,7 +576,8 @@ class TestPhase4Artifacts(unittest.TestCase):
         self.assertTrue((root / "scripts" / "zap-baseline.sh").is_file())
 
     def test_github_security_workflow(self) -> None:
-        # Template lives under docs/ci (OAuth tokens without workflow scope cannot push .github/workflows)
+        # 模板在 docs/ci（历史遗留：旧 OAuth 令牌无 workflow scope 时无法直接推 .github）；
+        # 现已落地为 .github/workflows/security.yml，两份必须保持一致
         wf = BACKEND_ROOT.parent / "docs" / "ci" / "security.yml"
         self.assertTrue(wf.is_file())
         text = wf.read_text(encoding="utf-8")
@@ -585,6 +586,14 @@ class TestPhase4Artifacts(unittest.TestCase):
         # CI 必须跑全量测试套件（含 hardening / import / performance），不是单文件
         self.assertIn("requirements-dev.txt", text)
         self.assertIn("pytest tests/", text)
+
+        live = BACKEND_ROOT.parent / ".github" / "workflows" / "security.yml"
+        self.assertTrue(live.is_file(), "CI workflow 必须在 .github/workflows 下真正生效")
+        self.assertEqual(
+            live.read_text(encoding="utf-8"),
+            text,
+            "docs/ci/security.yml 与 .github/workflows/security.yml 必须同步",
+        )
 
 
 class TestDeployNoHardcodedSecrets(unittest.TestCase):

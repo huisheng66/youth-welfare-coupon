@@ -1,0 +1,139 @@
+name: Security
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements-dev.txt
+      - name: Full test suite (security hardening, authz, coupons, points, import, perf)
+        env:
+          GLOBAL_IP_MAX_REQUESTS: "0"
+          RATE_LIMIT_BACKEND: memory
+          APP_ENV: development
+          SEED_DEMO_ACCOUNTS: "false"
+        run: python -m pytest tests/ -q
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: python -m pip install -U pip "pip-audit>=2.7"
+      - name: Audit requirements.txt
+        run: python -m pip_audit -r requirements.txt --progress-spinner off
+
+  npm-audit:
+    name: npm audit (production high+)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (ci)
+        run: npm ci
+      - name: Audit
+        run: npm audit --omit=dev --audit-level=high
+
+  # ZAP needs a live staging URL — not run on every PR.
+  # Trigger manually after deploying staging; set secret/var ZAP_TARGET if desired.
+  zap-baseline:
+    name: ZAP baseline (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check target
+        env:
+          TARGET: ${{ vars.ZAP_TARGET }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            echo "Set repository variable ZAP_TARGET to staging URL, or skip this job."
+            echo "Documented procedure: docs/security-ops.md and scripts/zap-baseline.sh"
+            exit 0
+          fi
+          mkdir -p reports
+          docker run --rm -v "$(pwd)/reports:/zap/wrk/:rw" -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$TARGET" -r zap-baseline-ci.html -I
+      - name: Upload report
+        if: hashFiles('reports/zap-baseline-ci.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: reports/zap-baseline-ci.html
+
+  # Nuclei with youth-owned templates (auth-401 / login-sqli / role-idor).
+  # Manual: trigger after staging is up; set repo variable NUCLEI_TARGET.
+  # Local equivalent: bash scripts/run-nuclei.sh <staging-url>
+  nuclei-scan:
+    name: Nuclei (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check target
+        env:
+          TARGET: ${{ vars.NUCLEI_TARGET }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            echo "Set repository variable NUCLEI_TARGET to staging URL, or skip this job."
+            echo "Local: bash scripts/run-nuclei.sh <target>"
+            exit 0
+          fi
+      - name: Run nuclei with youth templates
+        env:
+          TARGET: ${{ vars.NUCLEI_TARGET }}
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v "$(pwd)/tools/nuclei-templates:/templates:ro" \
+            -v "$(pwd)/reports:/out:rw" \
+            projectdiscovery/nuclei:latest \
+            -t /templates -u "$TARGET" -j -o /out/nuclei.jsonl -silent || true
+      - name: Check findings
+        run: |
+          if [ -s reports/nuclei.jsonl ]; then
+            echo "==> findings:"
+            cat reports/nuclei.jsonl
+            echo
+            echo "==> $(wc -l < reports/nuclei.jsonl) finding(s) — investigate before release"
+            exit 1
+          else
+            echo "==> no findings, all clear"
+          fi
+      - name: Upload report
+        if: hashFiles('reports/nuclei.jsonl') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuclei-report
+          path: reports/nuclei.jsonl
