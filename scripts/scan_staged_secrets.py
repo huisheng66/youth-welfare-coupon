@@ -78,12 +78,16 @@ PLACEHOLDER_VALUES = frozenset(
 def _is_placeholder_value(value: str) -> bool:
     if "$" in value:
         return True
-    return value.strip().lower() in PLACEHOLDER_VALUES
+    v = value.strip()
+    # <合成密码> / <your-password> 这类尖括号占位符
+    if v.startswith("<") and v.endswith(">"):
+        return True
+    return v.lower() in PLACEHOLDER_VALUES
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace"
+        ["git", "-c", "core.quotepath=off", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
