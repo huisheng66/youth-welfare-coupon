@@ -301,6 +301,185 @@ class TestAuthz(unittest.TestCase):
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertIn("停用", r.json()["detail"])
 
+    def test_must_change_password_is_enforced_by_backend(self) -> None:
+        """初始密码账号不能绕过前端直接调用业务接口。"""
+        with TempApp() as ta:
+            admin_token = ta.login("admin", "admin123")
+            with ta.session() as db:
+                from app.models.entities import Merchant
+
+                merchant_id = db.query(Merchant).filter(Merchant.name == "示例餐饮店").one().id
+            with ta.client() as c:
+                created = c.post(
+                    "/api/auth/merchant-accounts",
+                    headers=ta.bearer(admin_token),
+                    json={
+                        "username": "mustchange1",
+                        "password": "Start1234",
+                        "display_name": "测试商家",
+                        "merchant_id": merchant_id,
+                    },
+                )
+                self.assertEqual(created.status_code, 200, created.text)
+                self.assertTrue(created.json()["must_change_password"])
+
+            token = ta.login("mustchange1", "Start1234")
+            with ta.client() as c:
+                blocked = c.get("/api/merchant-dashboard", headers=ta.bearer(token))
+                self.assertEqual(blocked.status_code, 403, blocked.text)
+                changed = c.post(
+                    "/api/auth/change-password",
+                    headers=ta.bearer(token),
+                    json={"old_password": "Start1234", "new_password": "Changed1234"},
+                )
+                self.assertEqual(changed.status_code, 200, changed.text)
+                allowed = c.get("/api/merchant-dashboard", headers=ta.bearer(token))
+                self.assertEqual(allowed.status_code, 401, allowed.text)
+                relogin_token = ta.login("mustchange1", "Changed1234")
+                allowed = c.get("/api/merchant-dashboard", headers=ta.bearer(relogin_token))
+                self.assertEqual(allowed.status_code, 200, allowed.text)
+
+    def test_password_change_invalidates_existing_sessions(self) -> None:
+        """改密后旧 Bearer token 和登录 Cookie 都不能继续访问业务接口。"""
+        with TempApp() as ta:
+            old_token = ta.login("youth1", "youth123")
+            with ta.client() as c:
+                changed = c.post(
+                    "/api/auth/change-password",
+                    headers=ta.bearer(old_token),
+                    json={"old_password": "youth123", "new_password": "Changed1234"},
+                )
+                self.assertEqual(changed.status_code, 200, changed.text)
+                old_session = c.get("/api/coupons/my", headers=ta.bearer(old_token))
+                self.assertEqual(old_session.status_code, 401, old_session.text)
+                new_token = ta.login("youth1", "Changed1234")
+                new_session = c.get("/api/coupons/my", headers=ta.bearer(new_token))
+                self.assertEqual(new_session.status_code, 200, new_session.text)
+
+    def test_admin_password_reset_invalidates_target_session(self) -> None:
+        """管理员重置密码后，目标账号的旧令牌也必须无法继续使用。"""
+        with TempApp() as ta:
+            admin_token = ta.login("admin", "admin123")
+            user_token = ta.login("youth1", "youth123")
+            user_id = _youth1_id(ta)
+            with ta.client() as c:
+                reset = c.post(
+                    f"/api/auth/accounts/{user_id}/reset-password",
+                    headers=ta.bearer(admin_token),
+                    json={"new_password": "Reset1234"},
+                )
+                self.assertEqual(reset.status_code, 200, reset.text)
+                stale = c.get("/api/coupons/my", headers=ta.bearer(user_token))
+                self.assertEqual(stale.status_code, 401, stale.text)
+
+    def test_email_password_reset_invalidates_target_session(self) -> None:
+        """邮箱找回密码是改密入口，完成后也必须废止之前签发的令牌。"""
+        from app.models.entities import Account, EmailCode, EmailCodePurpose, utcnow
+
+        with TempApp() as ta:
+            user_token = ta.login("youth1", "youth123")
+            with ta.session() as db:
+                user = db.query(Account).filter(Account.username == "youth1").one()
+                # 演示账号使用 .local；接口按 EmailStr 校验，因此测试改用可投递域名。
+                user.email = "password-reset@example.com"
+                db.add(
+                    EmailCode(
+                        email=user.email,
+                        code="654321",
+                        purpose=EmailCodePurpose.reset_password,
+                        expires_at=utcnow() + timedelta(minutes=10),
+                    )
+                )
+                db.commit()
+                email = user.email
+            with ta.client() as c:
+                reset = c.post(
+                    "/api/auth/reset-password-by-email",
+                    json={"email": email, "code": "654321", "new_password": "EmailReset1234"},
+                )
+                self.assertEqual(reset.status_code, 200, reset.text)
+                stale = c.get("/api/coupons/my", headers=ta.bearer(user_token))
+                self.assertEqual(stale.status_code, 401, stale.text)
+
+    def test_deactivate_then_reactivate_requires_relogin(self) -> None:
+        """T05：停用废止旧会话；重新启用后旧 Cookie/Bearer 仍不可用，必须重新登录。"""
+        with TempApp() as ta:
+            admin_token = ta.login("admin", "admin123")
+            user_token = ta.login("youth1", "youth123")
+            user_id = _youth1_id(ta)
+            with ta.client() as c:
+                stop = c.post(
+                    f"/api/auth/accounts/{user_id}/set-active",
+                    headers=ta.bearer(admin_token),
+                    json={"is_active": False},
+                )
+                self.assertEqual(stop.status_code, 200, stop.text)
+                stopped = c.get("/api/coupons/my", headers=ta.bearer(user_token))
+                self.assertEqual(stopped.status_code, 401, stopped.text)
+
+                resume = c.post(
+                    f"/api/auth/accounts/{user_id}/set-active",
+                    headers=ta.bearer(admin_token),
+                    json={"is_active": True},
+                )
+                self.assertEqual(resume.status_code, 200, resume.text)
+                # 停用动作已递增 session_version：重新启用不能“复活”旧会话
+                stale = c.get("/api/coupons/my", headers=ta.bearer(user_token))
+                self.assertEqual(stale.status_code, 401, stale.text)
+                fresh = ta.login("youth1", "youth123")
+                ok = c.get("/api/coupons/my", headers=ta.bearer(fresh))
+                self.assertEqual(ok.status_code, 200, ok.text)
+
+    def test_cookie_only_mode_login_hides_body_token(self) -> None:
+        """关闭 Bearer 兼容后，登录响应体不返回真实 access_token，Cookie 会话仍可用。"""
+        with TempApp() as ta:
+            from tests._helpers import fresh_settings
+
+            fresh_settings(AUTH_ALLOW_BEARER="false")
+            try:
+                with ta.client() as c:
+                    r = c.post("/api/auth/login", json={"username": "youth1", "password": "youth123"})
+                    self.assertEqual(r.status_code, 200, r.text)
+                    self.assertEqual(
+                        r.json().get("access_token") or "",
+                        "",
+                        "Cookie 专用模式下响应体不得携带真实 token",
+                    )
+                    # Cookie 会话照常工作
+                    me = c.get("/api/auth/me")
+                    self.assertEqual(me.status_code, 200, me.text)
+                    self.assertEqual(me.json()["username"], "youth1")
+            finally:
+                fresh_settings(AUTH_ALLOW_BEARER="true")
+
+    def test_approved_profile_change_requires_re_review(self) -> None:
+        """已核验身份字段变更后必须重新审核，不能继续保持 approved。"""
+        with TempApp() as ta:
+            token = ta.login("youth1", "youth123")
+            with ta.client() as c:
+                response = c.put(
+                    "/api/users/me/profile",
+                    headers=ta.bearer(token),
+                    json={"real_name": "核验后修改的姓名"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["verify_status"], "pending")
+
+            with ta.session() as db:
+                from app.models.entities import Account, UserProfile, UserVerification, VerifyStatus
+
+                user = db.query(Account).filter(Account.username == "youth1").one()
+                profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).one()
+                self.assertEqual(profile.verify_status, VerifyStatus.pending)
+                self.assertTrue(
+                    db.query(UserVerification)
+                    .filter(
+                        UserVerification.profile_id == profile.id,
+                        UserVerification.status == VerifyStatus.pending,
+                    )
+                    .first()
+                )
+
     # ---- 伪造/过期 token ----
     def test_invalid_token_rejected(self) -> None:
         with TempApp() as ta:

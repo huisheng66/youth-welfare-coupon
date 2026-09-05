@@ -12,16 +12,41 @@ logger = logging.getLogger("app.migrate")
 
 LEGACY_BASELINE_REVISION = "2c984c17c453"
 
+# 无 alembic_version 的历史库必须具备全部业务表才允许标记为 baseline，
+# 防止把空库/半截库误标后跳过真正的建表迁移
+REQUIRED_LEGACY_TABLES = frozenset(
+    {
+        "accounts",
+        "merchants",
+        "user_profiles",
+        "user_verifications",
+        "coupon_templates",
+        "coupon_instances",
+        "redemption_logs",
+        "audit_logs",
+        "point_accounts",
+        "point_ledgers",
+        "email_codes",
+    }
+)
+
+# worker 启动只读校验所需的关键列（新迁移引入、影响认证/审计语义的列）
+REQUIRED_SCHEMA_COLUMNS = {
+    "accounts": ("session_version", "must_change_password"),
+    "redemption_logs": ("reason",),
+}
+
 
 def run_alembic_upgrade() -> None:
     """以编程方式执行 `alembic upgrade head`，复用项目 engine。
 
-    生产环境在应用启动前调用，确保 schema 与迁移版本一致；
-    不依赖 alembic CLI，部署脚本只需启动服务即可。
+    这是发布步骤的 DDL 入口（CLI：`alembic upgrade head` 或
+    `python -c "from app.core.migrate import run_alembic_upgrade; run_alembic_upgrade()"`），
+    由迁移账号在部署流程中单独执行；常驻 worker 启动只做
+    `verify_schema_current` 只读校验，不再执行任何 DDL（T08）。
 
     已有库平滑切换：若业务表已存在但尚未接入 alembic（无 alembic_version 表），
-    先标记到固定 baseline revision，再执行 upgrade head，避免 baseline 的 create_table
-    因表已存在而失败。
+    先做表结构预检，通过后标记到固定 baseline revision，再执行 upgrade head。
     """
     from alembic import command
     from alembic.config import Config
@@ -40,7 +65,8 @@ def run_alembic_upgrade() -> None:
     has_alembic_version = "alembic_version" in tables
     has_business_tables = bool(tables - {"alembic_version"})
     if not has_alembic_version and has_business_tables:
-        # 历史库（create_all 建表）首次接入 alembic：标记为基线，不执行 DDL
+        # 历史库（create_all 建表）首次接入 alembic：先验证表结构完整，再标记 baseline
+        _precheck_legacy_for_baseline(engine)
         logger.info(
             "legacy database detected — alembic stamp %s as baseline",
             LEGACY_BASELINE_REVISION,
@@ -49,6 +75,64 @@ def run_alembic_upgrade() -> None:
 
     logger.info("running alembic upgrade head")
     command.upgrade(cfg, "head")
+
+
+def _precheck_legacy_for_baseline(engine: Engine) -> None:
+    insp = inspect(engine)
+    tables = set(insp.get_table_names()) - {"alembic_version"}
+    missing = REQUIRED_LEGACY_TABLES - tables
+    if missing:
+        raise RuntimeError(
+            "检测到无 alembic_version 的数据库，但缺少业务表 "
+            f"{sorted(missing)}；它既不是空库也不是完整历史库，"
+            "拒绝标记为 baseline。请人工确认该库状态后再选择重建或修复。"
+        )
+
+
+def get_migration_head() -> str:
+    from alembic.script import ScriptDirectory
+
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    script = ScriptDirectory(str(backend_dir / "alembic"))
+    heads = script.get_heads()
+    if len(heads) != 1:
+        raise RuntimeError(f"迁移链存在多个 head，无法校验: {heads}")
+    return heads[0]
+
+
+def verify_schema_current(engine: Engine) -> None:
+    """只读校验 schema 与迁移 head 一致（worker 启动门禁，不执行 DDL）。
+
+    - 缺 alembic_version → 拒绝启动（未接入迁移的库不允许直接运行）；
+    - alembic_version 落后于 head → 拒绝启动；
+    - 关键列缺失（如 accounts.session_version）→ 拒绝启动。
+    """
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "alembic_version" not in tables:
+        raise RuntimeError(
+            "数据库未接入迁移（缺 alembic_version 表）。"
+            "请先用迁移账号执行发布迁移：alembic upgrade head（见 deploy/migrate-release.sh）"
+        )
+    with engine.connect() as conn:
+        current = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    head = get_migration_head()
+    if current != head:
+        raise RuntimeError(
+            f"数据库迁移版本落后：库内 {current}，代码要求 {head}。"
+            "请先执行发布迁移 alembic upgrade head，再启动应用。"
+        )
+    for table, columns in REQUIRED_SCHEMA_COLUMNS.items():
+        if table not in tables:
+            raise RuntimeError(f"数据库缺少业务表 {table}，请确认迁移已执行")
+        present = {c["name"] for c in insp.get_columns(table)}
+        missing = [c for c in columns if c not in present]
+        if missing:
+            raise RuntimeError(
+                f"表 {table} 缺少必需列 {missing}，schema 与代码不一致；"
+                "请执行 alembic upgrade head 修复后再启动。"
+            )
+    logger.info("schema verified: alembic at %s", head)
 
 
 def _add_column_if_missing(engine: Engine, table: str, column: str, ddl: str) -> None:
@@ -281,14 +365,35 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "point_ledgers", "ref_id", "ref_id VARCHAR(36) DEFAULT ''")
     _add_column_if_missing(engine, "accounts", "email", "email VARCHAR(128)")
     _add_column_if_missing(engine, "accounts", "must_change_password", "must_change_password BOOLEAN DEFAULT 0 NOT NULL")
+    _add_column_if_missing(engine, "accounts", "session_version", "session_version INTEGER DEFAULT 0 NOT NULL")
+    _add_column_if_missing(
+        engine, "redemption_logs", "reason", "reason VARCHAR(32) DEFAULT '' NOT NULL"
+    )
     _add_column_if_missing(engine, "user_profiles", "student_no", "student_no VARCHAR(64) DEFAULT ''")
     # 旧字段 id_number_masked 保留在库中（SQLite 不便删列），业务已改用 student_no
     _add_column_if_missing(engine, "user_profiles", "bank_card_encrypted", "bank_card_encrypted TEXT")
     _add_column_if_missing(engine, "user_profiles", "bank_card_last4", "bank_card_last4 VARCHAR(4) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")
+    _widen_email_code_column(engine)
     _migrate_hours_to_decimal(engine)
     _ensure_indexes(engine)
+
+
+def _widen_email_code_column(engine: Engine) -> None:
+    """历史库 email_codes.code 需扩到 VARCHAR(128) 才能存 HMAC 摘要。
+
+    开发路径（create_all + ensure_schema）不会执行 alembic 迁移；MySQL 严格
+    校验长度，插入 64 字符摘要会直接报错，因此在此补齐。SQLite 长度仅为
+    类型亲和性，无需处理。
+    """
+    if engine.dialect.name == "sqlite":
+        return
+    tname = _column_type_name(engine, "email_codes", "code")
+    if tname and "128" not in tname:
+        logger.info("widening email_codes.code %s -> VARCHAR(128)", tname)
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE email_codes MODIFY COLUMN `code` VARCHAR(128) NOT NULL"))
 
 
 def _ensure_indexes(engine: Engine) -> None:

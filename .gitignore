@@ -37,3 +37,19 @@ tools/**/__pycache__/
 # Playwright E2E artifacts
 test-results/
 playwright-report/
+
+# 本地敏感文件（T07）：凭据、密钥、备份与配置副本一律不入库；
+# 可审阅的示例保留 .env.example（backend/.env.example 不受根目录规则影响）
+/.env
+/.env.*
+!/.env.example
+/secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*backup*.sql
+*backup*.sql.gz
+*.dump
+deploy/*.local.*
+deploy/archive/

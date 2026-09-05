@@ -15,8 +15,13 @@ set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/welfare}"
 DB_NAME="${DB_NAME:-welfare}"
-DB_USER="${DB_USER:-welfare}"
-DB_PASS="${DB_PASS:-ChangeMe_$(openssl rand -hex 8)}"
+# T09 三账号拆分：运行（DML）/ 迁移（DDL，仅发布期使用）/ 备份（只读+锁表）
+APP_DB_USER="${APP_DB_USER:-welfare_app}"
+MIGRATE_DB_USER="${MIGRATE_DB_USER:-welfare_migrate}"
+BACKUP_DB_USER="${BACKUP_DB_USER:-welfare_backup}"
+APP_DB_PASS="${APP_DB_PASS:-ChangeMe_App_$(openssl rand -hex 8)}"
+MIGRATE_DB_PASS="${MIGRATE_DB_PASS:-ChangeMe_Mig_$(openssl rand -hex 8)}"
+BACKUP_DB_PASS="${BACKUP_DB_PASS:-ChangeMe_Bak_$(openssl rand -hex 8)}"
 DOMAIN="${DOMAIN:-_}"   # Nginx server_name，默认 _
 SKIP_FRONTEND_BUILD="${SKIP_FRONTEND_BUILD:-0}"
 PRESERVE_ENV="${PRESERVE_ENV:-0}"
@@ -27,7 +32,7 @@ BOOTSTRAP_ADMIN_PASS="${BOOTSTRAP_ADMIN_PASS:-}"
 _urlencode() {
   python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
 }
-DB_PASS_ENC="$(_urlencode "${DB_PASS}")"
+APP_DB_PASS_ENC="$(_urlencode "${APP_DB_PASS}")"
 
 echo "==> 安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
@@ -44,12 +49,26 @@ else
   echo "==> SKIP_FRONTEND_BUILD=1：跳过 Node/npm 安装与前端构建"
 fi
 
-echo "==> 配置 MySQL 库与用户"
+echo "==> 配置 MySQL 库与账号（T09 最小权限拆分，仅 localhost 来源）"
 # 使用 sudo mysql（Ubuntu 默认 unix_socket root）
 mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || true
-mysql -e "ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';" || true
-mysql -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost'; FLUSH PRIVILEGES;"
+create_minimal_user() {
+  local user="$1" pass="$2"; shift 2
+  mysql -e "CREATE USER IF NOT EXISTS '${user}'@'localhost' IDENTIFIED BY '${pass}';" || true
+  mysql -e "ALTER USER '${user}'@'localhost' IDENTIFIED BY '${pass}';"
+  mysql -e "GRANT $* ON \`${DB_NAME}\`.* TO '${user}'@'localhost';"
+}
+# 运行账号：仅 DML；不能建表/改表，避免运行进程获得 schema 控制权
+create_minimal_user "${APP_DB_USER}" "${APP_DB_PASS}" "SELECT, INSERT, UPDATE, DELETE"
+# 迁移账号：发布期执行 alembic upgrade head（deploy/migrate-release.sh）
+create_minimal_user "${MIGRATE_DB_USER}" "${MIGRATE_DB_PASS}" \
+  "SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES, CREATE TEMPORARY TABLES"
+# 备份账号：mysqldump 最小权限；SHOW_ROUTINE 为全局权限（例程定义导出）
+create_minimal_user "${BACKUP_DB_USER}" "${BACKUP_DB_PASS}" "SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER"
+mysql -e "GRANT SHOW_ROUTINE ON *.* TO '${BACKUP_DB_USER}'@'localhost';"
+# 历史遗留：若存在旧 ALL 权限的 welfare@% / welfare@localhost，提示人工清理
+mysql -N -e "SELECT CONCAT('WARN: legacy account exists: ', User, '@', Host, '（确认无依赖后执行 DROP USER 清理）') FROM mysql.user WHERE User='welfare';" || true
+mysql -e "FLUSH PRIVILEGES;"
 
 echo "==> 应用目录: ${APP_ROOT}"
 mkdir -p "${APP_ROOT}"
@@ -103,7 +122,7 @@ else
 APP_ENV=production
 SECRET_KEY=${SECRET}
 FIELD_ENCRYPTION_KEY=${FIELD_KEY}
-DATABASE_URL=mysql+pymysql://${DB_USER}:${DB_PASS_ENC}@127.0.0.1:3306/${DB_NAME}?charset=utf8mb4
+DATABASE_URL=mysql+pymysql://${APP_DB_USER}:${APP_DB_PASS_ENC}@127.0.0.1:3306/${DB_NAME}?charset=utf8mb4
 CORS_ORIGINS=${CORS_ORIGINS}
 CORS_ALLOW_LAN=false
 OPENAPI_ENABLED=false
@@ -118,7 +137,8 @@ LIVE_CODE_EXPIRE_SECONDS=30
 AUTH_ALLOW_BEARER=false
 # 读取路径过期券扫描节流（秒）；0 = 每次请求都扫描
 COUPON_EXPIRE_SCAN_INTERVAL=30
-MAIL_CONSOLE=true
+# 生产环境禁止通过 HTTP 响应暴露验证码；请配置真实 SMTP 后再启用邮箱功能。
+MAIL_CONSOLE=false
 MAIL_SERVER=
 MAIL_PORT=465
 MAIL_SSL_TLS=true
@@ -135,17 +155,22 @@ chown www-data:www-data "${ENV_FILE}"
 chmod 640 "${ENV_FILE}"
 chown -R www-data:www-data "${APP_ROOT}/backend/data"
 
-echo "==> 建表 + 种子（生产默认不写演示弱口令）"
+echo "==> 发布迁移（迁移账号，独立于 worker 启动）"
 cd "${APP_ROOT}/backend"
 # shellcheck disable=SC1091
 source .venv/bin/activate
+# T08：DDL 由发布流程用迁移账号单独执行；运行账号无 DDL 权限也能启动
+MIGRATE_DB_HOST="127.0.0.1" \
+MIGRATE_DB_PORT="3306" \
+MIGRATE_DB_USER="${MIGRATE_DB_USER}" \
+MIGRATE_DB_PASS="${MIGRATE_DB_PASS}" \
+MIGRATE_DB_NAME="${DB_NAME}" \
+  bash "${APP_ROOT}/deploy/migrate-release.sh"
+
+echo "==> 种子数据（运行账号，仅 DML）"
 python - <<'PY'
-from app.core.database import engine, SessionLocal
-from app.core.migrate import apply_migrations
+from app.core.database import SessionLocal
 from app.seed import seed_if_empty
-# 生产环境用 alembic upgrade head 管理 schema；
-# 历史库（曾用 create_all）会自动标记到固定 baseline revision 后增量升级。
-apply_migrations(engine, production=True)
 db = SessionLocal()
 try:
     seed_if_empty(db)
@@ -237,15 +262,17 @@ if command -v ufw >/dev/null 2>&1; then
   # 不自动 ufw --force enable，避免锁死远程会话；仅确保规则在启用后生效
 fi
 
-# 每日 03:17 自动备份数据库（含 .env 副本，字段加密钥必须随库备份）
-cat > /etc/cron.d/welfare-backup <<'CRON'
+# 每日 03:17 自动备份数据库（备份账号 + .env 副本，字段加密钥必须随库备份）
+BACKUP_DB_PASS_ENC="$(_urlencode "${BACKUP_DB_PASS}")"
+cat > /etc/cron.d/welfare-backup <<CRON
 # welfare MySQL 每日备份（保留 14 天），日志 /var/log/welfare-backup.log
 SHELL=/bin/bash
-17 3 * * * root bash /opt/welfare/deploy/backup-mysql.sh >> /var/log/welfare-backup.log 2>&1
+17 3 * * * root BACKUP_DATABASE_URL='mysql+pymysql://${BACKUP_DB_USER}:${BACKUP_DB_PASS_ENC}@127.0.0.1:3306/${DB_NAME}?charset=utf8mb4' bash /opt/welfare/deploy/backup-mysql.sh >> /var/log/welfare-backup.log 2>&1
 CRON
-chmod 644 /etc/cron.d/welfare-backup
+chmod 600 /etc/cron.d/welfare-backup
 touch /var/log/welfare-backup.log && chmod 600 /var/log/welfare-backup.log
-bash /opt/welfare/deploy/backup-mysql.sh || echo "首次备份失败（可手动重跑 /opt/welfare/deploy/backup-mysql.sh）"
+BACKUP_DATABASE_URL="mysql+pymysql://${BACKUP_DB_USER}:${BACKUP_DB_PASS_ENC}@127.0.0.1:3306/${DB_NAME}?charset=utf8mb4" \
+  bash /opt/welfare/deploy/backup-mysql.sh || echo "首次备份失败（可手动重跑 /opt/welfare/deploy/backup-mysql.sh）"
 
 sleep 2
 HEALTH="$(curl -sS -m 5 http://127.0.0.1:19001/api/health || true)"
@@ -257,7 +284,7 @@ echo " 部署完成"
 echo " 站点: http://${DOMAIN}/  （或本机 IP）"
 echo " 本机 API 健康: http://127.0.0.1:19001/api/health -> ${HEALTH}"
 echo " Nginx 首页 HTTP: ${HTTP_CODE}"
-echo " MySQL: 库=${DB_NAME} 用户=${DB_USER}"
+echo " MySQL: 库=${DB_NAME} 运行=${APP_DB_USER} 迁移=${MIGRATE_DB_USER} 备份=${BACKUP_DB_USER}（最小权限，仅 localhost）"
 echo " 密码与密钥已写入 ${ENV_FILE} （请妥善保管 / 备份）"
 echo " 生产 SEED_DEMO_ACCOUNTS=false（无演示弱口令）"
 echo " 首个超管: ${BOOTSTRAP_ADMIN_USER} / ${BOOTSTRAP_ADMIN_PASS}"
@@ -276,8 +303,12 @@ site=http://${DOMAIN}/
 admin_user=${BOOTSTRAP_ADMIN_USER}
 admin_pass=${BOOTSTRAP_ADMIN_PASS}
 env_file=${ENV_FILE}
-mysql_user=${DB_USER}
-mysql_pass=${DB_PASS}
+mysql_app_user=${APP_DB_USER}
+mysql_app_pass=${APP_DB_PASS}
+mysql_migrate_user=${MIGRATE_DB_USER}
+mysql_migrate_pass=${MIGRATE_DB_PASS}
+mysql_backup_user=${BACKUP_DB_USER}
+mysql_backup_pass=${BACKUP_DB_PASS}
 CREDS
 chmod 600 /root/welfare-bootstrap-once.txt
 echo "凭据副本: /root/welfare-bootstrap-once.txt （用后请删除）"

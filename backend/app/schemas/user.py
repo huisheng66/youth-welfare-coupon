@@ -8,17 +8,17 @@ from app.services.sanitize import sanitize_note, sanitize_plain_text
 
 
 class ProfileUpdateIn(BaseModel):
-    real_name: str = Field(default="", max_length=64)
+    real_name: str | None = Field(default=None, max_length=64)
     phone: str | None = Field(default=None, max_length=20)
     display_name: str | None = Field(default=None, max_length=64)
-    student_no: str = Field(default="", max_length=64, description="学号")
-    organization: str = Field(default="", max_length=128)
-    remark: str = ""
+    student_no: str | None = Field(default=None, max_length=64, description="学号")
+    organization: str | None = Field(default=None, max_length=128)
+    remark: str | None = None
 
     @field_validator("real_name")
     @classmethod
-    def clean_real_name(cls, v: str) -> str:
-        return sanitize_plain_text(v, max_length=64)
+    def clean_real_name(cls, v: str | None) -> str | None:
+        return sanitize_plain_text(v, max_length=64) if v is not None else None
 
     @field_validator("display_name")
     @classmethod
@@ -29,19 +29,19 @@ class ProfileUpdateIn(BaseModel):
 
     @field_validator("student_no")
     @classmethod
-    def clean_student_no(cls, v: str) -> str:
+    def clean_student_no(cls, v: str | None) -> str | None:
         # 学号：去控制符与尖括号
-        return sanitize_plain_text(v, max_length=64)
+        return sanitize_plain_text(v, max_length=64) if v is not None else None
 
     @field_validator("organization")
     @classmethod
-    def clean_organization(cls, v: str) -> str:
-        return sanitize_plain_text(v, max_length=128)
+    def clean_organization(cls, v: str | None) -> str | None:
+        return sanitize_plain_text(v, max_length=128) if v is not None else None
 
     @field_validator("remark")
     @classmethod
-    def clean_remark(cls, v: str) -> str:
-        return sanitize_note(v, max_length=2000)
+    def clean_remark(cls, v: str | None) -> str | None:
+        return sanitize_note(v, max_length=2000) if v is not None else None
 
 
 class BankCardIn(BaseModel):

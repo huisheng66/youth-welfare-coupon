@@ -1,40 +1,22 @@
-import { reactive } from 'vue'
 import api, { AUTH_SLOW_TIMEOUT } from './api'
+import { clearAuthState, setAuthState, state } from './authState'
 
-function readStoredAccount() {
-  try {
-    return JSON.parse(localStorage.getItem('account') || 'null')
-  } catch {
-    localStorage.removeItem('account')
-    localStorage.removeItem('token')
-    return null
-  }
-}
-
-// JWT 现由后端 HttpOnly Cookie 承载，前端不可读；localStorage 仅保留登录标记与账号信息。
-// token 字段为 '1' 表示已登录（用于路由守卫），不再是真实 JWT。
-const storedAccount = readStoredAccount()
-const state = reactive({
-  token: storedAccount ? localStorage.getItem('token') || '' : '',
-  account: storedAccount,
-})
+export { clearAuthState }
+export { state as _authState }
 
 export function useAuth() {
   return state
 }
 
 export async function login(username, password) {
-  // 后端 Set-Cookie 下发 HttpOnly token；响应体仍返回 access_token 仅供过渡兼容
+  // 后端 Set-Cookie 下发 HttpOnly token；随后用 /auth/me 拉取账号信息
   await api.post(
     '/auth/login',
     { username, password },
     { timeout: AUTH_SLOW_TIMEOUT },
   )
-  state.token = '1'
-  localStorage.setItem('token', '1')
   const me = await api.get('/auth/me', { timeout: AUTH_SLOW_TIMEOUT })
-  state.account = me.data
-  localStorage.setItem('account', JSON.stringify(me.data))
+  setAuthState(me.data)
   return me.data
 }
 
@@ -44,12 +26,28 @@ export async function register(payload) {
   return login(payload.email, payload.password)
 }
 
-/** 重新拉取 /auth/me 并同步本地账号状态（改密后清除 must_change_password 等）。 */
-export async function refreshAccount() {
-  const me = await api.get('/auth/me', { timeout: AUTH_SLOW_TIMEOUT })
-  state.account = me.data
-  localStorage.setItem('account', JSON.stringify(me.data))
-  return me.data
+// 页面启动时的会话恢复：有本地登录标记时先验证 Cookie 是否仍有效。
+// 结果进程内只执行一次，路由守卫 await 它，避免“本地残留账号 + Cookie 已过期”
+// 被放行业务路由后每个请求都 401 反复跳转。
+let authReadyPromise = null
+
+export function ensureAuthReady() {
+  if (!authReadyPromise) {
+    authReadyPromise = (async () => {
+      if (!state.token || !state.account) return
+      try {
+        const me = await api.get('/auth/me', { timeout: 8000, silent: true })
+        state.account = me.data
+        localStorage.setItem('account', JSON.stringify(me.data))
+      } catch (err) {
+        if (err?.response?.status === 401) {
+          clearAuthState()
+        }
+        // 网络故障等不本地登出：保留状态，交给后续请求的错误处理
+      }
+    })()
+  }
+  return authReadyPromise
 }
 
 export async function logout() {
@@ -58,10 +56,7 @@ export async function logout() {
   } catch {
     // 即便网络失败也清理本地状态
   }
-  state.token = ''
-  state.account = null
-  localStorage.removeItem('token')
-  localStorage.removeItem('account')
+  clearAuthState()
 }
 
 export function homePathByRole(role) {

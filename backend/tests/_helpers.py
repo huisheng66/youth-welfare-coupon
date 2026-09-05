@@ -16,6 +16,11 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+# 必须在首次导入 app.core.config 之前设置：把 Settings 的 env_file 指向不存在的
+# 占位路径，阻断从 backend/.env 读入真实 SMTP / SECRET_KEY 等配置（dotenv 隔离）。
+# settings 每次构造都走同一 class-level env_file，因此在 pytest 全进程生效。
+os.environ["APP_SETTINGS_ENV_FILE"] = str(Path(__file__).resolve().parent / "_isolated_no_env_file")
+
 
 def fresh_settings(**env: str):
     """Set env vars and clear settings / crypto / limiter caches."""

@@ -11,6 +11,15 @@ from app.models.entities import Account, Role
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# 首次改密期间只允许完成改密所需的认证接口，不能依赖前端路由守卫。
+PASSWORD_CHANGE_ALLOWED_PATHS = frozenset(
+    {
+        "/api/auth/me",
+        "/api/auth/change-password",
+        "/api/auth/logout",
+    }
+)
+
 
 def _extract_token(request: Request, creds: HTTPAuthorizationCredentials | None) -> str | None:
     """优先读 HttpOnly Cookie；过渡期回落 Authorization: Bearer。"""
@@ -41,6 +50,11 @@ def get_current_account(
     account = db.get(Account, account_id)
     if not account or not account.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
+    # Token 在改密前签发时的版本必须与数据库一致，防止旧 Cookie / Bearer 会话继续可用。
+    if payload.get("sv") != account.session_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态已失效，请重新登录")
+    if account.must_change_password and request.url.path not in PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise HTTPException(status_code=403, detail="请先修改初始密码")
     return account
 
 
@@ -61,6 +75,8 @@ def get_current_account_optional(
         return None
     account = db.get(Account, account_id)
     if not account or not account.is_active:
+        return None
+    if payload.get("sv") != account.session_version:
         return None
     return account
 

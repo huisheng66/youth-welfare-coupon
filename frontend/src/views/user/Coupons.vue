@@ -73,13 +73,10 @@
           </p>
           <div class="btn-row">
             <el-button @click="copyLive">复制动态码</el-button>
-            <el-button link type="primary" @click="showPermanent = !showPermanent">
-              {{ showPermanent ? '隐藏' : '显示' }}备用永久码
-            </el-button>
           </div>
-          <div v-if="showPermanent" class="coupon-code" style="margin-top:12px;font-size:18px">
-            {{ live.permanent_code }}
-          </div>
+          <p class="muted center" style="margin-top:8px">
+            无摄像头时店员可手动输入动态码核销；永久编号已不能用于核销
+          </p>
         </div>
         <el-skeleton v-else animated :rows="4" />
       </template>
@@ -105,7 +102,6 @@ const visible = ref(false)
 const current = ref(null)
 const live = ref(null)
 const remain = ref(0)
-const showPermanent = ref(false)
 const redeemed = ref(false)
 
 let refreshTimer = null
@@ -232,7 +228,6 @@ function startStatusPoll() {
 
 async function showCode(c) {
   current.value = c
-  showPermanent.value = false
   redeemed.value = false
   visible.value = true
   live.value = null

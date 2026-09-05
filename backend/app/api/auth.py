@@ -291,7 +291,14 @@ def reset_password_by_email(body: ResetPasswordByEmailIn, db: Session = Depends(
         code=body.code,
         purpose=EmailCodePurpose.reset_password,
     )
-    account.password_hash = hash_password(body.new_password)
+    # 会话版本用数据库原子表达式递增：两个并发重置请求不会互相覆盖版本号
+    db.query(Account).filter(Account.id == account.id).update(
+        {
+            Account.password_hash: hash_password(body.new_password),
+            Account.session_version: Account.session_version + 1,
+        },
+        synchronize_session=False,
+    )
     write_audit(
         db,
         actor_id=account.id,
@@ -324,15 +331,20 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号已停用")
     _clear_login_fail(ip, login_id)
-    token = create_access_token(account.id, {"role": account.role.value})
+    token = create_access_token(
+        account.id,
+        {"role": account.role.value, "sv": account.session_version},
+    )
     # 主路径：HttpOnly Cookie 下发 token，前端 JS 不可读，防 XSS 窃取
     set_auth_cookie(response, token)
     logger.info(
         "login.success",
         extra={"user_id": account.id, "role": account.role.value, "ip": ip},
     )
-    # 过渡期仍返回 access_token，兼容尚未改造的前端/小程序
-    return TokenOut(access_token=token)
+    # Cookie 专用模式（关闭 Bearer 兼容）时响应体不再返回真实 token，
+    # 避免 JS 可读凭据重新出现；过渡期默认保留以兼容未改造的客户端。
+    body_token = token if get_settings().auth_allow_bearer else ""
+    return TokenOut(access_token=body_token)
 
 
 @router.post("/logout", response_model=MessageOut)
@@ -458,8 +470,15 @@ def change_password(
     if body.old_password == body.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     # 长度/策略由 ChangePasswordIn 校验（最少 8 位）
-    account.password_hash = hash_password(body.new_password)
-    account.must_change_password = False
+    # 原子更新密码与版本号：并发改密时版本号基于数据库当前值递增，不丢递增
+    db.query(Account).filter(Account.id == account.id).update(
+        {
+            Account.password_hash: hash_password(body.new_password),
+            Account.must_change_password: False,
+            Account.session_version: Account.session_version + 1,
+        },
+        synchronize_session=False,
+    )
     write_audit(
         db,
         actor_id=account.id,
@@ -533,8 +552,15 @@ def reset_password(
         raise HTTPException(status_code=404, detail="账号不存在")
     if target.role == Role.super_admin and target.id != admin.id:
         raise HTTPException(status_code=400, detail="不能重置其他超级管理员密码")
-    target.password_hash = hash_password(body.new_password)
-    target.must_change_password = True
+    # 管理员重置同样废止被重置账号已有的全部令牌（原子递增防并发覆盖）。
+    db.query(Account).filter(Account.id == target.id).update(
+        {
+            Account.password_hash: hash_password(body.new_password),
+            Account.must_change_password: True,
+            Account.session_version: Account.session_version + 1,
+        },
+        synchronize_session=False,
+    )
     write_audit(
         db,
         actor_id=admin.id,
@@ -562,6 +588,13 @@ def set_account_active(
     if target.role == Role.super_admin and target.id != admin.id and not body.is_active:
         raise HTTPException(status_code=400, detail="不能停用其他超级管理员")
     target.is_active = body.is_active
+    if not body.is_active:
+        # 停用即废止该账号全部现有会话：即使之后被重新启用，旧 Cookie/Bearer
+        # 也已失效，必须重新登录，避免“停用又启用”期间保留可用旧会话。
+        db.query(Account).filter(Account.id == target.id).update(
+            {Account.session_version: Account.session_version + 1},
+            synchronize_session=False,
+        )
     write_audit(
         db,
         actor_id=admin.id,

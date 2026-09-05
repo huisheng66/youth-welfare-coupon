@@ -18,9 +18,14 @@ def list_merchants(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
+    account: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
 ) -> Page[MerchantOut]:
     query = db.query(Merchant).order_by(Merchant.created_at.desc())
+    # 商家角色固定锁定本店：绑定缺失或来自 query 的覆盖都不生效，防止越权读取他店资料
+    if account.role == Role.merchant:
+        if not account.merchant_id:
+            return Page(total=0, items=[])
+        query = query.filter(Merchant.id == account.merchant_id)
     if active_only:
         query = query.filter(Merchant.is_active.is_(True))
     if q:
@@ -72,9 +77,12 @@ def update_merchant(
 def get_merchant(
     merchant_id: str,
     db: Session = Depends(get_db),
-    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
+    account: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
 ) -> MerchantOut:
     merchant = db.get(Merchant, merchant_id)
+    # 查询阶段限定门店范围：他店对象与不存在统一 404，避免暴露门店联系方式是否存在
+    if merchant and account.role == Role.merchant and merchant.id != account.merchant_id:
+        merchant = None
     if not merchant:
         raise HTTPException(status_code=404, detail="商家不存在")
     return MerchantOut.model_validate(merchant)

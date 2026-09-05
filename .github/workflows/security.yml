@@ -14,6 +14,20 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      # T20：MySQL 并发/迁移回归在 CI 中真实运行；本地未提供 MYSQL_TEST_URL 时自动跳过。
+      # F07：测试实例使用空 root 密码，连接串不含凭据，避免被密钥扫描门禁命中。
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 33307:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,13 +37,76 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -r requirements-dev.txt
-      - name: Full test suite (security hardening, authz, coupons, points, import, perf)
+      - name: Full test suite (security hardening, authz, coupons, points, import, perf, mysql concurrency)
         env:
           GLOBAL_IP_MAX_REQUESTS: "0"
           RATE_LIMIT_BACKEND: memory
           APP_ENV: development
           SEED_DEMO_ACCOUNTS: "false"
+          MYSQL_TEST_URL: mysql+pymysql://root@127.0.0.1:33307
         run: python -m pytest tests/ -q
+
+  secret-scan:
+    name: Secret scan (changed lines)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan changed lines for secrets
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            echo "scanning diff ${BASE}...HEAD"
+            python scripts/scan_staged_secrets.py --ref "$BASE"
+          elif [ -n "${{ github.event.before }}" ] && ! echo "${{ github.event.before }}" | grep -q '^0*$'; then
+            echo "scanning push diff ${{ github.event.before }}..HEAD"
+            python scripts/scan_staged_secrets.py --ref "${{ github.event.before }}"
+          else
+            # 新分支首次推送没有基准：退化为全量已跟踪文件扫描
+            echo "no base revision — scanning tracked tree"
+            python scripts/scan_staged_secrets.py --tree
+          fi
+
+  frontend-e2e:
+    name: Frontend E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create backend venv (E2E webServer uses .venv/bin/python)
+        run: |
+          cd backend
+          python -m venv .venv
+          .venv/bin/pip install -U pip
+          .venv/bin/pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: frontend
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Run E2E suite (isolated random SQLite + dedicated ports)
+        run: npm run e2e
+        working-directory: frontend
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
 
   pip-audit:
     name: pip-audit

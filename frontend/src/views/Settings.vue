@@ -23,8 +23,13 @@
       style="max-width:480px;margin-bottom:20px"
     />
 
-    <h3 class="section-title">绑定 / 修改邮箱</h3>
-    <el-form label-width="100px" style="max-width:480px;margin-bottom:28px" @submit.prevent="onEmail">
+    <h3 v-if="!auth.account?.must_change_password" class="section-title">绑定 / 修改邮箱</h3>
+    <el-form
+      v-if="!auth.account?.must_change_password"
+      label-width="100px"
+      style="max-width:480px;margin-bottom:28px"
+      @submit.prevent="onEmail"
+    >
       <el-form-item label="邮箱">
         <el-input v-model="emailForm.email" type="email" placeholder="登录可用邮箱" />
       </el-form-item>
@@ -70,11 +75,13 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api, { AUTH_SLOW_TIMEOUT } from '../api'
-import { refreshAccount, useAuth } from '../auth'
+import { clearAuthState, useAuth } from '../auth'
 import { roleLabel as mapRole } from '../utils/format'
 
 const auth = useAuth()
+const router = useRouter()
 const roleLabel = computed(() => mapRole(auth.account?.role))
 const formRef = ref(null)
 const loading = ref(false)
@@ -199,12 +206,11 @@ async function onSubmit() {
     )
     ElMessage.success('密码已修改，请使用新密码登录')
     resetForm()
-    // 同步 /auth/me：清除 must_change_password 后路由守卫放行其他页面
-    try {
-      await refreshAccount()
-    } catch {
-      // 刷新失败不影响改密结果
-    }
+    // 后端已废止旧会话（session_version 递增）：本地状态与 Cookie 均不可再用，
+    // 清理后回登录页；replace 避免浏览器回退到失效页面。改密接口在受限模式下
+    // 始终放行，无需也不应在旧会话上继续调用 /auth/me
+    clearAuthState()
+    router.replace({ path: '/login' })
   } finally {
     loading.value = false
   }

@@ -62,9 +62,15 @@ class LiveCodeOut(BaseModel):
     live_code: str
     expires_in: int
     expires_at: datetime
-    permanent_code: str
     template_name: str | None = None
     merchant_name: str | None = None
+    # 不含永久编号：永久码只是业务查询编号，不得作为核销凭证流转
+
+
+class PreviewIn(BaseModel):
+    """商家预览请求：动态凭证经 body 传输，避免进入访问日志的 query。"""
+
+    code: str = Field(min_length=4, max_length=4096)
 
 
 class IssueCouponIn(BaseModel):
@@ -126,6 +132,7 @@ class RedemptionLogOut(ORMModel):
     username: str | None = None
     code: str
     result: str
+    reason: str = ""
     message: str
     created_at: datetime
 

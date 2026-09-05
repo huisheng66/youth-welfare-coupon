@@ -20,11 +20,13 @@ SessionLocal = None
 
 def _build_engine(settings: Settings):
     url = settings.database_url
-    # SQLite 需要 check_same_thread；MySQL/Postgres 用连接池保活
+    # SQLite 需要 check_same_thread；busy_timeout 缓解多请求写锁竞争
+    # （默认 0，并发轮询+写事务下会直接报 database is locked）
     connect_args: dict = {}
     engine_kwargs: dict = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
+        connect_args["timeout"] = 30
     else:
         engine_kwargs.update(
             {

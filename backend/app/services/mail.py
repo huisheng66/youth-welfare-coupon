@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -26,6 +28,30 @@ _PURPOSE_SUBJECT = {
 
 def _gen_code(length: int = 6) -> str:
     return f"{secrets.randbelow(10**length):0{length}d}"
+
+
+def hash_email_code(code: str, settings: Settings | None = None) -> str:
+    """验证码只存 HMAC-SHA256 摘要。
+
+    六位码熵太低，无密钥散列挡不住离线枚举；必须让服务端 SECRET_KEY
+    参与校验，库被拖走后攻击者无法把摘要还原成验证码。
+    """
+    settings = settings or get_settings()
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        code.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _code_matches(stored: str, provided: str, settings: Settings) -> bool:
+    stored = (stored or "").strip()
+    # 迁移前的历史验证码以明文入库（6 位数字）：保留直接比对，让迁移窗口内
+    # 未过期的码仍可用；新码一律为 64 位 HMAC 摘要。
+    if len(stored) == 64 and all(c in "0123456789abcdef" for c in stored.lower()):
+        digest = hash_email_code(provided, settings)
+        return hmac.compare_digest(digest, stored.lower())
+    return hmac.compare_digest(stored, provided)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -152,12 +178,18 @@ async def issue_email_code(
     """Create code, send (or console-log). Returns (row, debug_code or None)."""
     settings = settings or get_settings()
     email = email.strip().lower()
+    if not settings.smtp_configured and settings.is_production:
+        # 生产未配 SMTP 必须 fail-closed：不允许“成功但只写日志”的假发码
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="邮件服务未配置，暂时无法发送验证码，请联系管理员",
+        )
     _check_send_limits(db, email, purpose, settings)
 
     code = _gen_code(6)
     row = EmailCode(
         email=email,
-        code=code,
+        code=hash_email_code(code, settings),
         purpose=purpose,
         expires_at=utcnow() + timedelta(minutes=settings.email_code_expire_minutes),
     )
@@ -175,12 +207,10 @@ async def issue_email_code(
         logger.exception("send mail failed: %s", exc)
         raise HTTPException(status_code=502, detail=_friendly_smtp_error(exc)) from exc
 
-    if not settings.smtp_configured:
-        logger.warning("[mail:console] purpose=%s email=%s code=%s", purpose.value, email, code)
-
     debug: str | None = None
-    # 真实 SMTP 开启后绝不回传验证码；仅纯控制台模式返回
-    if settings.mail_console and not settings.smtp_configured:
+    # 生产环境绝不把验证码放进 HTTP 响应；控制台验证码仅限本地开发联调。
+    # 日志同样不落验证码明文（开发排错看响应体 debug_code 即可）。
+    if settings.mail_console and not settings.smtp_configured and not settings.is_production:
         debug = code
     return row, debug
 
@@ -193,7 +223,13 @@ def consume_email_code(
     purpose: EmailCodePurpose,
     max_attempts: int = 5,
 ) -> None:
-    """Validate and mark code used. Raises HTTPException on failure."""
+    """Validate and mark code used. Raises HTTPException on failure.
+
+    消费与错误计数共用同一原子资格边界（未消费 + 次数未达上限，消费另加
+    未过期），全部放进条件 UPDATE 由数据库判定（审查报告 F02）：读后在
+    Python 中比较存在窗口，并发请求可在锁定生效前越过旧计数。
+    """
+    settings = get_settings()
     email = email.strip().lower()
     code = (code or "").strip()
     if not code:
@@ -212,20 +248,63 @@ def consume_email_code(
     if not row:
         raise HTTPException(status_code=400, detail="验证码无效或已过期，请重新获取")
 
-    if _aware(row.expires_at) < utcnow():
-        raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+    now = utcnow()
+    expired = _aware(row.expires_at) < now
+    matched = _code_matches(row.code, code, settings)
 
-    if row.attempts >= max_attempts:
-        raise HTTPException(status_code=400, detail="验证码错误次数过多，请重新获取")
+    if matched:
+        # 正确码：资格（未消费/未超限/未过期）与消费在同一条件更新内判定
+        updated = (
+            db.query(EmailCode)
+            .filter(
+                EmailCode.id == row.id,
+                EmailCode.used_at.is_(None),
+                EmailCode.attempts < max_attempts,
+                EmailCode.expires_at > now,
+            )
+            .update({EmailCode.used_at: now}, synchronize_session=False)
+        )
+        if not updated:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=_locked_code_detail(db, row.id))
+        db.expire(row)
+        return
 
-    if row.code != code:
-        row.attempts += 1
-        db.flush()
-        left = max_attempts - row.attempts
-        raise HTTPException(status_code=400, detail=f"验证码错误，还可尝试 {left} 次")
+    # 错误码：计数自增同样受资格条件约束，不能无限增长
+    attempts_before = row.attempts
+    updated = (
+        db.query(EmailCode)
+        .filter(
+            EmailCode.id == row.id,
+            EmailCode.used_at.is_(None),
+            EmailCode.attempts < max_attempts,
+        )
+        .update({EmailCode.attempts: EmailCode.attempts + 1}, synchronize_session=False)
+    )
+    if not updated:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=_locked_code_detail(db, row.id))
+    # 错误计数必须先落库再返回错误：请求以 4xx 结束时 get_db 只 close 不
+    # commit，不提交则 attempts 随事务回滚清零，等于可以无限次试码。
+    db.commit()
+    left = max_attempts - (attempts_before + 1)
+    raise HTTPException(status_code=400, detail=f"验证码错误，还可尝试 {left} 次")
 
-    row.used_at = utcnow()
-    db.flush()
+
+def _locked_code_detail(db: Session, code_id: str) -> str:
+    """条件更新未命中后，用锁定读（当前读）分类被拒原因。
+
+    MySQL REPEATABLE READ 下普通 SELECT 走旧快照，看不到其他请求刚提交
+    的消费/计数；锁定读能看到最新提交状态且避免分类竞态。
+    """
+    fresh = db.query(EmailCode).filter(EmailCode.id == code_id).with_for_update().first()
+    if fresh is None:
+        return "验证码无效或已过期，请重新获取"
+    if fresh.used_at is not None:
+        return "验证码已被使用，请重新获取"
+    if _aware(fresh.expires_at) < utcnow():
+        return "验证码已过期，请重新获取"
+    return "验证码错误次数过多，请重新获取"
 
 
 async def send_test_email(*, to: str, settings: Settings | None = None) -> None:

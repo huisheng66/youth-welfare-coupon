@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -528,13 +529,15 @@ class TestAlembicUpgradePath(unittest.TestCase):
     def test_legacy_database_gets_post_baseline_indexes(self) -> None:
         from alembic import command
         from alembic.config import Config
+        from alembic.script import ScriptDirectory
         from sqlalchemy import inspect, text
 
         import app.core.database as dbmod
         from app.core.config import get_settings
         from app.core.migrate import LEGACY_BASELINE_REVISION, run_alembic_upgrade
 
-        with tempfile.TemporaryDirectory() as td:
+        td = tempfile.mkdtemp()
+        try:
             db_path = Path(td) / "legacy.db"
             _fresh_settings(
                 APP_ENV="development",
@@ -551,15 +554,23 @@ class TestAlembicUpgradePath(unittest.TestCase):
 
             run_alembic_upgrade()
 
+            # head 从迁移图推导：新增增量迁移落地后本用例无需同步改版本号
+            heads = ScriptDirectory(str(BACKEND_ROOT / "alembic")).get_heads()
+            self.assertEqual(len(heads), 1, f"迁移链必须保持单一 head，实际: {heads}")
             indexes = {i["name"] for i in inspect(dbmod.engine).get_indexes("coupon_instances")}
             self.assertIn("ix_coupon_instances_status_expires_at", indexes)
+            account_cols = {c["name"] for c in inspect(dbmod.engine).get_columns("accounts")}
+            self.assertIn("session_version", account_cols)
+            self.assertIn("must_change_password", account_cols)
             with dbmod.engine.connect() as conn:
                 revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            self.assertEqual(revision, "9d4c17f2ab60")
+            self.assertEqual(revision, heads[0])
+        finally:
+            # 必须先释放 SQLite 文件句柄再删临时目录，否则 Windows 下 rmtree 报 WinError 32
             dbmod.engine.dispose()
-
-        _fresh_settings(APP_ENV="development", DATABASE_URL="sqlite:///./data/app.db")
-        dbmod.init_engine(get_settings())
+            shutil.rmtree(td, ignore_errors=True)
+            _fresh_settings(APP_ENV="development", DATABASE_URL="sqlite:///./data/app.db")
+            dbmod.init_engine(get_settings())
 
 
 class TestPhase4Artifacts(unittest.TestCase):
@@ -673,6 +684,124 @@ class TestDeployNoHardcodedSecrets(unittest.TestCase):
                 path.read_text(encoding="utf-8", errors="ignore"),
                 f"{path.relative_to(root)}: 疑似残留真实管理员口令",
             )
+
+
+class TestSensitiveFileGuard(unittest.TestCase):
+    """T07：本地敏感文件不得被普通批量 add 意外纳入版本库；示例配置保持可追踪。"""
+
+    @staticmethod
+    def _git_ignored(rel: str) -> bool:
+        import subprocess
+
+        proc = subprocess.run(
+            ["git", "check-ignore", "-q", rel],
+            cwd=str(BACKEND_ROOT.parent),
+            capture_output=True,
+        )
+        return proc.returncode == 0
+
+    def test_local_secrets_are_ignored(self) -> None:
+        for rel in (
+            ".env",
+            ".env.local",
+            "secrets/mail-credentials.txt",
+            "db-backup.sql",
+            "deploy/smtp.local.sh",
+        ):
+            self.assertTrue(self._git_ignored(rel), f"{rel} 必须被 .gitignore 忽略")
+
+    def test_example_config_stays_trackable(self) -> None:
+        self.assertFalse(self._git_ignored("backend/.env.example"), "示例配置必须保持可追踪")
+
+    def test_secret_scan_detects_and_redacts(self) -> None:
+        import importlib.util
+
+        script = BACKEND_ROOT.parent / "scripts" / "scan_staged_secrets.py"
+        self.assertTrue(script.is_file(), "暂存密钥扫描脚本必须存在")
+        spec = importlib.util.spec_from_file_location("scan_staged_secrets", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        targets = [
+            ("app/config.py", 12, 'SECRET_KEY = "a-really-long-hardcoded-secret-xx"'),
+            ("deploy/x.sh", 3, 'DB_PASSWORD="literal-pass-123"'),
+        ]
+        findings = mod.scan(targets)
+        self.assertEqual(len(findings), 2, findings)
+        # 输出脱敏：只有路径、行号与规则名，绝不回显疑似凭据内容
+        joined = "\n".join(findings)
+        self.assertNotIn("a-really-long-hardcoded-secret", joined)
+        self.assertNotIn("literal-pass-123", joined)
+        # 环境变量注入与 allow 标记不报
+        clean = mod.scan(
+            [
+                ("deploy/x.sh", 3, 'DB_PASSWORD="${DB_PASSWORD}" # secret-scan:allow demo'),
+                ("app/x.py", 1, 'SECRET_KEY = os.environ["SECRET_KEY"]'),
+            ]
+        )
+        self.assertEqual(clean, [])
+
+    def test_secret_scan_covers_project_credential_formats(self) -> None:
+        """F04：项目实际使用的 mysql+pymysql:// 与 SSH_PASS 形式必须被扫描覆盖。"""
+        import importlib.util
+
+        script = BACKEND_ROOT.parent / "scripts" / "scan_staged_secrets.py"
+        spec = importlib.util.spec_from_file_location("scan_staged_secrets", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        targets = [
+            ("app/config.py", 9, 'DATABASE_URL="mysql+pymysql://review:synthetic-pass-99@localhost:3306/welfare"'),
+            ("deploy/run.sh", 4, 'SSH_PASS="synthetic-pass-99"'),
+            ("deploy/run.sh", 5, 'DB_PASS="synthetic-pass-99"'),
+        ]
+        findings = mod.scan(targets)
+        self.assertEqual(len(findings), 3, findings)
+        rules = {f.split(": ", 1)[1] for f in findings}
+        self.assertIn("db-url-with-credentials", rules)
+        self.assertIn("password-assign-literal", rules)
+        # 合成凭据不得回显
+        self.assertNotIn("synthetic-pass-99", "\n".join(findings))
+
+    def test_secret_scan_exit_codes_as_gate(self) -> None:
+        """F04 补测：以子进程验证扫描脚本退出码——命中 1、干净 0。"""
+        import subprocess
+        import tempfile as _tempfile
+
+        script = BACKEND_ROOT.parent / "scripts" / "scan_staged_secrets.py"
+        with _tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            def git(*args: str) -> None:
+                subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+            git("init", "-q")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "test")
+            git("config", "commit.gpgsign", "false")
+            (repo / "README.md").write_text("demo\n", encoding="utf-8")
+            git("add", "README.md")
+            git("commit", "-qm", "init")
+
+            # 干净暂存区 → 退出 0
+            proc = subprocess.run(
+                ["python", str(script), "--cwd", str(repo)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+            # 暂存一个含 mysql+pymysql 凭据的文件 → 退出 1 且不回显内容
+            (repo / "config.py").write_text(
+                'DATABASE_URL = "mysql+pymysql://review:synthetic-pass-99@localhost:3306/welfare"\n',
+                encoding="utf-8",
+            )
+            git("add", "config.py")
+            proc = subprocess.run(
+                ["python", str(script), "--cwd", str(repo)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            self.assertEqual(proc.returncode, 1, proc.stdout)
+            self.assertIn("db-url-with-credentials", proc.stdout)
+            self.assertNotIn("synthetic-pass-99", proc.stdout)
 
 
 class TestProfileWritePathSanitizes(unittest.TestCase):

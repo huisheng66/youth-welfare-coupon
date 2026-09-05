@@ -63,7 +63,6 @@
       </div>
 
       <el-descriptions v-if="preview" :column="1" border class="section-gap">
-        <el-descriptions-item label="券码">{{ preview.code }}</el-descriptions-item>
         <el-descriptions-item label="模板">{{ preview.template_name }}</el-descriptions-item>
         <el-descriptions-item label="用户">{{ preview.username }}</el-descriptions-item>
         <el-descriptions-item label="状态">
@@ -184,7 +183,7 @@ async function onPreview() {
   preview.value = null
   result.value = null
   try {
-    const res = await api.get('/coupons/preview', { params: { code: code.value.trim() } })
+    const res = await api.post('/coupons/preview', { code: code.value.trim() })
     preview.value = res.data
     if (res.data.status !== 'unused') {
       ElMessage.warning(`当前状态：${couponStatusText(res.data.status)}，不可核销`)

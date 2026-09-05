@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
@@ -13,6 +14,7 @@ from app.models.entities import (
     CouponStatus,
     CouponTemplate,
     Merchant,
+    PointAccount,
     PointLedger,
     Role,
     UserProfile,
@@ -30,7 +32,7 @@ from app.schemas.points import (
     PointLedgerOut,
 )
 from app.services.audit import write_audit
-from app.services.points import apply_points, get_or_create_account, quantize_hours
+from app.services.points import ZERO, apply_points, get_or_create_account, quantize_hours
 from app.services.import_file import (
     KIND_POINTS,
     map_columns,
@@ -335,19 +337,8 @@ def exchange(
     if not merchant or not merchant.is_active:
         raise HTTPException(status_code=400, detail="关联商家不可用")
 
-    try:
-        acc = apply_points(
-            db,
-            user_id=account.id,
-            change=-cost,
-            reason=f"兑换优惠券：{template.name}",
-            operator_id=account.id,
-            ref_type="exchange",
-            ref_id=template.id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
+    # 先建券实例并 flush 取 id：兑换账本的 ref_id 关联实际券而非模板，
+    # 扣减失败时整个事务回滚，不会留下“有券无扣减”或“有扣减无券”
     now = datetime.now(timezone.utc)
     code = _gen_code()
     while db.query(CouponInstance).filter(CouponInstance.code == code).first():
@@ -363,13 +354,28 @@ def exchange(
         expires_at=now + timedelta(days=template.valid_days),
     )
     db.add(coupon)
+    db.flush()
+
+    try:
+        acc = apply_points(
+            db,
+            user_id=account.id,
+            change=-cost,
+            reason=f"兑换优惠券：{template.name}",
+            operator_id=account.id,
+            ref_type="exchange",
+            ref_id=coupon.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     write_audit(
         db,
         actor_id=account.id,
         action="exchange_coupon",
         target_type="template",
         target_id=template.id,
-        detail=f"cost={cost}",
+        detail=f"cost={cost}, coupon={coupon.id}",
     )
     db.commit()
     db.refresh(coupon)
@@ -379,3 +385,38 @@ def exchange(
         balance=acc.balance,
         coupon=_coupon_out(coupon),
     )
+
+
+@router.get("/reconcile")
+def reconcile_balances(
+    db: Session = Depends(get_db),
+    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> dict:
+    """只读对账：账户余额应等于该账户全部账本变更之和。
+
+    返回不一致账户清单（最多 100 条），供人工核对期初余额与历史流水，
+    不自动改写任何数据。
+    """
+    balances = dict(db.query(PointAccount.user_id, PointAccount.balance).all())
+    sums = dict(
+        db.query(PointLedger.user_id, func.sum(PointLedger.change))
+        .group_by(PointLedger.user_id)
+        .all()
+    )
+    mismatches: list[dict] = []
+    for user_id in set(balances) | set(sums):
+        balance = quantize_hours(balances.get(user_id) or ZERO)
+        ledger_sum = quantize_hours(sums.get(user_id) or ZERO)
+        if balance != ledger_sum:
+            mismatches.append(
+                {
+                    "user_id": user_id,
+                    "balance": float(balance),
+                    "ledger_sum": float(ledger_sum),
+                }
+            )
+    return {
+        "accounts_checked": len(set(balances) | set(sums)),
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches[:100],
+    }

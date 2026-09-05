@@ -1,5 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.entities import PointAccount, PointLedger, utcnow
@@ -23,9 +24,24 @@ def get_or_create_account(db: Session, user_id: str) -> PointAccount:
     acc = db.query(PointAccount).filter(PointAccount.user_id == user_id).first()
     if acc:
         return acc
-    acc = PointAccount(user_id=user_id, balance=ZERO)
-    db.add(acc)
-    db.flush()
+    # 首次开户用 savepoint 包裹：并发请求同时开户时，唯一约束竞争中失败方
+    # 回滚到 savepoint 后用锁定读重查。MySQL REPEATABLE READ 下普通 SELECT
+    # 走旧快照、看不到已提交的胜者，必须用当前读（FOR UPDATE）；SQLite 忽略
+    # with_for_update，行为不变。
+    try:
+        with db.begin_nested():
+            acc = PointAccount(user_id=user_id, balance=ZERO)
+            db.add(acc)
+            db.flush()
+    except IntegrityError:
+        acc = (
+            db.query(PointAccount)
+            .filter(PointAccount.user_id == user_id)
+            .with_for_update()
+            .first()
+        )
+        if acc is None:
+            raise
     return acc
 
 
@@ -43,14 +59,15 @@ def apply_points(
 
     - 扣减时 WHERE balance >= -change 由数据库判定，并发下不会透支；
     - SET balance = balance + change 让数据库基于最新值计算，
-      多 worker 同时入账/扣减不会互相覆盖（避免读改写丢更新）。
-    SQLite/MySQL/Postgres 均支持同一语句内的列表达式。
+      多 worker 同时入账/扣减不会互相覆盖（避免读改写丢更新）；
+    - UPDATE 持有行锁直到事务提交，随后在同一事务内重读该行，
+      读到的必然是本次变更后的串行余额，账本 balance_after 与之严格一致
+      （MySQL REPEATABLE READ 下本事务自己的写入对自己可见；SQLite 写锁串行）。
     """
     change = quantize_hours(change)
     if change == ZERO:
         raise ValueError("变动时长不能为 0")
     acc = get_or_create_account(db, user_id)
-    current = quantize_hours(acc.balance)
 
     stmt = db.query(PointAccount).filter(PointAccount.user_id == user_id)
     if change < ZERO:
@@ -61,13 +78,12 @@ def apply_points(
     )
     if not updated:
         raise ValueError("时长余额不足")
-    # identity map 里的余额已过期；账本记本次变更后的计算值
-    db.expire(acc)
+    db.refresh(acc)
     db.add(
         PointLedger(
             user_id=user_id,
             change=change,
-            balance_after=quantize_hours(current + change),
+            balance_after=quantize_hours(acc.balance),
             reason=reason,
             operator_id=operator_id,
             ref_type=ref_type,

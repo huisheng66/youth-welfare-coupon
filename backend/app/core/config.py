@@ -1,8 +1,13 @@
+import os
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# env_file 可用 APP_SETTINGS_ENV_FILE 覆盖：测试进程把它指向不存在的路径，
+# 显式断开与本地 .env（真实 SMTP/密钥）的 dotenv 回退，保证测试无外部副作用。
+_ENV_FILE = os.environ.get("APP_SETTINGS_ENV_FILE") or ".env"
 
 # Known weak / placeholder secrets that must never ship in production
 INSECURE_SECRET_KEYS = frozenset(
@@ -18,7 +23,7 @@ INSECURE_SECRET_KEYS = frozenset(
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "youth"
     # development | production — drives secure defaults when explicit flags are omitted

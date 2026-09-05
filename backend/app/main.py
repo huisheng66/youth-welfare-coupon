@@ -159,9 +159,17 @@ def create_app() -> FastAPI:
         s = get_settings()
         assert_secure_startup(s)
         reset_limiters()
-        # 生产环境用 alembic upgrade head；开发环境保留 create_all + ensure_schema
-        # 用 db.engine 访问最新 engine（init_engine 重建后的实例）
-        apply_migrations(db.engine, production=s.is_production)
+        # T08：生产 worker 启动只做只读 schema 校验（版本一致 + 关键列存在），
+        # 不执行 DDL——迁移由发布流程用迁移账号单独执行
+        # （alembic upgrade head / deploy/migrate-release.sh），避免多 worker
+        # 并发建表、运行账号需要 DDL 权限，以及迁移阻塞服务启动。
+        if s.is_production:
+            from app.core.migrate import verify_schema_current
+
+            verify_schema_current(db.engine)
+        else:
+            # 开发环境保留 create_all + ensure_schema，方便本地迭代
+            apply_migrations(db.engine, production=False)
         session = db.SessionLocal()
         try:
             seed_if_empty(session)

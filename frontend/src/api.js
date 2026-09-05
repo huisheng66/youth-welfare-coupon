@@ -1,5 +1,6 @@
 import axios from 'axios'
 import router from './router'
+import { clearAuthState } from './authState'
 
 /** 登录 / 改密 / 重置密码等含 bcrypt 的接口，网络抖动时给更长窗口 */
 export const AUTH_SLOW_TIMEOUT = 30000
@@ -81,10 +82,11 @@ api.interceptors.response.use(
   (err) => {
     const msg = friendlyErrorMessage(err)
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('account')
+      // 同步清理 reactive 状态与本地缓存：只清 localStorage 会让路由守卫
+      // 继续把用户送回受保护页面，再次 401 形成循环跳转
+      clearAuthState()
       if (router.currentRoute.value.path !== '/login') {
-        router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+        router.replace({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
       }
     }
     // 轮询等场景可传 { silent: true } 避免打断用户

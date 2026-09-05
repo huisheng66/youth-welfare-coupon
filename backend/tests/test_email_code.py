@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from datetime import timedelta
+from unittest import mock
 
 from tests._helpers import TempApp, reset_env_defaults
 
@@ -84,6 +85,54 @@ class TestEmailCode(unittest.TestCase):
             _, debug = _issue_code(ta, "newuser1@demo.local", "register")
             self.assertIsNotNone(debug)
             self.assertEqual(len(debug), 6)
+
+    def test_production_never_returns_debug_code(self) -> None:
+        """生产未配 SMTP 必须 fail-closed：发码接口不可用，而不是“成功只写日志”。"""
+        from fastapi import HTTPException
+
+        from app.core.config import get_settings
+        from app.models.entities import EmailCodePurpose
+        from app.services.mail import issue_email_code
+
+        with TempApp() as ta:
+            settings = get_settings()
+            settings.app_env = "production"
+            settings.mail_console = True
+            with ta.session() as db:
+                with mock.patch.object(
+                    type(settings), "smtp_configured", new_callable=mock.PropertyMock, return_value=False
+                ):
+                    with self.assertRaises(HTTPException) as ctx:
+                        asyncio.run(
+                            issue_email_code(
+                                db,
+                                email="production@demo.local",
+                                purpose=EmailCodePurpose.reset_password,
+                                settings=settings,
+                            )
+                        )
+                self.assertEqual(ctx.exception.status_code, 503)
+                # 未产生任何验证码行（fail-closed 而非控制台回落）
+                from app.models.entities import EmailCode
+
+                self.assertEqual(
+                    db.query(EmailCode).filter(EmailCode.email == "production@demo.local").count(), 0
+                )
+
+    def test_stored_code_is_keyed_hash_not_plaintext(self) -> None:
+        """新验证码入库即 HMAC 摘要：拖库后无法离线枚举六位码。"""
+        from app.core.config import get_settings
+        from app.models.entities import EmailCode
+        from app.services.mail import hash_email_code
+
+        with TempApp() as ta:
+            _, debug = _issue_code(ta, "hashstore@demo.local", "register")
+            self.assertIsNotNone(debug)
+            with ta.session() as db:
+                row = db.query(EmailCode).filter(EmailCode.email == "hashstore@demo.local").one()
+            self.assertEqual(len(row.code), 64)
+            self.assertNotEqual(row.code, debug)
+            self.assertEqual(row.code, hash_email_code(debug, get_settings()))
 
     def test_smtp_send_uses_tls_and_validates_certificates(self) -> None:
         from unittest import mock
@@ -203,6 +252,81 @@ class TestEmailCode(unittest.TestCase):
                 _consume(ta, "maxatt@demo.local", "999999", "register")
             self.assertEqual(ctx.exception.status_code, 400)
             self.assertIn("次数过多", ctx.exception.detail)
+
+    def test_wrong_attempts_survive_request_rollback(self) -> None:
+        """T04 核心回归：连续 HTTP 试错达到上限后锁定，attempts 不随请求回滚清零。"""
+        with TempApp() as ta:
+            _, debug = _issue_code(ta, "lockout@example.com", "register")
+            with ta.client() as c:
+                last = None
+                for _ in range(5):
+                    last = c.post(
+                        "/api/auth/register",
+                        json={
+                            "email": "lockout@example.com",
+                            "code": "000000",
+                            "password": "goodpass123",
+                        },
+                    )
+                    self.assertEqual(last.status_code, 400, last.text)
+                # 第 6 次：正确码也应被拒绝（错误次数已锁定）
+                correct = c.post(
+                    "/api/auth/register",
+                    json={
+                        "email": "lockout@example.com",
+                        "code": debug,
+                        "password": "goodpass123",
+                    },
+                )
+                self.assertEqual(correct.status_code, 400, correct.text)
+                self.assertIn("次数过多", correct.json()["detail"])
+                from app.models.entities import EmailCode
+
+                with ta.session() as db:
+                    row = (
+                        db.query(EmailCode)
+                        .filter(EmailCode.email == "lockout@example.com")
+                        .order_by(EmailCode.created_at.desc())
+                        .first()
+                    )
+                self.assertEqual(row.attempts, 5, "错误计数必须在独立事务持久化")
+
+    def test_concurrent_consume_single_winner(self) -> None:
+        """并发消费同一验证码：条件更新保证只有一个成功。"""
+        from sqlalchemy.orm import sessionmaker
+
+        from fastapi import HTTPException
+        from app.models.entities import utcnow
+
+        with TempApp() as ta:
+            _insert_code_row(
+                ta,
+                email="race@demo.local",
+                code="654321",
+                purpose="register",
+                expires_at=utcnow() + timedelta(minutes=10),
+            )
+            # 两个独立会话模拟并发请求
+            Session2 = sessionmaker(bind=ta.engine, autoflush=False)
+            results: list[str] = []
+
+            def attempt(session_factory, tag: str) -> None:
+                db = session_factory()
+                try:
+                    from app.models.entities import EmailCodePurpose
+                    from app.services.mail import consume_email_code
+
+                    consume_email_code(db, email="race@demo.local", code="654321", purpose=EmailCodePurpose.register)
+                    db.commit()
+                    results.append(tag)
+                except HTTPException:
+                    db.rollback()
+                finally:
+                    db.close()
+
+            attempt(ta.Session, "s1")
+            attempt(Session2, "s2")
+            self.assertEqual(len(results), 1, f"并发消费只允许一个成功，实际: {results}")
 
 
 if __name__ == "__main__":

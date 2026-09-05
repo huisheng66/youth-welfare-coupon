@@ -30,6 +30,7 @@ from app.schemas.coupon import (
     CouponOut,
     IssueCouponIn,
     LiveCodeOut,
+    PreviewIn,
     RedeemIn,
     RedeemOut,
     RedemptionLogOut,
@@ -116,32 +117,40 @@ def template_to_out(t: CouponTemplate) -> TemplateOut:
 
 
 def _resolve_coupon_by_code(db: Session, raw: str) -> CouponInstance | None:
+    """动态券码 → 券实例。
+
+    永久编号只是业务查询编号，不参与核销鉴权：调用方须先确认输入是
+    动态码形态，否则视为无效核销凭证。
+    """
     raw = raw.strip()
-    if not raw:
+    if not raw or not looks_like_live_code(raw):
         return None
-    if looks_like_live_code(raw):
-        try:
-            payload = decode_live_code(raw)
-        except ValueError:
-            return None
-        coupon = db.get(CouponInstance, payload["cid"])
-        if not coupon:
-            return None
-        if coupon.user_id != payload.get("uid"):
-            return None
-        if coupon.code != payload.get("code"):
-            return None
-        return coupon
-    return db.query(CouponInstance).filter(CouponInstance.code == raw.upper()).first()
+    try:
+        payload = decode_live_code(raw)
+    except ValueError:
+        return None
+    coupon = db.get(CouponInstance, payload["cid"])
+    if not coupon:
+        return None
+    if coupon.user_id != payload.get("uid"):
+        return None
+    return coupon
 
 
-def _maybe_expire(coupon: CouponInstance) -> None:
+def _transition_expired(db: Session, coupon: CouponInstance) -> None:
+    """把已过期的未使用券条件更新为 expired。
+
+    过期转换必须是 `WHERE status = unused AND expires_at <= now` 的数据库级
+    条件更新：从旧 ORM 对象盲写 expired（仅主键条件）会在并发下覆盖他人
+    刚写入的 used 终态，造成券状态与核销流水互相矛盾（审查报告 F01）。
+    调用方随后 db.commit() 固化转换。
+    """
     now = datetime.now(timezone.utc)
-    exp = coupon.expires_at
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    if coupon.status == CouponStatus.unused and exp < now:
-        coupon.status = CouponStatus.expired
+    db.query(CouponInstance).filter(
+        CouponInstance.id == coupon.id,
+        CouponInstance.status == CouponStatus.unused,
+        CouponInstance.expires_at <= now,
+    ).update({CouponInstance.status: CouponStatus.expired}, synchronize_session=False)
 
 
 # ----- templates -----
@@ -416,25 +425,35 @@ def issue_coupons_import(
     )
 
 
-@router.get("/preview", response_model=CouponOut)
+@router.post("/preview", response_model=CouponOut)
 def preview_coupon(
-    code: str = Query(..., min_length=4, max_length=4096),
+    body: PreviewIn,
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.merchant)),
 ) -> CouponOut:
-    """商家核销前预览，不改变状态。支持永久券码或动态券码。"""
+    """商家核销前预览，不改变状态。仅接受用户出示的动态券码。
+
+    动态凭证经 body 传输，避免 JWT 进入访问日志的 query 记录。
+    """
     if not account.merchant_id:
         raise HTTPException(status_code=400, detail="商家账号未绑定门店")
-    raw = code.strip()
-    if looks_like_live_code(raw):
-        try:
-            decode_live_code(raw)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    merchant = db.get(Merchant, account.merchant_id)
+    if not merchant or not merchant.is_active:
+        raise HTTPException(status_code=400, detail="门店已停用，无法核销")
+    raw = body.code.strip()
+    if not looks_like_live_code(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="请使用用户出示的动态券码；永久编号仅用于查询，不能核销",
+        )
+    try:
+        decode_live_code(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     coupon = _resolve_coupon_by_code(db, raw)
     if not coupon:
-        raise HTTPException(status_code=404, detail="券码不存在或动态码已过期")
-    _maybe_expire(coupon)
+        raise HTTPException(status_code=404, detail="券码无效或动态码已过期")
+    _transition_expired(db, coupon)
     db.commit()
     if coupon.merchant_id != account.merchant_id:
         raise HTTPException(status_code=400, detail="该券仅限指定商家核销，非本店券")
@@ -450,23 +469,22 @@ def get_live_code(
     coupon = db.get(CouponInstance, coupon_id)
     if not coupon or coupon.user_id != account.id:
         raise HTTPException(status_code=404, detail="券不存在")
-    _maybe_expire(coupon)
+    _transition_expired(db, coupon)
     db.commit()
     if coupon.status != CouponStatus.unused:
         raise HTTPException(status_code=400, detail=f"当前状态不可出示：{coupon.status.value}")
     live, seconds, exp = create_live_code(
         coupon_id=coupon.id,
         user_id=account.id,
-        permanent_code=coupon.code,
     )
     template = db.get(CouponTemplate, coupon.template_id)
     merchant = db.get(Merchant, coupon.merchant_id)
+    # 响应不再包含永久编号：它不是备用核销凭证，展示只会误导“抄码核销”
     return LiveCodeOut(
         coupon_id=coupon.id,
         live_code=live,
         expires_in=seconds,
         expires_at=exp,
-        permanent_code=coupon.code,
         template_name=template.name if template else None,
         merchant_name=merchant.name if merchant else None,
     )
@@ -575,11 +593,27 @@ def void_coupon(
     coupon = db.get(CouponInstance, coupon_id)
     if not coupon:
         raise HTTPException(status_code=404, detail="券不存在")
-    _maybe_expire(coupon)
+    _transition_expired(db, coupon)
+    db.commit()
+    db.refresh(coupon)
     if coupon.status != CouponStatus.unused:
         raise HTTPException(status_code=400, detail=f"仅未使用的券可作废，当前状态：{coupon.status.value}")
-    coupon.status = CouponStatus.void
-    coupon.void_reason = body.reason
+    # 条件更新限定 unused：与商家核销并发时，作废和核销只有一个能在数据库层成功
+    updated = (
+        db.query(CouponInstance)
+        .filter(CouponInstance.id == coupon_id, CouponInstance.status == CouponStatus.unused)
+        .update(
+            {CouponInstance.status: CouponStatus.void, CouponInstance.void_reason: body.reason},
+            synchronize_session=False,
+        )
+    )
+    if not updated:
+        db.rollback()
+        db.refresh(coupon)
+        raise HTTPException(
+            status_code=400,
+            detail=f"作废失败，券状态已变化（当前：{coupon.status.value}）",
+        )
     write_audit(
         db,
         actor_id=admin.id,
@@ -593,6 +627,53 @@ def void_coupon(
     return coupon_to_out(coupon)
 
 
+def _log_failed_redeem(
+    db: Session,
+    *,
+    merchant_id: str,
+    operator_id: str,
+    coupon: CouponInstance | None,
+    display_code: str,
+    reason: str,
+    message: str,
+) -> None:
+    """失败核销写入独立事务：状态事务回滚后失败证据仍需保留。
+
+    跨店失败（coupon.merchant_id 非本店）不落他店用户标识，
+    避免商家从失败流水枚举他店客户。
+    """
+    same_store = coupon is not None and coupon.merchant_id == merchant_id
+    db.add(
+        RedemptionLog(
+            coupon_id=coupon.id if coupon else None,
+            merchant_id=merchant_id,
+            operator_id=operator_id,
+            user_id=coupon.user_id if same_store else None,
+            code=display_code[:32],
+            result="failed",
+            reason=reason,
+            message=message[:255],
+        )
+    )
+    db.commit()
+
+
+# 稳定失败原因码：前端/报表据此分类，不解析中文 message
+REDEEM_REASON_ALREADY_USED = "already_used"
+REDEEM_REASON_VOIDED = "voided"
+REDEEM_REASON_EXPIRED = "expired"
+REDEEM_REASON_WRONG_MERCHANT = "wrong_merchant"
+REDEEM_REASON_INVALID_LIVE_CODE = "invalid_live_code"
+REDEEM_REASON_STATE_CONFLICT = "state_conflict"
+REDEEM_REASON_MERCHANT_INACTIVE = "merchant_inactive"
+
+_STATUS_REASON = {
+    CouponStatus.used: (REDEEM_REASON_ALREADY_USED, "该券已核销"),
+    CouponStatus.void: (REDEEM_REASON_VOIDED, "该券已作废"),
+    CouponStatus.expired: (REDEEM_REASON_EXPIRED, "该券已过期"),
+}
+
+
 @router.post("/redeem", response_model=RedeemOut)
 def redeem(
     body: RedeemIn,
@@ -600,72 +681,122 @@ def redeem(
     account: Account = Depends(require_roles(Role.merchant)),
 ) -> RedeemOut:
     if not account.merchant_id:
+        # 无绑定门店：无法满足 redemption_logs 的合法外键，走结构化日志留痕
+        logger.warning(
+            "coupon.redeem.rejected",
+            extra={"operator_id": account.id, "reason": "merchant_unbound"},
+        )
         raise HTTPException(status_code=400, detail="商家账号未绑定门店")
+    merchant = db.get(Merchant, account.merchant_id)
+    if not merchant:
+        # 门店记录已缺失：同样无法写核销流水外键，只留结构化日志
+        logger.warning(
+            "coupon.redeem.rejected",
+            extra={
+                "operator_id": account.id,
+                "merchant_id": account.merchant_id,
+                "reason": "merchant_missing",
+            },
+        )
+        raise HTTPException(status_code=400, detail="门店已停用，无法核销")
+    if not merchant.is_active:
+        # 门店存在但停用：拒绝前必须留下可查询的失败流水（审查报告 F05）
+        raw_head = body.code.strip()
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=None,
+            display_code=raw_head[:24] + "..." if looks_like_live_code(raw_head) else raw_head.upper(),
+            reason=REDEEM_REASON_MERCHANT_INACTIVE,
+            message="门店已停用，无法核销",
+        )
+        raise HTTPException(status_code=400, detail="门店已停用，无法核销")
     raw = body.code.strip()
-    display_code = raw.upper() if not looks_like_live_code(raw) else raw[:24] + "..."
-    if looks_like_live_code(raw):
-        try:
-            decode_live_code(raw)
-        except ValueError as exc:
-            db.add(
-                RedemptionLog(
-                    coupon_id=None,
-                    merchant_id=account.merchant_id,
-                    operator_id=account.id,
-                    user_id=None,
-                    code=display_code,
-                    result="failed",
-                    message=str(exc),
-                )
-            )
-            db.commit()
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    display_code = raw[:24] + "..." if looks_like_live_code(raw) else raw.upper()
+    # 日志只保留展示片段，不保存完整动态 token
+
+    if not looks_like_live_code(raw):
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=None,
+            display_code=display_code,
+            reason=REDEEM_REASON_INVALID_LIVE_CODE,
+            message="核销需使用动态券码，永久编号已不能核销",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="核销需使用用户出示的动态券码；永久编号仅用于查询，不能核销",
+        )
+    try:
+        decode_live_code(raw)
+    except ValueError as exc:
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=None,
+            display_code=display_code,
+            reason=REDEEM_REASON_INVALID_LIVE_CODE,
+            message=str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     coupon = _resolve_coupon_by_code(db, raw)
     if not coupon:
-        db.add(
-            RedemptionLog(
-                coupon_id=None,
-                merchant_id=account.merchant_id,
-                operator_id=account.id,
-                user_id=None,
-                code=display_code,
-                result="failed",
-                message="券码不存在或动态码已过期",
-            )
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=None,
+            display_code=display_code,
+            reason=REDEEM_REASON_INVALID_LIVE_CODE,
+            message="券码无效或动态码已过期",
         )
-        db.commit()
-        raise HTTPException(status_code=404, detail="券码不存在或动态码已过期")
-    code = coupon.code
+        raise HTTPException(status_code=404, detail="券码无效或动态码已过期")
 
-    _maybe_expire(coupon)
+    _transition_expired(db, coupon)
+    db.commit()
+    db.refresh(coupon)
+
     if coupon.merchant_id != account.merchant_id:
-        db.add(
-            RedemptionLog(
-                coupon_id=coupon.id,
-                merchant_id=account.merchant_id,
-                operator_id=account.id,
-                user_id=coupon.user_id,
-                code=code,
-                result="failed",
-                message="非本店可用券",
-            )
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=coupon,
+            display_code=display_code,
+            reason=REDEEM_REASON_WRONG_MERCHANT,
+            message="非本店可用券",
         )
-        db.commit()
         raise HTTPException(status_code=400, detail="该券仅限指定商家核销，非本店券")
-    if coupon.status == CouponStatus.used:
-        raise HTTPException(status_code=400, detail="该券已核销")
-    if coupon.status == CouponStatus.void:
-        raise HTTPException(status_code=400, detail="该券已作废")
-    if coupon.status == CouponStatus.expired:
-        raise HTTPException(status_code=400, detail="该券已过期")
     if coupon.status != CouponStatus.unused:
-        raise HTTPException(status_code=400, detail="券状态不可核销")
+        reason, message = _STATUS_REASON.get(
+            coupon.status, (REDEEM_REASON_STATE_CONFLICT, "券状态不可核销")
+        )
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=coupon,
+            display_code=display_code,
+            reason=reason,
+            message=message,
+        )
+        raise HTTPException(status_code=400, detail=message)
 
     now = datetime.now(timezone.utc)
-    # Conditional update for concurrency safety
+    # 条件更新把 unused、有效期一起放进 WHERE：双核销/作废竞争/临界过期
+    # 都由数据库判定，只有一方能成功
     updated = (
         db.query(CouponInstance)
-        .filter(CouponInstance.id == coupon.id, CouponInstance.status == CouponStatus.unused)
+        .filter(
+            CouponInstance.id == coupon.id,
+            CouponInstance.status == CouponStatus.unused,
+            CouponInstance.expires_at > now,
+        )
         .update(
             {
                 CouponInstance.status: CouponStatus.used,
@@ -677,7 +808,22 @@ def redeem(
     )
     if not updated:
         db.rollback()
-        raise HTTPException(status_code=400, detail="核销失败，券可能已被使用")
+        winner = db.get(CouponInstance, coupon.id)
+        reason, message = _STATUS_REASON.get(
+            winner.status, (REDEEM_REASON_STATE_CONFLICT, "核销失败，券状态已变化")
+        )
+        if winner.status == CouponStatus.unused:
+            reason, message = REDEEM_REASON_EXPIRED, "该券已过期，无法核销"
+        _log_failed_redeem(
+            db,
+            merchant_id=account.merchant_id,
+            operator_id=account.id,
+            coupon=winner,
+            display_code=display_code,
+            reason=reason,
+            message=message,
+        )
+        raise HTTPException(status_code=400, detail=message)
 
     db.add(
         RedemptionLog(
@@ -685,8 +831,9 @@ def redeem(
             merchant_id=account.merchant_id,
             operator_id=account.id,
             user_id=coupon.user_id,
-            code=code,
+            code=coupon.code[:32],
             result="success",
+            reason="redeemed",
             message="核销成功",
         )
     )
@@ -696,7 +843,7 @@ def redeem(
         action="redeem_coupon",
         target_type="coupon",
         target_id=coupon.id,
-        detail=code,
+        detail=coupon.code,
     )
     db.commit()
     logger.info(
@@ -768,6 +915,7 @@ def list_redemptions(
                 username=user.username if user else None,
                 code=r.code,
                 result=r.result,
+                reason=r.reason or ("legacy_unknown" if r.result == "failed" else ""),
                 message=r.message,
                 created_at=r.created_at,
             )

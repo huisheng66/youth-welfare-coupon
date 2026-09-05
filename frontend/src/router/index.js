@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useAuth, homePathByRole } from '../auth'
+import { ensureAuthReady, useAuth, homePathByRole } from '../auth'
 import Login from '../views/Login.vue'
 
 // 路由懒加载：按角色拆 chunk，首屏仅加载登录页
@@ -72,8 +72,11 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuth()
+  // 启动先用 /auth/me 恢复登录状态：本地残留账号 + Cookie 已过期时，
+  // 在守卫里完成清理，不让业务页面带着失效会话发起请求
+  await ensureAuthReady()
   if (to.meta.public) {
     if (auth.token && auth.account && to.path === '/login') {
       return homePathByRole(auth.account.role)

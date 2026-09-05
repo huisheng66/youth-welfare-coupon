@@ -44,11 +44,15 @@ sudo apt install -y mysql-server
 sudo mysql < deploy/setup-mysql.sql   # 先改脚本里的密码
 ```
 
-`backend/.env`（生产建议）：
+T09 起账号按职责拆分（均仅 `localhost` 来源，见 `setup-mysql.sql`）：
+`welfare_app`（运行，仅 DML）/ `welfare_migrate`（迁移，仅发布期执行 DDL）/
+`welfare_backup`（备份，只读+锁表）。历史 ALL 权限的 `welfare` 账号在切换后删除。
+
+`backend/.env`（生产建议，DATABASE_URL 使用运行账号 welfare_app）：
 
 ```env
 APP_ENV=production
-DATABASE_URL=mysql+pymysql://welfare:你的密码@127.0.0.1:3306/welfare?charset=utf8mb4
+DATABASE_URL=mysql+pymysql://welfare_app:你的密码@127.0.0.1:3306/welfare?charset=utf8mb4
 SECRET_KEY=请换成 openssl rand -hex 32
 FIELD_ENCRYPTION_KEY=请换成另一串 openssl rand -hex 32
 CORS_ORIGINS=https://你的域名
@@ -121,8 +125,10 @@ curl -s http://127.0.0.1:19001/api/health
 
 | 脚本 | 用途 | 备注 |
 |------|------|------|
-| `install-ubuntu.sh` | Ubuntu 一键部署骨架（MySQL + API + 前端 + Nginx） | 首选入口；支持 `DOMAIN`/`DB_PASS`/`SKIP_FRONTEND_BUILD` 等 |
-| `backup-mysql.sh` | MySQL 每日备份（gzip + .env 副本，按天保留） | cron 安装在 `/etc/cron.d/welfare-backup`；`BACKUP_DIR`/`RETAIN_DAYS` 可覆盖 |
+| `install-ubuntu.sh` | Ubuntu 一键部署骨架（MySQL + API + 前端 + Nginx） | 首选入口；支持 `DOMAIN`/`APP_DB_PASS`/`SKIP_FRONTEND_BUILD` 等；自动拆分三个最小权限数据库账号 |
+| `migrate-release.sh` | 发布期执行 `alembic upgrade head`（迁移账号，worker 启动不执行 DDL） | `MIGRATE_DATABASE_URL` 或离散 `MIGRATE_DB_*` 变量；幂等可重复执行 |
+| `backup-mysql.sh` | MySQL 每日备份（备份账号；先写临时文件，gzip+内容校验通过后原子发布，按天保留） | cron 安装在 `/etc/cron.d/welfare-backup` 并注入 `BACKUP_DATABASE_URL`；`BACKUP_DIR`/`RETAIN_DAYS` 可覆盖 |
+| `restore-mysql.sh` | 恢复指定备份到隔离库并校验（业务表数、余额=账本、券状态分布） | `bash deploy/restore-mysql.sh <dump.sql.gz> <目标库> <URL>`；任何对账不一致退出码非 0 |
 | `remote-deploy.sh` | 服务器端解压 + 调用 `install-ubuntu.sh` | 由 `run-on-server.sh` / `run-on-public.sh` 触发 |
 | `run-on-server.sh` | 内网机部署封装 | 配合 `pack-and-upload.sh` |
 | `run-on-public.sh` | 公网机 root 部署封装 | 配合 `pack-and-upload-public.sh` |
@@ -178,7 +184,8 @@ curl -s http://127.0.0.1:19001/api/health
 
 `install-ubuntu.sh` 会安装 cron（每日 03:17）执行 `deploy/backup-mysql.sh`：
 
-- 备份内容：`mysqldump --single-transaction` 全库 gzip + `backend/.env` 副本（字段加密钥 `FIELD_ENCRYPTION_KEY` 必须随库备份，否则银行卡密文不可解密）
+- 备份内容：`mysqldump --single-transaction --no-tablespaces` 全库 gzip + `backend/.env` 副本（字段加密钥 `FIELD_ENCRYPTION_KEY` 必须随库备份，否则银行卡密文不可解密）
+- 失败保护：先写临时文件，gzip 完整性与转储内容校验通过后才原子改名发布；校验失败不发布、不触发保留期清理，退出码非 0
 - 位置：`/opt/welfare/backups/`，默认保留 14 天（`RETAIN_DAYS` 可覆盖）
 - 日志：`/var/log/welfare-backup.log`
 - 手动执行：`bash /opt/welfare/deploy/backup-mysql.sh`
@@ -189,8 +196,9 @@ curl -s http://127.0.0.1:19001/api/health
 # 1. 安装骨架（或已有环境跳过）；解压备份
 gunzip welfare-YYYYMMDD-HHMMSS.sql.gz
 
-# 2. 恢复数据库（注意字符集）
-mysql -u welfare -p welfare < welfare-YYYYMMDD-HHMMSS.sql
+# 2. 恢复数据库到隔离空库并自动校验（推荐）
+bash deploy/restore-mysql.sh welfare-YYYYMMDD-HHMMSS.sql.gz welfare_restore   'mysql+pymysql://root:密码@127.0.0.1:3306/welfare_restore?charset=utf8mb4'
+# 校验 PASS 后再切换应用连接；手工恢复可用 mysql -u root -p welfare < welfare-*.sql
 
 # 3. 恢复 .env（先 diff 现有 .env，仅当加密钥丢失/回滚时覆盖）
 cp env-YYYYMMDD-HHMMSS.txt /opt/welfare/backend/.env && chmod 640 /opt/welfare/backend/.env
@@ -200,7 +208,7 @@ systemctl restart welfare-api
 curl -s http://127.0.0.1:19001/api/health
 ```
 
-> 恢复演练：建议每季度在测试机走一遍上述流程；`.env` 与数据库必须成对恢复，单换其一会导致加密字段不可读或密钥错配。
+> 恢复演练：建议每季度在测试机用 `deploy/restore-mysql.sh` 走一遍上述流程（2026-09-05 已在临时 MySQL 8.4 实例完成备份→恢复→对账 PASS 演练，见 log.md）；`.env` 与数据库必须成对恢复，单换其一会导致加密字段不可读或密钥错配。
 
 ## 凭据注入与轮换（2026-08）
 

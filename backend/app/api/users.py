@@ -183,10 +183,38 @@ def update_my_profile(
         if exists:
             raise HTTPException(status_code=400, detail="手机号已被占用")
         account.phone = body.phone
-    profile.real_name = body.real_name
-    profile.student_no = (body.student_no or "").strip()
-    profile.organization = body.organization
-    profile.remark = body.remark
+    identity_updates = {
+        field: value
+        for field, value in {
+            "real_name": body.real_name,
+            "student_no": body.student_no,
+            "organization": body.organization,
+        }.items()
+        if value is not None
+    }
+    identity_changed = any(getattr(profile, field) != value for field, value in identity_updates.items())
+    for field, value in identity_updates.items():
+        setattr(profile, field, value.strip())
+    if body.remark is not None:
+        profile.remark = body.remark
+    if identity_changed and profile.verify_status == VerifyStatus.approved:
+        # 已核验身份资料变更后立即暂停资格，并自动生成待审记录，避免绕过复核继续发券/兑换。
+        profile.verify_status = VerifyStatus.pending
+        db.add(
+            UserVerification(
+                profile_id=profile.id,
+                material_note="已核验身份资料发生变更，需重新审核",
+                status=VerifyStatus.pending,
+            )
+        )
+        write_audit(
+            db,
+            actor_id=account.id,
+            action="profile_change_requires_review",
+            target_type="profile",
+            target_id=profile.id,
+            detail="verified identity fields changed",
+        )
     db.commit()
     return my_profile(account, db)
 

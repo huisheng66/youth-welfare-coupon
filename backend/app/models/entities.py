@@ -63,6 +63,8 @@ class Account(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # 统一初始密码/管理员重置后须强制改密（导入用户、重置密码、新建管理账号）
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 密码变更时递增；JWT 携带签发版本以立即废止该账号的旧会话。
+    session_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     merchant_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("merchants.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -188,6 +190,9 @@ class RedemptionLog(Base):
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id"), nullable=True)
     code: Mapped[str] = mapped_column(String(32))
     result: Mapped[str] = mapped_column(String(32), default="success")
+    # 稳定失败原因码（already_used / voided / expired / wrong_merchant / ...），
+    # 成功记录为 redeemed；历史失败行 reason 为空视为 legacy_unknown
+    reason: Mapped[str] = mapped_column(String(32), default="")
     message: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -247,7 +252,8 @@ class EmailCode(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(128), index=True)
-    code: Mapped[str] = mapped_column(String(16))
+    # 存 HMAC-SHA256 摘要（64 字符），不再是验证码明文；历史明文行迁移后兼容读取
+    code: Mapped[str] = mapped_column(String(128))
     purpose: Mapped[EmailCodePurpose] = mapped_column(_str_enum(EmailCodePurpose), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

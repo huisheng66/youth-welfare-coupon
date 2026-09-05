@@ -12,7 +12,7 @@ from tests._helpers import TempApp, reset_env_defaults
 
 
 def _first_coupon_of(ta: TempApp, username: str = "youth1") -> tuple[str, str]:
-    """返回 (coupon_id, permanent_code)。"""
+    """返回 (coupon_id, permanent_code)。permanent_code 仅作业务查询编号。"""
     with ta.session() as db:
         from app.models.entities import Account, CouponInstance, CouponStatus
 
@@ -44,15 +44,14 @@ class TestLiveCode(unittest.TestCase):
                 from app.models.entities import Account
 
                 uid = db.query(Account).filter(Account.username == "youth1").one().id
-            live, seconds, exp = create_live_code(
-                coupon_id=cid, user_id=uid, permanent_code=code
-            )
+            live, seconds, exp = create_live_code(coupon_id=cid, user_id=uid)
             self.assertGreater(seconds, 0)
             payload = decode_live_code(live)
             self.assertEqual(payload["cid"], cid)
             self.assertEqual(payload["uid"], uid)
-            self.assertEqual(payload["code"], code)
             self.assertEqual(payload["typ"], "live_coupon")
+            # T01：动态码载荷不再携带永久券码
+            self.assertNotIn("code", payload)
 
     def test_decode_tampered_signature_fails(self) -> None:
         from app.services.live_code import create_live_code, decode_live_code
@@ -63,9 +62,7 @@ class TestLiveCode(unittest.TestCase):
                 from app.models.entities import Account
 
                 uid = db.query(Account).filter(Account.username == "youth1").one().id
-            live, _, _ = create_live_code(
-                coupon_id=cid, user_id=uid, permanent_code=code
-            )
+            live, _, _ = create_live_code(coupon_id=cid, user_id=uid)
             # 篡改签名段（最后一段）
             parts = live.split(".")
             tampered = parts[0] + "." + parts[1] + ".AAAA" + parts[2][4:]
@@ -73,7 +70,7 @@ class TestLiveCode(unittest.TestCase):
                 decode_live_code(tampered)
 
     def test_decode_foreign_token_with_wrong_typ_fails(self) -> None:
-        """用一个普通 access_token（typ 非 live_coupon）应被拒绝。"""
+        """用一个普通 access_token（typ 非 live_coupon / 缺必要 claim）应被拒绝。"""
         from app.core.security import create_access_token
         from app.services.live_code import decode_live_code
 
@@ -81,7 +78,12 @@ class TestLiveCode(unittest.TestCase):
             foreign = create_access_token("some-user", {"role": "user"})
             with self.assertRaises(ValueError) as ctx:
                 decode_live_code(foreign)
-            self.assertIn("不是有效的动态券码", str(ctx.exception))
+            # 缺 claim 与 typ 不符都可能先触发，两种拒绝文案都成立
+            self.assertTrue(
+                "不是有效的动态券码" in str(ctx.exception)
+                or "动态券码无效或已过期" in str(ctx.exception),
+                str(ctx.exception),
+            )
 
     def test_looks_like_live_code(self) -> None:
         from app.services.live_code import looks_like_live_code
@@ -109,10 +111,10 @@ class TestLiveCode(unittest.TestCase):
                 live_code = r.json()["live_code"]
                 self.assertTrue(live_code)
                 # 商家预览动态码（不改变状态）
-                r2 = c.get(
+                r2 = c.post(
                     "/api/coupons/preview",
                     headers=ta.bearer(m_token),
-                    params={"code": live_code},
+                    json={"code": live_code},
                 )
                 self.assertEqual(r2.status_code, 200, r2.text)
                 self.assertEqual(r2.json()["status"], "unused")
@@ -175,10 +177,10 @@ class TestLiveCode(unittest.TestCase):
                 self.assertEqual(r.status_code, 200, r.text)
                 live_code = r.json()["live_code"]
                 # merchant2 预览 merchant1 店的券
-                r2 = c.get(
+                r2 = c.post(
                     "/api/coupons/preview",
                     headers=ta.bearer(m2_token),
-                    params={"code": live_code},
+                    json={"code": live_code},
                 )
                 self.assertEqual(r2.status_code, 400, r2.text)
                 self.assertIn("非本店", r2.json()["detail"])
