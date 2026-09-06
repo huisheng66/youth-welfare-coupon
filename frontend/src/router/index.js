@@ -44,8 +44,8 @@ const router = createRouter({
         { path: 'coupons', component: Coupons, meta: { title: '券列表' } },
         { path: 'redemptions', component: Redemptions, meta: { title: '核销流水' } },
         { path: 'points', component: AdminPoints, meta: { title: '志愿时长' } },
-        { path: 'audit', component: AuditLogs, meta: { title: '审计日志' } },
-        { path: 'accounts', component: Accounts, meta: { title: '账号管理' } },
+        { path: 'audit', component: AuditLogs, meta: { title: '审计日志', roles: ['super_admin'] } },
+        { path: 'accounts', component: Accounts, meta: { title: '账号管理', roles: ['super_admin'] } },
         { path: 'settings', component: Settings, meta: { title: '账号设置' } },
       ],
     },
@@ -89,7 +89,9 @@ router.beforeEach(async (to) => {
   if (!auth.token || !auth.account) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  const roles = to.matched.find((r) => r.meta.roles)?.meta.roles
+  // 取最深一层声明了 roles 的记录：子路由可收窄父级（如 /admin/accounts 仅超管，
+  // 与菜单 superOnly 隐藏、后端 require_roles 三层一致）
+  const roles = [...to.matched].reverse().find((r) => r.meta?.roles)?.meta?.roles
   if (roles && !roles.includes(auth.account.role)) {
     return homePathByRole(auth.account.role)
   }

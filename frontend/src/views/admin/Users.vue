@@ -277,12 +277,14 @@
       </el-form>
       <template #footer>
         <el-button @click="issueVisible = false">取消</el-button>
-        <el-button type="primary" @click="doIssue">确认发券</el-button>
+        <el-button type="primary" :loading="issuing" @click="doIssue">确认发券</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="batchIssueVisible" title="批量发券" width="520px">
-      <p class="muted">已选已通过用户 {{ selectedApproved.length }} 人</p>
+      <p class="muted">
+        当前页已选已通过用户 {{ selectedApproved.length }} 人（仅作用于当前页选中项，不含其它页）
+      </p>
       <el-form label-width="90px" style="margin-top:12px">
         <el-form-item label="券模板">
           <el-select v-model="issueForm.template_id" style="width:100%" filterable>
@@ -300,7 +302,7 @@
       </el-form>
       <template #footer>
         <el-button @click="batchIssueVisible = false">取消</el-button>
-        <el-button type="primary" @click="doBatchIssue">确认批量发券</el-button>
+        <el-button type="primary" :loading="batchIssuing" @click="doBatchIssue">确认批量发券</el-button>
       </template>
     </el-dialog>
 
@@ -338,6 +340,8 @@ const issueForm = reactive({ template_id: '', quantity: 1 })
 // 发券/导入的幂等键：同一操作意图（弹窗会话）复用，重新打开弹窗生成新 key
 const issueKey = ref('')
 const batchIssueKey = ref('')
+const issuing = ref(false)
+const batchIssuing = ref(false)
 const pendingMap = ref({})
 const pendingList = ref([])
 const selected = ref([])
@@ -420,8 +424,12 @@ function onFilter() {
 }
 
 async function onExportUsers() {
-  const qs = status.value ? `?verify_status=${status.value}` : ''
-  await downloadFile(`/export/users${qs}`, 'users.csv')
+  // 导出与列表筛选条件一致（T17 条款 3）
+  const params = new URLSearchParams()
+  if (status.value) params.set('verify_status', status.value)
+  if (q.value.trim()) params.set('q', q.value.trim())
+  const qs = params.toString()
+  await downloadFile(`/export/users${qs ? `?${qs}` : ''}`, 'users.csv')
   ElMessage.success('已开始下载')
 }
 
@@ -575,27 +583,33 @@ async function doIssue() {
     ElMessage.warning('请选择模板')
     return
   }
+  if (issuing.value) return
   const t = templates.value.find((x) => x.id === issueForm.template_id)
   try {
     await ElMessageBox.confirm(
-      `向「${current.value?.username}」发放 ${issueForm.quantity} 张「${t?.name || '券'}」？`,
+      `向「${current.value?.username}」发放 ${issueForm.quantity} 张「${t?.name || '券'}」（${t?.merchant_name || '指定商家'}）？`,
       '确认发券',
       { type: 'warning' },
     )
   } catch {
     return
   }
-  await api.post(
-    '/coupons/issue',
-    {
-      user_id: current.value.id,
-      template_id: issueForm.template_id,
-      quantity: issueForm.quantity,
-    },
-    { headers: idempotencyHeader(issueKey.value) },
-  )
-  ElMessage.success('发券成功')
-  issueVisible.value = false
+  issuing.value = true
+  try {
+    await api.post(
+      '/coupons/issue',
+      {
+        user_id: current.value.id,
+        template_id: issueForm.template_id,
+        quantity: issueForm.quantity,
+      },
+      { headers: idempotencyHeader(issueKey.value) },
+    )
+    ElMessage.success('发券成功')
+    issueVisible.value = false
+  } finally {
+    issuing.value = false
+  }
 }
 
 function openBatchIssue() {
@@ -610,30 +624,50 @@ async function doBatchIssue() {
     ElMessage.warning('请选择模板')
     return
   }
+  if (batchIssuing.value) return
   const n = selectedApproved.value.length
+  const t = templates.value.find((x) => x.id === issueForm.template_id)
   const totalQty = n * issueForm.quantity
   try {
     await ElMessageBox.confirm(
-      `向 ${n} 人各发 ${issueForm.quantity} 张，共约 ${totalQty} 张券，确认？`,
+      `向 ${n} 人各发 ${issueForm.quantity} 张「${t?.name || '券'}」（${t?.merchant_name || '指定商家'}），共约 ${totalQty} 张，确认？`,
       '批量发券确认',
       { type: 'warning' },
     )
   } catch {
     return
   }
-  const res = await api.post(
-    '/coupons/issue-batch',
-    {
-      user_ids: selectedApproved.value.map((u) => u.id),
-      template_id: issueForm.template_id,
-      quantity: issueForm.quantity,
-    },
-    { headers: idempotencyHeader(batchIssueKey.value) },
-  )
-  const ok = res.data.issued?.length || 0
-  const fail = res.data.failed?.length || 0
-  ElMessage.success(`批量完成：生成 ${ok} 张券，失败 ${fail} 人`)
-  batchIssueVisible.value = false
+  batchIssuing.value = true
+  try {
+    const res = await api.post(
+      '/coupons/issue-batch',
+      {
+        user_ids: selectedApproved.value.map((u) => u.id),
+        template_id: issueForm.template_id,
+        quantity: issueForm.quantity,
+      },
+      { headers: idempotencyHeader(batchIssueKey.value) },
+    )
+    const ok = res.data.issued?.length || 0
+    const failed = res.data.failed || []
+    if (failed.length) {
+      // 部分成功：列出失败对象，保留当前选择便于继续处理（T17 条款 1/验收）
+      const detail = failed
+        .slice(0, 5)
+        .map((f) => `${f.username || f.user_id?.slice(0, 8) || '?'}（${f.reason || '未知原因'}）`)
+        .join('、')
+      ElMessageBox.alert(
+        `成功 ${ok} 人；失败 ${failed.length} 人${detail ? `：${detail}${failed.length > 5 ? ' 等' : ''}` : ''}。失败用户仍处于选中状态，可排除后重试。`,
+        '部分成功',
+        { type: 'warning', confirmButtonText: '知道了' },
+      ).catch(() => {})
+    } else {
+      ElMessage.success(`批量完成：已向 ${ok} 人发券`)
+      batchIssueVisible.value = false
+    }
+  } finally {
+    batchIssuing.value = false
+  }
 }
 
 // ---- 统一导入（T14：预检 → 确认执行 → 逐行结果，见 ImportWizard）----

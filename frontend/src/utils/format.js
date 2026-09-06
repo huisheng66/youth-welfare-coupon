@@ -59,5 +59,6 @@ export function formatHours(v) {
   if (v === null || v === undefined || v === '') return '-'
   const n = Number(v)
   if (!Number.isFinite(n)) return String(v)
-  return String(Math.round(n * 100) / 100)
+  // T17：所有时长展示统一两位小数（服务端 Decimal 才是精确值，前端不做余额运算）
+  return n.toFixed(2)
 }

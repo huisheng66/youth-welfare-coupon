@@ -161,9 +161,14 @@ async function grant() {
   }
   const amt = Math.round(Number(form.amount) * 100) / 100
   const sign = amt > 0 ? `+${formatHours(amt)}` : formatHours(amt)
+  const names = form.user_ids
+    .slice(0, 5)
+    .map((id) => userMap.value[id]?.split(' / ')[0] || id.slice(0, 8))
+    .join('、')
+  const more = form.user_ids.length > 5 ? ` 等 ${form.user_ids.length} 人` : ''
   try {
     await ElMessageBox.confirm(
-      `对 ${form.user_ids.length} 人调整 ${sign} 小时，确认？`,
+      `对 ${names}${more} 调整 ${sign} 小时，说明「${form.reason.trim()}」，确认？`,
       '时长调整确认',
       { type: 'warning' },
     )

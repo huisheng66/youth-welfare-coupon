@@ -180,6 +180,7 @@ def export_coupons(
 @router.get("/users")
 def export_users(
     verify_status: VerifyStatus | None = Query(default=None),
+    q: str | None = Query(default=None, description="与 /users 列表相同的搜索条件"),
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> StreamingResponse:
@@ -192,6 +193,15 @@ def export_users(
     )
     if verify_status:
         query = query.filter(UserProfile.verify_status == verify_status)
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            (Account.username.ilike(like))
+            | (Account.display_name.ilike(like))
+            | (Account.phone.ilike(like))
+            | (UserProfile.real_name.ilike(like))
+            | (UserProfile.student_no.ilike(like))
+        )
     accounts = query.limit(EXPORT_LIMIT).all()
     out: list[list] = [
         ["用户名", "昵称", "手机", "姓名", "学号", "组织", "核验状态", "银行卡脱敏", "开户行", "注册时间", "备注"]

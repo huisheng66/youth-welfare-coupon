@@ -529,3 +529,36 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+    # ---- T17：超管专用页面权限与导出筛选一致性 ----
+    def test_issue_admin_cannot_access_super_only_apis(self) -> None:
+        """菜单隐藏不够：/auth/accounts 与 /audit-logs 后端仅超管（对应前端路由 roles）。"""
+        with TempApp() as ta:
+            issuer = ta.login("issuer", "issuer123")
+            with ta.client() as c:
+                for path in ("/api/auth/accounts", "/api/audit-logs"):
+                    r = c.get(path, headers=ta.bearer(issuer))
+                    self.assertEqual(r.status_code, 403, f"{path}: {r.text}")
+
+    def test_export_users_respects_search_filter(self) -> None:
+        """导出与列表筛选条件一致：q 搜索在导出生效（T17 条款 3）。"""
+        with TempApp() as ta:
+            admin = ta.login("admin", "admin123")
+            with ta.client() as c:
+                r_all = c.get("/api/export/users", headers=ta.bearer(admin))
+                self.assertEqual(r_all.status_code, 200, r_all.text)
+                # youth1 在种子数据中存在；按其用户名过滤后仍包含，按不存在用户过滤则为空
+                r_hit = c.get(
+                    "/api/export/users",
+                    headers=ta.bearer(admin),
+                    params={"q": "youth1"},
+                )
+                self.assertEqual(r_hit.status_code, 200, r_hit.text)
+                self.assertIn("youth1", r_hit.text)
+                r_miss = c.get(
+                    "/api/export/users",
+                    headers=ta.bearer(admin),
+                    params={"q": "no-such-user-xyz"},
+                )
+                self.assertEqual(r_miss.status_code, 200)
+                self.assertNotIn("youth1", r_miss.text)

@@ -57,7 +57,15 @@
       </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button link type="danger" :disabled="row.status !== 'unused'" @click="voidCoupon(row)">作废</el-button>
+          <el-button
+            link
+            type="danger"
+            :loading="voidingId === row.id"
+            :disabled="row.status !== 'unused'"
+            @click="voidCoupon(row)"
+          >
+            作废
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -131,16 +139,28 @@ async function onExport() {
   ElMessage.success('已开始下载')
 }
 
+const voidingId = ref('')
+
 async function voidCoupon(row) {
-  const { value } = await ElMessageBox.prompt('请输入作废原因（可选）', '作废优惠券', {
-    inputPlaceholder: '原因',
-    confirmButtonText: '作废',
-    cancelButtonText: '取消',
-  }).catch(() => ({ value: null }))
+  // 确认包含对象/商家/影响（T17 条款 4）；后端条件更新天然幂等，UI 层加 loading 防重
+  const { value } = await ElMessageBox.prompt(
+    `将作废「${row.template_name || '优惠券'}」（${row.merchant_name || '指定商家'} · 用户 ${row.username || '-'}），作废后用户不可出示。请输入原因（可选）：`,
+    '作废优惠券',
+    {
+      inputPlaceholder: '原因',
+      confirmButtonText: '作废',
+      cancelButtonText: '取消',
+    },
+  ).catch(() => ({ value: null }))
   if (value === null) return
-  await api.post(`/coupons/instances/${row.id}/void`, { reason: value || '' })
-  ElMessage.success('已作废')
-  load()
+  voidingId.value = row.id
+  try {
+    await api.post(`/coupons/instances/${row.id}/void`, { reason: value || '' })
+    ElMessage.success('已作废')
+    load()
+  } finally {
+    voidingId.value = ''
+  }
 }
 
 onMounted(async () => {

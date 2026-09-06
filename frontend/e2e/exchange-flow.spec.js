@@ -10,7 +10,7 @@ test('青年用户用时长相换券：确认弹窗、余额扣减、券出现�
 
   const before = await listMyCoupons(page, 'unused')
   const balanceBox = page.locator('.value').first()
-  await expect(balanceBox).toHaveText(/^10$/)
+  await expect(balanceBox).toHaveText(/^10\.00$/)
 
   await page.getByRole('button', { name: '兑换', exact: true }).first().click()
   // ElMessageBox 确认文案包含券名与消耗时长
@@ -23,7 +23,7 @@ test('青年用户用时长相换券：确认弹窗、余额扣减、券出现�
   await expect(askBox.getByText(/是否立即出示动态券码/)).toBeVisible()
   await askBox.getByRole('button', { name: '稍后再说' }).click()
 
-  await expect(balanceBox).toHaveText(/^8$/, { timeout: 15_000 })
+  await expect(balanceBox).toHaveText(/^8\.00$/, { timeout: 15_000 })
   const after = await listMyCoupons(page, 'unused')
   expect(after.length).toBe(before.length + 1)
 })
