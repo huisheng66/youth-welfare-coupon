@@ -35,7 +35,18 @@ echo "    output:    $OUTPUT"
 echo
 
 # -j：JSON Lines 输出；-o：写文件；-silent：只输出结果不打印 banner
-nuclei -t "$TEMPLATES" -u "$TARGET" -j -o "$OUTPUT" -silent || true
+# T19：扫描器失败 ≠ 无发现——非零退出且无结果文件时以错误退出，不得当作“无风险”
+set +e
+nuclei -t "$TEMPLATES" -u "$TARGET" -j -o "$OUTPUT" -silent
+code=$?
+set -e
+if [ "$code" -ne 0 ] && [ ! -s "$OUTPUT" ]; then
+  echo "==> nuclei scan FAILED (exit $code), no result file — treat as failure, not 'no findings'" >&2
+  exit 3
+fi
+if [ "$code" -ne 0 ]; then
+  echo "==> warning: nuclei exit $code but result file exists; judging by findings" >&2
+fi
 
 if [ -s "$OUTPUT" ]; then
   echo
@@ -47,5 +58,5 @@ if [ -s "$OUTPUT" ]; then
   # 非零退出码便于 CI 卡门禁（staging 应 0 高危）
   exit 1
 else
-  echo "==> no findings, all clear"
+  echo "==> scan completed: no findings, all clear"
 fi

@@ -14,6 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.request import urlopen
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -118,6 +119,14 @@ def forge_hs256_empty_sig(sub: str) -> str:
 def main() -> int:
     rep = Report()
     print(f"[*] Target: {BASE}")
+    # T19：目标不可用显式失败（exit 2），不得当作“无风险”
+    try:
+        health = urlopen(f"{BASE}/health", timeout=5)
+        if health.status != 200:
+            raise RuntimeError(f"health {health.status}")
+    except Exception as exc:
+        print(f"API 不可用，中止：{exc}")
+        return 2
     print("[*] Logging in roles...")
 
     try:

@@ -21,6 +21,7 @@ Write-Host "==> Target: $Target"
 Write-Host "==> Reports: $Out"
 
 # --- Built-in business audits ---
+$script:FailedSteps = @()
 if (-not $SkipBuiltin) {
   $py = Join-Path $Root "backend\.venv\Scripts\python.exe"
   if (-not (Test-Path $py)) { $py = "python" }
@@ -29,8 +30,11 @@ if (-not $SkipBuiltin) {
   Push-Location (Join-Path $Root "backend")
   try {
     & $py scripts\security_audit.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_$Stamp.log")
+    if ($LASTEXITCODE -ne 0) { $script:FailedSteps += "security_audit (exit $LASTEXITCODE)" }
     & $py scripts\security_audit_extra.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_extra_$Stamp.log")
+    if ($LASTEXITCODE -ne 0) { $script:FailedSteps += "security_audit_extra (exit $LASTEXITCODE)" }
     & $py scripts\security_audit_authz.py 2>&1 | Tee-Object (Join-Path $Out "security_audit_authz_$Stamp.log")
+    if ($LASTEXITCODE -ne 0) { $script:FailedSteps += "security_audit_authz (exit $LASTEXITCODE)" }
   } finally {
     Pop-Location
   }
@@ -152,3 +156,11 @@ if (-not $SkipSqlmap) {
 Write-Host ""
 Write-Host "Done. See docs/security-tools.md for more GitHub scanners."
 Write-Host "ZAP: .\scripts\zap-baseline.ps1 -Target $Target  (needs Docker)"
+
+# T19：汇总失败步骤——有失败时整体退出非零，不掩盖发现的问题
+if ($script:FailedSteps.Count -gt 0) {
+  Write-Host ""
+  Write-Host "FAILED steps:" -ForegroundColor Red
+  $script:FailedSteps | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+  exit 1
+}

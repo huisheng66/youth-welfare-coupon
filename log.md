@@ -547,3 +547,22 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
   划日与日期区间边界。
 - `pytest tests/ -q`：189 passed，18 skipped；`npm run build` 通过；
   E2E 12 用例全绿；密钥扫描退出 0。
+
+## 2026-09-06（第十二批：T19 Nuclei 与扫描脚本错误语义）
+
+### T19（剩余）：区分「未运行 / 扫描失败 / 无发现 / 有发现」
+
+- `scripts/run-nuclei.sh`：移除 `|| true`——扫描器非零退出且无结果文件时
+  以 exit 3 报「扫描失败」，不当作无风险；有结果文件时按结果判定。
+- CI `nuclei-scan` job：目标未配置时输出 `::notice` 明确"本次跳过"（不代表
+  无风险）并跳过后续步骤；容器非零退出且无输出时 `::error` 让 job 失败；
+  上传报告步骤与扫描执行同步条件化。
+- `security_audit_extra.py` / `security_audit_authz.py`：补 API 可用性预检，
+  不可用时 exit 2（与主脚本一致）——实测当前环境（无 API）正确退出 2。
+- `scripts/external_scan.ps1`：逐项收集三审计脚本退出码，任一失败时汇总
+  失败步骤并整体 exit 1，不掩盖发现的问题。
+
+**验证**
+
+- `bash -n run-nuclei.sh`、workflow YAML 解析、审计脚本 AST 检查通过；
+  API 不可用场景实测 exit 2；密钥扫描退出 0。

@@ -5,6 +5,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.request import urlopen
 
 BASE = "http://127.0.0.1:19001/api"
 
@@ -35,6 +36,14 @@ def login(u, p):
 
 
 def main():
+    # T19：目标不可用必须显式失败（exit 2），不得当作“无风险”
+    try:
+        health = urlopen(f"{BASE}/health", timeout=5)
+        if health.status != 200:
+            raise RuntimeError(f"health {health.status}")
+    except Exception as exc:
+        print(f"API 不可用，中止：{exc}")
+        return 2
     youth = login("youth1", "youth123")
     admin = login("admin", "admin123")
     merchant = login("merchant1", "merchant123")

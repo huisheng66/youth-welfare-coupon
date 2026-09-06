@@ -172,6 +172,7 @@ jobs:
   # Nuclei with youth-owned templates (auth-401 / login-sqli / role-idor).
   # Manual: trigger after staging is up; set repo variable NUCLEI_TARGET.
   # Local equivalent: bash scripts/run-nuclei.sh <staging-url>
+  # T19：明确区分四种结果——目标未配置（跳过）/ 扫描失败（job 失败）/ 无发现（通过）/ 有发现（job 失败）
   nuclei-scan:
     name: Nuclei (manual)
     if: github.event_name == 'workflow_dispatch'
@@ -179,25 +180,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check target
+        id: target
         env:
           TARGET: ${{ vars.NUCLEI_TARGET }}
         run: |
           if [ -z "$TARGET" ]; then
-            echo "Set repository variable NUCLEI_TARGET to staging URL, or skip this job."
+            echo "::notice::NUCLEI_TARGET 未配置——本次运行明确跳过外部扫描（不代表无风险）"
             echo "Local: bash scripts/run-nuclei.sh <target>"
-            exit 0
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Run nuclei with youth templates
+        if: steps.target.outputs.skip != 'true'
         env:
           TARGET: ${{ vars.NUCLEI_TARGET }}
         run: |
           mkdir -p reports
+          set +e
           docker run --rm \
             -v "$(pwd)/tools/nuclei-templates:/templates:ro" \
             -v "$(pwd)/reports:/out:rw" \
             projectdiscovery/nuclei:latest \
-            -t /templates -u "$TARGET" -j -o /out/nuclei.jsonl -silent || true
+            -t /templates -u "$TARGET" -j -o /out/nuclei.jsonl -silent
+          code=$?
+          set -e
+          # 扫描器自身失败 ≠ 无发现：容器非零退出且无输出文件时必须让 job 失败
+          if [ "$code" -ne 0 ] && [ ! -s reports/nuclei.jsonl ]; then
+            echo "::error::nuclei 扫描失败（exit $code）且无结果文件——不能视为无风险"
+            exit 1
+          fi
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::nuclei exit $code，但已有结果文件，按结果判定"
+          fi
       - name: Check findings
+        if: steps.target.outputs.skip != 'true'
         run: |
           if [ -s reports/nuclei.jsonl ]; then
             echo "==> findings:"
@@ -206,10 +223,10 @@ jobs:
             echo "==> $(wc -l < reports/nuclei.jsonl) finding(s) — investigate before release"
             exit 1
           else
-            echo "==> no findings, all clear"
+            echo "==> scan completed: no findings, all clear"
           fi
       - name: Upload report
-        if: hashFiles('reports/nuclei.jsonl') != ''
+        if: steps.target.outputs.skip != 'true' && hashFiles('reports/nuclei.jsonl') != ''
         uses: actions/upload-artifact@v4
         with:
           name: nuclei-report
