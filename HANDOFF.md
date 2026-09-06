@@ -1,11 +1,11 @@
 # 安全加固交接
 
-更新时间：2026-09-06（第十二批：T19 Nuclei 错误语义）
+更新时间：2026-09-06（第十三批：T22 健康与指标）
 
 ## 已完成
 
-`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-06 第十二批，
-`docs/开发计划.md` 中的 T00–T19（Nuclei 部分）、T20、T21（部分）已实施：
+`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-06 第十三批，
+`docs/开发计划.md` 中的 T00–T22、T21（部分）已实施，仅余 T23：
 
 1. 生产环境不返回邮箱验证码。
 2. 后端强制首次改密。
@@ -77,6 +77,15 @@
     /coupons/my 升级 Page{total,items} 分页（前后端同批），待办 limit；
     services/biztime.py 统一 Asia/Shanghai 划日（仪表盘今日 + 导出区间）；
     构建分析入口 npm run analyze（两种写法兼容）。
+35. T19 剩余项（Nuclei 错误语义）：run-nuclei.sh 去 `|| true`（扫描失败
+    exit 3 ≠ 无发现）；CI nuclei-scan 未配置目标输出明确跳过、扫描器失败
+    让 job 失败；extra/authz 审计脚本补 API 可用性预检（exit 2）；
+    external_scan.ps1 逐步收集退出码并汇总失败。
+36. T22 健康、指标与告警：GET /api/ready（数据库连通 + schema 版本一致才
+    就绪，503=未就绪）；GET /api/metrics（仅超管：请求量/5xx/耗时分桶/
+    核销原因分布/outbox 积压/最近备份）；services/metrics.py 进程内聚合，
+    核销埋点关联 request_id；backup-mysql.sh 成败均写状态文件；
+    liveness /api/health 保持轻量。
 
 ### E2E 运行方式
 
@@ -111,7 +120,8 @@ SQLite 回归全量 184 passed，18 skipped（本机未跑 MySQL，CI 真实运�
 
 按 `docs/开发计划.md` 第 12 节检查表推进：
 
-1. T22 健康、指标和告警、T23 发布验收包与文档交接。
+1. T23 发布验收包与文档交接（README/PRODUCT 同步、版本与迁移 head、风险说明、回退路径；
+   staging 完整角色验收属运维动作）。
 2. 独立运维动作（不随代码走）：历史泄漏凭据的轮换证据收集、生产服务器实际状态核实、
    季度恢复演练（首次已演练，见 log.md 2026-09-05）。
 

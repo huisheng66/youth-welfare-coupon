@@ -11,6 +11,15 @@
 # - 校验失败不发布、不触发保留期清理，退出码非 0 让 cron 日志可见。
 set -euo pipefail
 
+# T22：失败也写状态文件（/api/metrics 可见），再退出非零
+record_failure() {
+  local reason="$1"
+  local dir="${BACKUP_DIR:-${APP_ROOT:-/opt/welfare}/backups}"
+  mkdir -p "$dir"
+  printf '{"ok": false, "at": "%s", "error": "%s"}\n' "$(date -Iseconds)" "$reason" > "${dir}/last-backup-status.json"
+}
+trap 'record_failure "脚本异常退出"' ERR
+
 APP_ROOT="${APP_ROOT:-/opt/welfare}"
 BACKUP_DIR="${BACKUP_DIR:-${APP_ROOT}/backups}"
 RETAIN_DAYS="${RETAIN_DAYS:-14}"
@@ -102,6 +111,13 @@ fi
 
 SIZE_SQL="$(du -h "${OUT_SQL}" | cut -f1)"
 echo "==> done: ${OUT_SQL} (${SIZE_SQL}, ${TABLE_COUNT} tables) + ${OUT_ENV:-no-env-copy}"
+
+# T22：写最近备份结果状态文件（供 /api/metrics 读取；成功/失败都要留痕）
+STATUS_FILE="${BACKUP_DIR}/last-backup-status.json"
+cat > "${STATUS_FILE}.tmp" <<EOF
+{"ok": true, "at": "$(date -Iseconds)", "file": "$(basename "${OUT_SQL}")", "tables": ${TABLE_COUNT}}
+EOF
+mv "${STATUS_FILE}.tmp" "${STATUS_FILE}"
 
 # 清理超过保留期的旧备份（仅在本次备份成功发布后执行）
 find "${BACKUP_DIR}" -name "${DB_NAME}-*.sql.gz" -mtime "+${RETAIN_DAYS}" -delete

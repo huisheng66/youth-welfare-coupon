@@ -566,3 +566,33 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 
 - `bash -n run-nuclei.sh`、workflow YAML 解析、审计脚本 AST 检查通过；
   API 不可用场景实测 exit 2；密钥扫描退出 0。
+
+## 2026-09-06（第十三批：T22 健康、指标与告警）
+
+### T22：readiness + 业务指标快照
+
+- `services/metrics.py`：
+  - `check_ready(engine)`：数据库连通 + alembic 版本与代码 head 一致才报
+    就绪；任何异常 → 未就绪（开发库无版本表放行，生产由启动门禁拦截）。
+  - 进程内指标：请求量、5xx 错误数、耗时五分桶、核销结果分布
+    （`success:redeemed` / `failed:<reason_code>`）、最近 50 条核销 rid 关联。
+  - `outbox_backlog(db)`：queued/failed 计数 + 最早排队时长（T15 积压可见）。
+  - `last_backup_status(dir)`：读 backup-mysql.sh 状态文件；缺失/损坏/失败
+    都显式呈现。
+- 端点：
+  - `GET /api/ready`：readiness（503 = 未就绪），不含配置内容；
+  - `GET /api/metrics`：仅超管，JSON 指标快照；
+  - `GET /api/health`：liveness 保持轻量（不依赖数据库）。
+- 埋点：请求级指标中间件；核销成功/失败（含 reason 码）进分布计数，
+  关联 request_id（日志 + 指标可串联排查）。
+- `deploy/backup-mysql.sh`：成功与失败（trap ERR）都写
+  `last-backup-status.json`（ok/at/file/tables 或 error）。
+
+**验证**
+
+- 新增 `tests/test_health_metrics.py` 6 用例：liveness+readiness 正常、
+  **数据库失效时 readiness 503 而 liveness 200（验收项）**、schema 落后
+  readiness 503、metrics 仅超管（issuer 403）且不含凭据字样、核销成功/
+  already_used/invalid_live_code 进分布、备份状态文件四种状态解析。
+- `pytest tests/ -q`：195 passed，18 skipped；`npm run build` 通过；
+  E2E 12 用例全绿；docs/ci/security.yml 模板同步；密钥扫描退出 0。

@@ -735,6 +735,14 @@ def _log_failed_redeem(
         )
     )
     db.commit()
+    # T22：失败原因进业务指标（原因码稳定，见下方常量表）
+    try:
+        from app.core.logging import request_id_var
+        from app.services.metrics import note_redeem
+
+        note_redeem("failed", reason, request_id_var.get(""))
+    except Exception:  # noqa: BLE001 — 指标采集不得影响业务流
+        pass
 
 
 # 稳定失败原因码：前端/报表据此分类，不解析中文 message
@@ -954,6 +962,14 @@ def redeem(
             extra={"coupon_id": coupon.id, "merchant_id": account.merchant_id, "operator_id": account.id},
         )
         return RedeemOut(**raced)
+    # T22：成功核销进业务指标
+    try:
+        from app.core.logging import request_id_var
+        from app.services.metrics import note_redeem
+
+        note_redeem("success", "redeemed", request_id_var.get("-"))
+    except Exception:  # noqa: BLE001
+        pass
     logger.info(
         "coupon.redeem",
         extra={

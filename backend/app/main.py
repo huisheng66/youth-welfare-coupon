@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import auth, coupons, export, imports, merchants, outbox, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
+from app.core.deps import require_roles
+from app.models.entities import Account, Role
 import app.core.database as db
 from app.core.logging import request_id_var, setup_logging
 from app.core.migrate import apply_migrations
@@ -263,6 +267,54 @@ def create_app() -> FastAPI:
             "app_env": s.app_env,
             "openapi_enabled": s.effective_openapi_enabled,
         }
+
+    # T22：readiness —— 数据库连通 + schema 版本一致才报就绪；不暴露任何配置内容。
+    # 生产部署后 LB/监控轮询本端点：数据库失效时必须从就绪名单摘除。
+    @app.get("/api/ready")
+    def ready() -> dict:
+        from fastapi import Response as FastAPIResponse
+
+        from app.services.metrics import check_ready
+
+        result = check_ready(db.engine)
+        return FastAPIResponse(
+            content=json.dumps({"status": "ready" if result["ok"] else "not_ready", **result}),
+            status_code=200 if result["ok"] else 503,
+            media_type="application/json",
+        )
+
+    # T22：业务指标快照（仅超管）——请求量/错误/耗时/核销分布/outbox 积压/最近备份
+    @app.get("/api/metrics")
+    def metrics_api(
+        _: Account = Depends(require_roles(Role.super_admin)),
+    ) -> dict:
+        import os as _os
+
+        from app.services.metrics import last_backup_status, outbox_backlog, snapshot
+
+        out = snapshot()
+        session = db.SessionLocal()
+        try:
+            out["outbox_backlog"] = outbox_backlog(session)
+        finally:
+            session.close()
+        # 备份状态文件位置与部署一致（deploy/backup-mysql.sh：APP_ROOT/backups）
+        app_root = _os.environ.get("APP_ROOT") or str(Path(__file__).resolve().parents[2])
+        out["last_backup"] = last_backup_status(Path(app_root) / "backups")
+        return out
+
+    # T22：请求指标中间件（进程内聚合）
+    @app.middleware("http")
+    async def _metrics_middleware(request: Request, call_next):
+        start = time.monotonic()
+        response = await call_next(request)
+        try:
+            from app.services.metrics import note_request
+
+            note_request(response.status_code, time.monotonic() - start)
+        except Exception:  # noqa: BLE001 — 指标采集不得影响请求
+            pass
+        return response
 
     return app
 
