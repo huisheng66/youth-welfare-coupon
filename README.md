@@ -9,6 +9,7 @@
 - **不含**微信小程序  
 - 银行卡：仅**核验通过后自愿绑定**，库内 **Fernet 加密**（可用独立 `FIELD_ENCRYPTION_KEY`）；接口默认只返回脱敏号，完整号仅超管可解密查看（记审计）  
 - 安全硬化：生产关 OpenAPI / 演示 seed、CORS 白名单、登录限流、输入净化、安全响应头 → 见 [`优化.md`](优化.md)  
+- 可靠性：写操作幂等键、账号激活一次性链接、邮件 outbox 退避重试、readiness/metrics 探针（v1.5.0，见 [`docs/release-v1.5.0.md`](docs/release-v1.5.0.md)）  
 - 安全运维（依赖扫描 / ZAP / Token 说明）→ [`docs/security-ops.md`](docs/security-ops.md)；外部扫描工具清单 → [`docs/security-tools.md`](docs/security-tools.md)；CI 模板：[`docs/ci/security.yml`](docs/ci/security.yml)
 
 **Ubuntu 生产部署（MySQL + Nginx）** → 见 [`deploy/README.md`](deploy/README.md) 与 `deploy/install-ubuntu.sh`。
@@ -52,9 +53,12 @@ DATABASE_URL=mysql+pymysql://welfare:密码@127.0.0.1:3306/welfare?charset=utf8m
 ```
 
 - API 文档：http://127.0.0.1:19001/docs  
-- 健康检查：http://127.0.0.1:19001/api/health  
+- 存活探针：http://127.0.0.1:19001/api/health  
+- 就绪探针：http://127.0.0.1:19001/api/ready（数据库连通 + 迁移版本一致才报就绪，503=未就绪）  
 
-首次启动会自动建表；开发环境默认写入演示数据（`SEED_DEMO_ACCOUNTS`）。生产请设 `APP_ENV=production` 并关闭演示 seed。
+表结构由 Alembic 迁移管理（开发环境启动时 `create_all` + 自动 stamp；生产由
+`deploy/migrate-release.sh` 以迁移账号执行 `alembic upgrade head`，运行账号无 DDL 权限）。
+开发环境默认写入演示数据（`SEED_DEMO_ACCOUNTS`）。生产请设 `APP_ENV=production` 并关闭演示 seed。
 
 ### 2. 前端
 
@@ -83,7 +87,7 @@ npm run dev
 ## 安全回归（开发）
 
 ```powershell
-# 后端全量测试（pytest；或逐文件跑 tests/）
+# 后端全量测试（pytest；MySQL 集成用例未设 MYSQL_TEST_URL 时自动供给临时实例，失败自动 skip）
 cd backend
 .\.venv\Scripts\python.exe -m pytest tests\ -v
 
@@ -184,24 +188,24 @@ API 经 Vite 代理到本机后端，手机**不必**直接访问 19001。
 
 ## 已实现能力
 
-- 用户核验、指定商家发券/批量发券、商家核销  
-- **按文件批量导入**（xlsx / csv / txt / docx）：用户名单（导入即核验通过、统一初始密码）、按名单发券、按名单入账志愿时长，支持仅校验试运行；名单含邮箱且已配置 SMTP 时可自动发送开通邮件，导入错误明细支持导出 CSV  
-- 动态短时券码（约 30 秒刷新 + 二维码；核销后用户端即时成功提示）  
-- **商家扫码核销**（摄像头 / 相册）  
-- CSV 导出（核销流水、券列表）  
-- 志愿服务时长入账与用户自助兑换  
-- 商家统计、核销预览、审计日志  
-- **账号设置改密**（各角色）；超管可重置密码、启停账号  
-- 用户首页券/时长概览与快捷出示；商家核销页近期流水  
-- 待审**批量通过/驳回**；券列表 / 核销流水筛选分页与导出  
-- 仪表盘今日发券/核销；志愿时长全局流水；用户核验历史  
-- 演示账号自动补发未使用券，便于扫码演示  
-- 登录失败限流；过期券自动扫描；用户 CSV 导出  
-- 商家/模板/审计筛选；404 页；兑换后可直接出示券码  
+- 用户核验（申请快照 + 版本化审核）、指定商家发券/批量发券、商家核销（幂等键支持，超时重试不重复核销）  
+- **统一导入**（xlsx / csv / txt / docx）：预检 → 确认执行 → 逐行结果三步向导（用户名单 / 按名单发券 / 按名单入账）；预检不写业务数据，执行时重新校验资格与唯一冲突；断点续执只重试失败行；文件内重复与跨字段歧义预检即拒；逐行错误明细 CSV 导出  
+- **账号激活双轨**（T15）：含邮箱用户收一次性激活链接（48h，单次消费）自行设密；无邮箱/关闭通知用户领取一次性个人凭证（仅执行结果显示一次）；共用初始密码已废弃  
+- **可靠邮件 outbox**：激活邮件与建号同事务入队，进程重启不丢；退避重试、上限转失败可人工重发（超管）  
+- 动态短时券码（约 30 秒刷新 + 二维码；核销后用户端即时成功提示；断网/后台切换自动恢复）  
+- **商家扫码核销**（摄像头 / 相册）；预览锁定 + 确认前重新校验；超时进入结果确认流程  
+- CSV 导出（核销流水、券列表、用户、时长流水；筛选条件与列表一致）  
+- 志愿服务时长入账（幂等）与用户自助兑换（幂等）；统计与导出统一业务时区划日（Asia/Shanghai）  
+- 商家统计、核销预览、审计日志（request_id 全链路串联）  
+- 账号设置改密；超管可重置密码、启停账号；强制首改密  
+- 用户首页券/时长概览；商家核销页近期流水；待审批量通过/驳回（版本条件审核）  
+- 仪表盘今日发券/核销（业务时区）；志愿时长全局流水；用户核验历史  
+- 登录失败限流；过期券自动扫描；写操作幂等键（发券/时长/兑换/核销，7 天保留）  
+- **可观测性**（T22）：`/api/ready` readiness；`/api/metrics`（仅超管：请求量/5xx/耗时分桶/核销原因分布/outbox 积压/最近备份状态）  
 
 ### 二期预留
 
-- 微信小程序（复用 REST + JWT）  
+- 微信小程序（复用 REST；JWT 已迁 HttpOnly Cookie，跨端建议走独立 token 流程）  
 
 ## 环境变量（后端）
 
@@ -217,8 +221,18 @@ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 ```env
 IMPORT_MAX_ROWS=1000          # 单次导入行数上限，超出整文件拒绝
-IMPORT_INITIAL_PASSWORD=youth123456  # 导入用户的统一初始密码（需 ≥8 位且含字母数字）
 ```
+
+账号激活与邮件 outbox（T15，生产必须配置 PUBLIC_BASE_URL）：
+
+```env
+PUBLIC_BASE_URL=https://你的域名   # 激活邮件中的链接地址
+ACTIVATION_TOKEN_EXPIRE_HOURS=48   # 激活链接有效期（小时）
+OUTBOX_POLL_SECONDS=30             # outbox worker 轮询间隔
+OUTBOX_MAX_ATTEMPTS=5              # 重试上限，超过转失败可人工重发
+```
+
+> `IMPORT_INITIAL_PASSWORD` 仅旧导入端点（阶段性保留）使用；新统一导入已改为激活链接 + 个人凭证双轨。
 
 ### 上云数据库
 
@@ -232,7 +246,9 @@ DATABASE_URL=postgresql+psycopg2://user:password@host:5432/welfare
 DATABASE_URL=mysql+pymysql://user:password@host:3306/welfare
 ```
 
-并安装对应驱动（`psycopg2-binary` 或 `pymysql`）。表结构由启动时 `create_all` 创建（生产建议再接入 Alembic 迁移）。
+并安装对应驱动（`psycopg2-binary` 或 `pymysql`）。表结构由 Alembic 迁移管理；
+开发库启动时自动建表并 stamp，生产环境必须先以迁移账号执行
+`bash deploy/migrate-release.sh`（见 `deploy/README.md`）再启动应用。
 
 ## 角色能力摘要
 
@@ -243,8 +259,7 @@ DATABASE_URL=mysql+pymysql://user:password@host:3306/welfare
 
 ## 二期预留
 
-- 微信小程序（复用现有 REST + JWT）  
-- 志愿服务时长账户表 `point_accounts` / `point_ledgers` 已预留  
+- 微信小程序（复用现有 REST；JWT 已迁 HttpOnly Cookie，跨端建议走独立 token 流程）  
 
 ## 安全说明
 

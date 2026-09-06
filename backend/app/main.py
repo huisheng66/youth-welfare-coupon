@@ -206,7 +206,7 @@ def create_app() -> FastAPI:
     openapi_on = settings.effective_openapi_enabled
     app = FastAPI(
         title=settings.app_name,
-        version="1.4.0",
+        version="1.5.0",
         docs_url="/docs" if openapi_on else None,
         redoc_url="/redoc" if openapi_on else None,
         openapi_url="/openapi.json" if openapi_on else None,

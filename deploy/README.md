@@ -60,6 +60,11 @@ CORS_ALLOW_LAN=false
 OPENAPI_ENABLED=false
 SEED_DEMO_ACCOUNTS=false
 RATE_LIMIT_BACKEND=file
+# T15：账号激活邮件——生产必须配置为用户可访问的前端地址
+PUBLIC_BASE_URL=https://你的域名
+ACTIVATION_TOKEN_EXPIRE_HOURS=48
+OUTBOX_POLL_SECONDS=30
+OUTBOX_MAX_ATTEMPTS=5
 # 可选 Redis：RATE_LIMIT_BACKEND=redis 与 REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
@@ -114,8 +119,17 @@ sudo certbot --nginx -d 你的域名
 sudo systemctl status welfare-api
 sudo journalctl -u welfare-api -f
 sudo systemctl restart welfare-api
-curl -s http://127.0.0.1:19001/api/health
+curl -s http://127.0.0.1:19001/api/health    # 存活探针（liveness）
+curl -s http://127.0.0.1:19001/api/ready     # 就绪探针：503 = 数据库失效或迁移版本落后，
+                                             # LB/监控应据此摘除实例
+curl -s http://127.0.0.1:19001/api/metrics \  # 业务指标（需超管登录后携带 Cookie）
+  -H "X-Requested-With: XMLHttpRequest"
 ```
+
+`/api/metrics` 关注点：`outbox_backlog.queued` 持续增长 → 检查 SMTP 配置；
+`last_backup.ok = false` → 备份失败需排查；`redeem_results` 中失败原因分布
+异常升高 → 对应排查（`already_used` 多为重复扫码，`invalid_live_code` 多为
+券码过期后重扫）。
 
 ## 脚本分类
 
@@ -185,6 +199,7 @@ curl -s http://127.0.0.1:19001/api/health
 `install-ubuntu.sh` 会安装 cron（每日 03:17）执行 `deploy/backup-mysql.sh`：
 
 - 备份内容：`mysqldump --single-transaction --no-tablespaces` 全库 gzip + `backend/.env` 副本（字段加密钥 `FIELD_ENCRYPTION_KEY` 必须随库备份，否则银行卡密文不可解密）
+- 状态留痕：成败均写 `last-backup-status.json`（`/api/metrics.last_backup` 可查；失败自动留 error）
 - 失败保护：先写临时文件，gzip 完整性与转储内容校验通过后才原子改名发布；校验失败不发布、不触发保留期清理，退出码非 0
 - 位置：`/opt/welfare/backups/`，默认保留 14 天（`RETAIN_DAYS` 可覆盖）
 - 日志：`/var/log/welfare-backup.log`
@@ -237,6 +252,7 @@ curl -s http://127.0.0.1:19001/api/health
 - [ ] 防火墙只开放 80/443，MySQL 不对外  
 - [ ] 定期备份：`mysqldump welfare > backup.sql`  
 - [ ] JWT 已迁至 HttpOnly Cookie；过渡期仍允许 `Authorization: Bearer`，上线 1–2 版本后关闭 `AUTH_ALLOW_BEARER=false`
+- [ ] T15：`PUBLIC_BASE_URL` 已配置为用户可访问的前端地址；导入用户后抽查激活邮件可达性
 - [ ] 定期跑依赖扫描：`scripts/dep_audit.ps1` 或 CI workflow `Security`  
 - [ ] 半年或大版本前对 staging 跑 ZAP baseline（见 `docs/security-ops.md`）
 

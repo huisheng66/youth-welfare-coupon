@@ -596,3 +596,32 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
   already_used/invalid_live_code 进分布、备份状态文件四种状态解析。
 - `pytest tests/ -q`：195 passed，18 skipped；`npm run build` 通过；
   E2E 12 用例全绿；docs/ci/security.yml 模板同步；密钥扫描退出 0。
+
+## 2026-09-06（第十四批：T23 发布验收包与文档一致性）
+
+### T23：v1.5.0 发布包
+
+- 版本统一 1.5.0（`frontend/package.json` + 后端 FastAPI version）。
+- 新增 `docs/release-v1.5.0.md` 发布验收包：版本与迁移 head（`d8f2a06c4b11`）
+  及校验命令、本次结构变更清单（/coupons/my 分页、execute 响应、redeem 幂等
+  键、新端点）、升级前置（三账号校验、迁移先行、PUBLIC_BASE_URL/SMTP）、
+  部署步骤、**失败退出与回退路径**（迁移失败/校验失败/数据库失效/业务回滚/
+  备份失败五场景）、风险说明与 7 天观察窗口指标、staging 角色验收清单、
+  交付物索引。
+- README 一致性清理：
+  - 「首次启动自动建表」→ Alembic 迁移管理 + migrate-release.sh 说明；
+  - 「统一初始密码」导入说法 → 激活链接 + 个人凭证双轨；
+  - `IMPORT_INITIAL_PASSWORD` 标注仅旧端点保留；补 PUBLIC_BASE_URL 等新配置键；
+  - 已实现能力清单与实际对齐（导入向导、激活双轨、outbox、幂等、可观测性）；
+    删除"point_accounts 已预留"过时说法；
+  - 顶部补可靠性能力行 + 发布包链接。
+- deploy/README.md：常用运维补 `/api/ready` 与 `/api/metrics` 巡检说明
+  （outbox 积压/备份失败/核销失败分布的含义）；生产 .env 模板补 T15 配置键；
+  安全清单补激活邮件检查项；备份章节补状态文件留痕。
+- PRODUCT.md：补导入双轨凭证与幂等键两条业务约定。
+
+**验证**
+
+- 验收包内数字全部实测核实：195 passed / 18 skipped、E2E 12 全绿、
+  `npm run build` 通过、迁移 head `d8f2a06c4b11`、密钥扫描退出 0。
+- staging 实机角色验收与发布后观察窗口属运维动作，已在验收包中列出清单。
