@@ -368,6 +368,56 @@ class ImportRow(Base):
     batch = relationship("ImportBatch", back_populates="rows")
 
 
+class OutboxStatus(str, enum.Enum):
+    queued = "queued"  # 已排队
+    sending = "sending"  # worker 已领取，发送中
+    sent = "sent"  # SMTP 已受理（不等于用户已收件）
+    failed = "failed"  # 永久失败（达到重试上限），可人工重发
+
+
+class EmailOutbox(Base):
+    """最小邮件 outbox（T15）：与业务事务一起记录待发送任务，worker 异步投递。
+
+    payload 只在 html 字段（邮件内容本身）；状态、错误与日志绝不包含
+    初始密码或激活 token 明文。
+    """
+
+    __tablename__ = "email_outbox"
+    __table_args__ = (
+        Index("ix_email_outbox_status_next_retry", "status", "next_retry_at"),
+        Index("ix_email_outbox_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(32), default="")  # activation / import_notify
+    to_email: Mapped[str] = mapped_column(String(128), index=True)
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    html: Mapped[str] = mapped_column(Text, default="")
+    ref_type: Mapped[str] = mapped_column(String(32), default="")
+    ref_id: Mapped[str] = mapped_column(String(36), default="")
+    status: Mapped[OutboxStatus] = mapped_column(_str_enum(OutboxStatus), default=OutboxStatus.queued, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    next_retry_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_error: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ActivationToken(Base):
+    """一次性账号激活 token（T15）：只存 HMAC 摘要，单次消费，限期有效。"""
+
+    __tablename__ = "activation_tokens"
+    __table_args__ = (Index("ix_activation_tokens_account_created_at", "account_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    account_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class EmailCodePurpose(str, enum.Enum):
     register = "register"
     reset_password = "reset_password"

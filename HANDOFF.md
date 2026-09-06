@@ -1,11 +1,11 @@
 # 安全加固交接
 
-更新时间：2026-09-06（第七批：T14 统一导入）
+更新时间：2026-09-06（第八批：T15 激活与可靠邮件）
 
 ## 已完成
 
-`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-06 第七批，
-`docs/开发计划.md` 中的 T00–T14、T19（部分）、T20、T21（部分）已实施：
+`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-06 第八批，
+`docs/开发计划.md` 中的 T00–T15、T19（部分）、T20、T21（部分）已实施：
 
 1. 生产环境不返回邮箱验证码。
 2. 后端强制首次改密。
@@ -56,6 +56,12 @@
     preview/execute/detail/rows/rows.csv 五接口；歧义解析、文件内重复拒绝、
     解析资源上限（列数/单元格/zip 防爆/NaN）；users 批次共用密码哈希；
     前端 `ImportWizard` 替换三个导入入口。旧导入端点阶段性保留。
+31. T15 账号激活与可靠邮件：`activation_tokens`（HMAC 摘要、单次消费）+
+    `email_outbox`（同事务入队、退避重试、人工重发，迁移 `d8f2a06c4b11`）；
+    导入双轨——含邮箱用户收一次性激活链接（占位哈希随机不可知，发送成功后
+    清空正文），无邮箱/关闭通知用户领一次性个人凭证；`/auth/activate` 公开
+    端点 + 前端 `/activate` 落地页；`/outbox` 管理（查询不回正文 + resend）；
+    统一初始密码仅旧导入端点保留。详见 `docs/security-ops.md` 7f 节。
 
 ### E2E 运行方式
 
@@ -71,7 +77,7 @@ npm run e2e        # 首次需 npx playwright install chromium
 - `e2e/run-frontend.mjs` 的 chdir 启动器是为非 ASCII 项目根 + 特定 shell 会话的
   spawn 限制所设，常规环境同样适用，无需特殊配置。
 
-当前迁移链 head 为 `c7e1d95b3a10`（`b6c2f84a1d09` 之后新增 import_batches/import_rows）。发布迁移执行方式已变更：**先**
+当前迁移链 head 为 `d8f2a06c4b11`（`c7e1d95b3a10` 之后新增 activation_tokens/email_outbox）。发布迁移执行方式已变更：**先**
 `MIGRATE_DATABASE_URL=... bash deploy/migrate-release.sh`（迁移账号），**再**启动应用；
 生产 worker 启动只做只读 schema 校验，版本落后或缺列会拒绝启动。
 
@@ -83,15 +89,15 @@ $env:MYSQL_TEST_URL = "mysql+pymysql://root@127.0.0.1:33307"   # 指向一次性
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-SQLite 回归全量 174 passed，18 skipped（本机未跑 MySQL，CI 真实运行）。前端
+SQLite 回归全量 184 passed，18 skipped（本机未跑 MySQL，CI 真实运行）。前端
 `npm run build` 通过；密钥扫描门禁退出 0。
 
 ## 后续顺序
 
 按 `docs/开发计划.md` 第 12 节检查表推进：
 
-1. S3 运营增强剩余：T15 激活与可靠邮件。
-2. T16–T18 体验与性能、T19 剩余项（Nuclei 修复）、T22 健康与指标、T23 发布验收包。
+1. S4 核心使用流程与性能：T16 扫码异常恢复、T17 管理员高频操作、T18 状态查询与分页。
+2. T19 剩余项（前端 E2E 接入 CI、Nuclei 修复）、T22 健康与指标、T23 发布验收包。
 3. 独立运维动作（不随代码走）：历史泄漏凭据的轮换证据收集、生产服务器实际状态核实、
    季度恢复演练（首次已演练，见 log.md 2026-09-05）。
 
@@ -107,3 +113,5 @@ SQLite 回归全量 174 passed，18 skipped（本机未跑 MySQL，CI 真实运�
 - T09 起生产数据库账号拆分为 welfare_app / welfare_migrate / welfare_backup（仅
   localhost）；部署新版本必须让 `install-ubuntu.sh` 或 `setup-mysql.sql` 重建账号，
   并删除历史 ALL 权限的 `welfare` 账号。
+- T15 邮件 outbox：生产必须配置 `PUBLIC_BASE_URL`（激活链接地址）；激活邮件
+  发送成功即清库内正文；`/api/outbox` 仅超管可查/重发。

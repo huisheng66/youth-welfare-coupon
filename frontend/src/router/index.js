@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ensureAuthReady, useAuth, homePathByRole } from '../auth'
 import Login from '../views/Login.vue'
+import Activate from '../views/Activate.vue'
 
 // 路由懒加载：按角色拆 chunk，首屏仅加载登录页
 const AdminLayout = () => import('../layouts/AdminLayout.vue')
@@ -29,6 +30,8 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/login' },
     { path: '/login', component: Login, meta: { public: true, title: '登录' } },
+    // T15：一次性激活链接落地页（公开，无需登录）
+    { path: '/activate', component: Activate, meta: { public: true, title: '激活账号' } },
     {
       path: '/admin',
       component: AdminLayout,

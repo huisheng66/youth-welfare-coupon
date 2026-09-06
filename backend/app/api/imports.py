@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -135,13 +134,10 @@ def import_preview(
 def import_execute(
     batch_id: str,
     body: ExecuteIn | None = None,
-    background: BackgroundTasks = None,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(*_ADMIN_ROLES)),
 ) -> dict:
     """确认执行批次：执行时重新验证；重试只处理未完成行，不重复入账/发券。"""
-    if background is None:  # 直接调用（测试）时退化为无后台任务
-        background = BackgroundTasks()
     batch = _get_batch(db, batch_id)
     if batch.actor_id != admin.id:
         raise HTTPException(status_code=403, detail="仅批次创建者可执行该批次")
@@ -155,21 +151,18 @@ def import_execute(
 
     db.refresh(batch)
     out = _batch_dict(db, batch, errors_limit=100)
-    settings = get_settings()
-    to_notify = summary.get("to_notify") or []
     if batch.kind == KIND_USERS and summary["succeeded"] > 0:
-        out["default_password"] = settings.import_initial_password
-        if to_notify:
-            params = json.loads(batch.params_json or "{}")
-            if params.get("notify", True) and settings.smtp_configured:
-                from app.api.users import _send_import_password_emails
-
-                background.add_task(
-                    _send_import_password_emails, to_notify, settings.import_initial_password
-                )
-                out["email_queued"] = len(to_notify)
-            else:
-                out["email_queued"] = 0
+        # T15：个人初始凭证（无邮箱 / 关闭通知的行）只在本次响应出现一次，
+        # 不入库、不进日志；激活邮件由 outbox 后台投递，不在响应里返回链接
+        outcomes = summary.get("outcomes") or []
+        credentials = [o for o in outcomes if o.get("kind") == "credential"]
+        activations = sum(1 for o in outcomes if o.get("kind") == "activation")
+        if credentials:
+            out["credentials"] = credentials
+        if activations:
+            out["email_queued"] = activations
+            if not get_settings().smtp_configured:
+                out["smtp_unconfigured"] = True
     return out
 
 

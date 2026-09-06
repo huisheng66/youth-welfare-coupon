@@ -1,7 +1,7 @@
 """T14 统一导入预检、批次与逐行结果测试。
 
 覆盖：预检不写业务数据、执行幂等与断点续执、文件内重复拒绝、歧义报告、
-执行时重新验证、摘要确认、分页与 CSV、解析资源上限、批次共用密码哈希。
+执行时重新验证、摘要确认、分页与 CSV、解析资源上限、激活链接与个人凭证双轨。
 
 Run from backend/:
   .venv/bin/python -m pytest tests/test_imports.py -v
@@ -113,12 +113,17 @@ class TestUnifiedImportUsers(unittest.TestCase):
             body = r.json()
             self.assertEqual(body["succeeded"], 2)
             self.assertEqual(body["failed"], 0)
-            self.assertTrue(body.get("default_password"))
+            # T15：有邮箱走激活链接，无邮箱走个人初始凭证；共用默认密码不再返回
+            self.assertNotIn("default_password", body)
+            self.assertEqual(body.get("email_queued"), 1)
+            creds = body.get("credentials") or []
+            self.assertEqual([c["username"] for c in creds], ["lisi"])
+            self.assertTrue(creds[0]["password"])
             with ta.session() as db:
                 zhangsan = db.query(Account).filter(Account.username == "zhangsan").one()
                 lisi = db.query(Account).filter(Account.username == "lisi").one()
-                # 批次共用一次密码哈希（1000 行从分钟级降到单次）
-                self.assertEqual(zhangsan.password_hash, lisi.password_hash)
+                # 激活账号占位哈希（随机不可知）≠ 个人初始凭证哈希
+                self.assertNotEqual(zhangsan.password_hash, lisi.password_hash)
                 self.assertTrue(zhangsan.must_change_password)
                 profile = db.query(UserProfile).filter(UserProfile.account_id == zhangsan.id).one()
                 self.assertEqual(profile.verify_status, VerifyStatus.approved)

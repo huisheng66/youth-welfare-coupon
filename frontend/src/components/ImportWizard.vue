@@ -37,7 +37,7 @@
         </el-form-item>
       </el-form>
       <div v-else style="margin-bottom:8px">
-        <el-checkbox v-model="notify">向含邮箱的用户发送开通邮件（需已配置 SMTP）</el-checkbox>
+        <el-checkbox v-model="notify">向含邮箱的用户发送激活邮件（一次性链接设置密码，需已配置 SMTP）</el-checkbox>
       </div>
       <el-upload
         drag
@@ -75,16 +75,30 @@
         :title="result.message || `执行完成：成功 ${result.succeeded} 行，失败 ${result.failed} 行`"
       />
       <el-alert
-        v-if="result.default_password"
+        v-if="result.credentials?.length"
         type="warning"
         :closable="false"
         style="margin-bottom:12px"
-        title="请记录初始密码并分发给用户（仅本次显示）"
-        :description="`统一初始密码：${result.default_password}；首次登录将强制改密。`"
-      />
+        title="个人初始凭证：仅本次显示，请立即分发给相应用户（关闭通知或无邮箱的用户）"
+      >
+        <div class="cred-list">
+          <div v-for="c in result.credentials" :key="c.row" class="cred-item">
+            <span class="cred-user">{{ c.username }}</span>
+            <code>{{ c.password }}</code>
+          </div>
+        </div>
+        <p class="cred-tip">初始密码仅在此出现一次，不保存历史；用户首次登录后将强制改密。</p>
+      </el-alert>
       <p v-if="result.email_queued" class="muted" style="margin-bottom:12px">
-        已排队向 {{ result.email_queued }} 人发送开通邮件。
+        已为 {{ result.email_queued }} 名含邮箱的用户排队发送激活邮件（一次性链接设置密码）。
       </p>
+      <el-alert
+        v-if="result.smtp_unconfigured"
+        type="warning"
+        :closable="false"
+        style="margin-bottom:12px"
+        title="SMTP 未配置：激活邮件已入队暂无法投递，将在配置 SMTP 后由系统自动重发；也可联系超级管理员在邮件任务页处理。"
+      />
       <ImportErrorsTable v-if="result.errors?.length" :errors="result.errors" show-status />
       <p v-if="result.errors_truncated" class="muted" style="margin-top:8px">
         错误明细仅显示前 100 条，点击下方「下载逐行 CSV」获取全部记录。
@@ -136,7 +150,7 @@ const META = {
   users: {
     title: '导入用户名单',
     hint: '支持 .xlsx / .csv / .txt / .docx；列：姓名、学号、用户名、手机、邮箱（可选）、组织、备注（首行可为表头）',
-    desc: '导入用户直接视为核验通过，统一初始密码见执行结果。预检不写入任何数据，确认后逐行执行，失败行可重试。',
+    desc: '导入用户直接视为核验通过。含邮箱的用户将收到一次性激活链接自行设置密码；无邮箱或关闭通知的用户使用个人初始凭证（仅执行结果中显示一次）。预检不写入任何数据，确认后逐行执行，失败行可重试。',
     templateLines: [
       '姓名,学号,用户名,手机,邮箱,组织,备注',
       '张三,20260001,zhangsan,13800000001,zhangsan@example.com,某某大学,',
@@ -261,3 +275,33 @@ function downloadTemplate() {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 </script>
+
+<style scoped>
+.cred-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.cred-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cred-user {
+  min-width: 8em;
+  font-weight: 600;
+}
+.cred-item code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.cred-tip {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  opacity: 0.85;
+}
+</style>

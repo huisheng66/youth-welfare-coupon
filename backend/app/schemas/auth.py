@@ -238,6 +238,18 @@ class ResetPasswordIn(BaseModel):
         return validate_password_strength(v, min_length=8)
 
 
+class ActivateIn(BaseModel):
+    """一次性激活链接设置密码（T15）。"""
+
+    token: str = Field(min_length=16, max_length=256)
+    new_password: str = Field(min_length=8, max_length=64)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v, min_length=8)
+
+
 class SetActiveIn(BaseModel):
     is_active: bool
 

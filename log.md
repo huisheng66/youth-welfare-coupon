@@ -412,3 +412,44 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - `pytest tests/ -q`：174 passed，18 skipped（本机未跑 MySQL）。
 - `alembic heads` 为 `c7e1d95b3a10`；`npm run build` 通过（3.61s）；
   密钥扫描退出 0。
+
+## 2026-09-06（第八批：T15 账号激活与可靠邮件 outbox）
+
+### T15：一次性激活链接 + 邮件 outbox
+
+- 新增 `activation_tokens` / `email_outbox` 表（迁移 `d8f2a06c4b11`，head）。
+- `services/activation.py`：一次性激活 token（`secrets.token_urlsafe(32)`，
+  库内只存 `SECRET_KEY` 参与的 HMAC-SHA256 摘要，复用验证码同一 keyed-hash
+  方案）；`consume_activation` 条件更新保证单次消费（重复点击/重放 400 且
+  区分"已使用/已过期"）；激活原子写入新密码 + `must_change_password=False` +
+  `session_version+1`（激活前签发的会话全部失效，与 T05 同一语义）。
+- `services/outbox.py`：`enqueue` 与业务写入同事务入队（进程重启不丢待发送）；
+  `send_due` 条件 UPDATE 领取（queued 到期 / 超时 sending 回收），失败按
+  1/5/15/60 分钟退避，`OUTBOX_MAX_ATTEMPTS`（默认 5）后转 failed；`worker_loop`
+  由 lifespan 启停（无独立队列平台）。发送成功即清空 html 字段——激活链接
+  含一次性 token，不长期留库；失败任务保留正文供人工重发。
+- 导入双轨（`services/imports.py` `_exec_users_row`）：
+  - 有邮箱 + 开启通知：每批随机占位哈希（一次 bcrypt，明文即弃，任何已知
+    密码不可登录）+ 一次性激活 token + outbox 激活邮件（正文 HTML 转义）；
+  - 无邮箱 / 关闭通知：随机个人初始凭证（12 位字母数字），仅在执行响应出现
+    一次，不落库不进日志；批次 CSV 不含密码列。
+  删除统一初始密码路径与 `to_notify` 旧契约（旧导入端点阶段性保留原行为）。
+- 接口：`POST /api/auth/activate`（公开，Pydantic 密码强度校验）、
+  `GET /api/outbox`（超管，状态/计数/错误，不回正文）、
+  `POST /api/outbox/{id}/resend`（仅 failed 可重置回 queued 立即投递）。
+  execute 响应新增 `email_queued` / `credentials` / `smtp_unconfigured`，
+  移除 `default_password`。
+- 前端：`/activate` 公开落地页（token 缺失/无效/已用/过期直接进失败终态，
+  成功后引导登录）；路由注册 public；`ImportWizard` 结果步骤改为"个人凭证
+  一次性展示 + 激活邮件排队提示 + SMTP 未配置警告"。
+
+**验证**
+
+- 新增 `tests/test_activation_outbox.py` 10 用例：导入入队与占位锁定、个人
+  凭证一次性返回并可登录（重复导入全拒）、激活单次消费+会话版本+新旧密码
+  行为、过期/无效/弱密码拒绝、转义与库内无 token/密码明文、send_due 成功
+  （正文清空、不重发）、失败退避到 failed（错误信息、next_retry 未来）、
+  人工重发与超管权限、开发环境 console 模式受理。
+- `tests/test_imports.py` 对齐新契约：`default_password` 不再返回，双轨断言。
+- `pytest tests/ -q`：184 passed，18 skipped（本机未跑 MySQL）；
+  `alembic heads` 为 `d8f2a06c4b11`；`npm run build` 通过；密钥扫描退出 0。

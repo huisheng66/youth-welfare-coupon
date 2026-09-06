@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     # 幂等记录清理节流（秒），进程内复用与过期券扫描相同的节流模式
     idempotency_sweep_interval: int = 300
 
+    # 账号激活链接（T15）：一次性 token 有效期与激活页公开地址
+    activation_token_expire_hours: int = 48
+    # 邮件中激活链接的公开 base URL（生产必须配置为前端可访问地址）
+    public_base_url: str = "http://localhost:5173"
+    # 邮件 outbox worker：轮询间隔、单批处理数与重试上限
+    outbox_poll_seconds: int = 30
+    outbox_batch_size: int = 10
+    outbox_max_attempts: int = 5
+
     # 认证 Cookie：将 JWT 从 localStorage 迁到 HttpOnly Cookie，消除 XSS 窃取 token 的链路
     auth_cookie_name: str = "token"
     # 留空=不设置 Domain（仅当前主机）；跨子域如 api.x.com ↔ www.x.com 可设 ".x.com"

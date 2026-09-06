@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -336,9 +337,54 @@ def _claim_next_row(db: Session, batch_id: str, *, exclude_ids: set[str]) -> Imp
     return None
 
 
+def _gen_initial_password() -> str:
+    """无邮箱账号的个人初始凭证：12 位字母数字（保证两者都有），只在执行响应中
+    出现一次，不持久化、不进日志与批次结果。"""
+    import secrets as _secrets
+    import string as _string
+
+    alphabet = _string.ascii_letters + _string.digits
+    while True:
+        pwd = "".join(_secrets.choice(alphabet) for _ in range(12))
+        if password_has_letter_and_digit(pwd):
+            return pwd
+
+
+def _activation_email_html(display_name: str, username: str, link: str) -> str:
+    """激活邮件正文：所有用户可控字段 HTML 转义（T15 第 5 条）。"""
+    import html as _html
+
+    name = _html.escape(display_name or username)
+    uname = _html.escape(username)
+    href = _html.escape(link, quote=True)
+    return (
+        f"<p>{name}，您好：</p>"
+        "<p>管理员已为您开通「青年福利券系统」账号。请通过以下一次性链接设置您的密码：</p>"
+        f'<p><a href="{href}">点击设置密码并激活账号</a></p>'
+        f"<p>用户名：<b>{uname}</b></p>"
+        "<p>链接 48 小时内有效且只能使用一次；如非本人操作请忽略本邮件。</p>"
+    )
+
+
 def _exec_users_row(
-    db: Session, batch: ImportBatch, row: ImportRow, admin: Account, password_hash: str
-) -> tuple[str, tuple[str, str, str] | None]:
+    db: Session,
+    batch: ImportBatch,
+    row: ImportRow,
+    admin: Account,
+    placeholder_hash: str,
+) -> tuple[str, dict | None]:
+    """创建导入账号。返回 (account_id, outcome)：
+
+    - 有邮箱且批次开启通知：占位密码 + 一次性激活 token + outbox 激活邮件
+      （outcome={"kind": "activation"}）；
+    - 无邮箱（或关闭通知）：个人初始凭证（outcome={"kind": "credential",
+      "username", "password"}），凭证只在执行响应出现一次。
+    """
+    from app.services.activation import activation_link, create_activation_token
+    from app.services.outbox import enqueue
+
+    params = json.loads(batch.params_json or "{}")
+    notify = bool(params.get("notify", True))
     payload = json.loads(row.payload_json)
     username, phone, email = payload["username"], payload["phone"], payload["email"]
     # 执行时重新校验唯一冲突（预检后可能已有他人创建）
@@ -348,6 +394,16 @@ def _exec_users_row(
         raise _RowReject("手机号已被占用")
     if email and db.query(Account).filter(Account.email == email).first():
         raise _RowReject("邮箱已被占用")
+
+    outcome: dict | None = None
+    if email and notify:
+        # 激活链接方案：占位密码不可知，用户经一次性链接自行设密
+        password_hash = placeholder_hash
+        outcome = {"kind": "activation"}
+    else:
+        password = _gen_initial_password()
+        password_hash = hash_password(password)
+        outcome = {"kind": "credential", "row": row.row_no, "username": username, "password": password}
 
     account = Account(
         username=username,
@@ -360,6 +416,20 @@ def _exec_users_row(
     )
     db.add(account)
     db.flush()
+
+    if outcome["kind"] == "activation":
+        raw_token = create_activation_token(db, account)
+        # 激活邮件与账号创建同一事务入队（进程重启不丢待发送任务）
+        enqueue(
+            db,
+            kind="activation",
+            to_email=email,
+            subject="「青年福利券系统」账号激活",
+            html=_activation_email_html(payload["real_name"], username, activation_link(raw_token)),
+            ref_type="account",
+            ref_id=account.id,
+        )
+
     profile = UserProfile(
         account_id=account.id,
         real_name=payload["real_name"],
@@ -394,8 +464,7 @@ def _exec_users_row(
         target_id=account.id,
         detail=f"username={username}, real_name={payload['real_name']}, batch={batch.id}",
     )
-    notify = (email, username, payload["real_name"]) if email else None
-    return account.id, notify
+    return account.id, outcome
 
 
 def _exec_issue_row(
@@ -434,7 +503,9 @@ def _exec_points_row(
 def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, Any]:
     """执行批次：逐行独立事务，断点续执只处理未完成行（可安全重复调用）。
 
-    返回 {total, succeeded, failed, to_notify}；已完成批次直接返回计数（幂等）。
+    返回 {total, succeeded, failed, outcomes}；outcomes 仅含本批新创建的
+    个人初始凭证（kind=credential，含明文密码，只在本次执行响应出现）；
+    outbox 激活邮件不入响应。已完成批次直接返回计数（幂等）。
     """
     if batch.status == ImportBatchStatus.completed:
         retryable = (
@@ -444,7 +515,7 @@ def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, 
         )
         if retryable == 0:
             # 全部行已有终态：幂等返回，不重复执行
-            return {"total": batch.total, "succeeded": batch.succeeded, "failed": batch.failed, "to_notify": []}
+            return {"total": batch.total, "succeeded": batch.succeeded, "failed": batch.failed, "outcomes": []}
         # 仍有执行期失败行：允许重试（预检失败行是终态，不重试）
 
     claimed = (
@@ -467,21 +538,16 @@ def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, 
     db.commit()
     if not claimed:  # 并发下已被他人执行完毕
         db.refresh(batch)
-        return {"total": batch.total, "succeeded": batch.succeeded, "failed": batch.failed, "to_notify": []}
+        return {"total": batch.total, "succeeded": batch.succeeded, "failed": batch.failed, "outcomes": []}
 
-    shared_password_hash = ""
+    # 占位密码：每批随机生成一次（一次 bcrypt），明文即刻丢弃——
+    # 待激活账号在激活前无法用任何已知密码登录（T15），
+    # 不能复用 import_initial_password 这类可预期值
+    placeholder_hash = ""
     if batch.kind == KIND_USERS:
-        password = get_settings().import_initial_password
-        try:
-            validate_password_strength(password)
-        except ValueError as exc:
-            raise RuntimeError(f"IMPORT_INITIAL_PASSWORD 配置无效：{exc}") from exc
-        if not password_has_letter_and_digit(password):
-            raise RuntimeError("IMPORT_INITIAL_PASSWORD 配置无效：需同时包含字母和数字")
-        # 全批次共用一次 bcrypt：1000 行从分钟级哈希降到单次
-        shared_password_hash = hash_password(password)
+        placeholder_hash = hash_password(secrets.token_urlsafe(24))
 
-    to_notify: list[tuple[str, str, str]] = []
+    outcomes: list[dict] = []
     attempted: set[str] = set()
     while True:
         row = _claim_next_row(db, batch.id, exclude_ids=attempted)
@@ -490,11 +556,11 @@ def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, 
         attempted.add(row.id)
         try:
             if batch.kind == KIND_USERS:
-                ref_id, notify = _exec_users_row(db, batch, row, admin, shared_password_hash)
+                ref_id, outcome = _exec_users_row(db, batch, row, admin, placeholder_hash)
             elif batch.kind == KIND_ISSUE:
-                ref_id, notify = _exec_issue_row(db, batch, row, admin)
+                ref_id, outcome = _exec_issue_row(db, batch, row, admin)
             else:
-                ref_id, notify = _exec_points_row(db, batch, row, admin)
+                ref_id, outcome = _exec_points_row(db, batch, row, admin)
             db.query(ImportRow).filter(ImportRow.id == row.id).update(
                 {
                     ImportRow.status: ImportRowStatus.ok,
@@ -505,8 +571,8 @@ def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, 
                 synchronize_session=False,
             )
             db.commit()
-            if notify:
-                to_notify.append(notify)
+            if outcome:
+                outcomes.append(outcome)
         except Exception as exc:  # noqa: BLE001 — 跨行异常只影响该行，批次继续
             db.rollback()
             reason = str(exc)[:255] or exc.__class__.__name__
@@ -547,4 +613,4 @@ def execute_batch(db: Session, batch: ImportBatch, admin: Account) -> dict[str, 
         detail=f"kind={batch.kind}, ok={ok}, fail={failed}",
     )
     db.commit()
-    return {"total": batch.total, "succeeded": ok, "failed": failed, "to_notify": to_notify}
+    return {"total": batch.total, "succeeded": ok, "failed": failed, "outcomes": outcomes}

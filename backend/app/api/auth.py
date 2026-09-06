@@ -13,6 +13,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.entities import Account, EmailCodePurpose, Role, UserProfile, VerifyStatus
 from app.schemas.auth import (
     AccountOut,
+    ActivateIn,
     ChangePasswordIn,
     CreateIssueAdminIn,
     CreateMerchantAccountIn,
@@ -345,6 +346,18 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
     # 避免 JS 可读凭据重新出现；过渡期默认保留以兼容未改造的客户端。
     body_token = token if get_settings().auth_allow_bearer else ""
     return TokenOut(access_token=body_token)
+
+
+@router.post("/activate", response_model=MessageOut)
+def activate_account(
+    body: ActivateIn,
+    db: Session = Depends(get_db),
+) -> MessageOut:
+    """一次性激活链接设置密码（T15）：token 单次消费，重复点击/过期拒绝。"""
+    from app.services.activation import consume_activation
+
+    consume_activation(db, token=body.token, new_password=body.new_password)
+    return MessageOut(message="账号已激活，请使用新密码登录")
 
 
 @router.post("/logout", response_model=MessageOut)

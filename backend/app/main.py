@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api import auth, coupons, export, imports, merchants, points, stats, users
+from app.api import auth, coupons, export, imports, merchants, outbox, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
 import app.core.database as db
@@ -182,8 +182,22 @@ def create_app() -> FastAPI:
             logger.warning(
                 "FIELD_ENCRYPTION_KEY unset — bank-card encryption uses SECRET_KEY (deprecated)"
             )
+        # T15：邮件 outbox worker——进程内后台任务，重启后 queued 任务仍在库中继续投递
+        import asyncio
+
+        from app.services.outbox import worker_loop
+
+        stop_event = asyncio.Event()
+        worker = asyncio.create_task(worker_loop(stop_event))
         yield
-        # shutdown：当前无资源需显式释放；限流器/连接池随进程退出回收
+        # shutdown：通知 worker 退出并等待当前批次结束
+        stop_event.set()
+        try:
+            await asyncio.wait_for(worker, timeout=10)
+        except asyncio.TimeoutError:
+            worker.cancel()
+        except asyncio.CancelledError:
+            pass
 
     openapi_on = settings.effective_openapi_enabled
     app = FastAPI(
@@ -221,6 +235,7 @@ def create_app() -> FastAPI:
     app.include_router(points.router, prefix="/api")
     app.include_router(export.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
+    app.include_router(outbox.router, prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict:
