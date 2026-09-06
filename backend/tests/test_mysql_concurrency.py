@@ -528,3 +528,134 @@ class TestMySQLConcurrency:
                 .first()
             )
             assert log is not None and log.reason == "expired"
+
+    # ---- 幂等竞争（T13）----
+    def test_idempotent_commit_race_single_record(self, my) -> None:
+        """两连接同 key 并发提交幂等记录：唯一约束保证只执行一次，败者重放胜者结果。"""
+        from app.models.entities import IdempotencyRecord
+        from app.services import idempotency as idem
+
+        data = _seed_store(my)
+        actor = data["admin_id"]
+        fp = idem.fingerprint({"user_id": data["user_id"], "quantity": 1})
+        results: list[str] = []
+        barrier = threading.Barrier(2)
+
+        def work() -> None:
+            db = my.Session()
+            try:
+                barrier.wait(timeout=10)
+                idem.store(
+                    db,
+                    actor_id=actor,
+                    action="coupon.issue",
+                    key="race-key",
+                    request_hash=fp,
+                    result={"ok": True},
+                )
+                raced = idem.commit_idempotent(
+                    db, actor_id=actor, action="coupon.issue", key="race-key", request_hash=fp
+                )
+                results.append("replayed" if raced is not None else "committed")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                results.append(f"err:{exc.__class__.__name__}")
+            finally:
+                db.close()
+
+        threads = [threading.Thread(target=work), threading.Thread(target=work)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        assert results.count("committed") == 1, f"并发同 key 必须只有一个真正提交: {results}"
+        # MySQL 唯一索引让败者在胜者提交后才报冲突，因此败者应能重放到胜者结果
+        assert results.count("replayed") == 1, results
+        with my.session() as db:
+            count = (
+                db.query(IdempotencyRecord)
+                .filter(
+                    IdempotencyRecord.actor_id == actor,
+                    IdempotencyRecord.action == "coupon.issue",
+                    IdempotencyRecord.key == "race-key",
+                )
+                .count()
+            )
+            assert count == 1
+
+    def test_concurrent_review_single_winner(self, my) -> None:
+        """两个连接同时审核同一待审申请：仅一方成功，资料终态一致。"""
+        import secrets
+
+        from app.models.entities import (
+            Account,
+            Role,
+            UserProfile,
+            UserVerification,
+            VerificationSource,
+            VerifyStatus,
+        )
+        from app.services.verifications import RESULT_ALREADY, RESULT_SUCCESS, apply_review
+
+        suffix = secrets.token_hex(4)
+        with my.session() as db:
+            admin = Account(
+                username=f"ra_{suffix}", password_hash="x", role=Role.super_admin, display_name="审"
+            )
+            user = Account(
+                username=f"ru_{suffix}", password_hash="x", role=Role.user, display_name="青"
+            )
+            db.add_all([admin, user])
+            db.flush()
+            profile = UserProfile(
+                account_id=user.id,
+                real_name="待审",
+                student_no="1",
+                organization="组织",
+                verify_status=VerifyStatus.pending,
+                profile_version=1,
+            )
+            db.add(profile)
+            db.flush()
+            verification = UserVerification.from_profile(
+                profile,
+                material_note="并发审核",
+                status=VerifyStatus.pending,
+                source=VerificationSource.user_submit,
+            )
+            db.add(verification)
+            db.commit()
+            vid = verification.id
+            admin_id = admin.id
+            profile_id = profile.id
+
+        results: list[str] = []
+        barrier = threading.Barrier(2)
+
+        def review() -> None:
+            db = my.Session()
+            try:
+                acc = db.get(Account, admin_id)
+                barrier.wait(timeout=10)
+                result, _row = apply_review(db, vid, acc, True, "ok")
+                db.commit()
+                results.append(result)
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                results.append(f"err:{exc}")
+            finally:
+                db.close()
+
+        threads = [threading.Thread(target=review), threading.Thread(target=review)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        assert results.count(RESULT_SUCCESS) == 1, results
+        assert results.count(RESULT_ALREADY) == 1, results
+        with my.session() as db:
+            row = db.get(UserVerification, vid)
+            profile = db.get(UserProfile, profile_id)
+            assert row.status == VerifyStatus.approved
+            assert profile.verify_status == VerifyStatus.approved

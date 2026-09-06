@@ -27,7 +27,7 @@
       <div class="pending-head">
         <div>
           <strong>待审核申请（{{ pendingList.length }}）</strong>
-          <span class="muted" style="margin-left:8px">可批量通过 / 驳回</span>
+          <span class="muted" style="margin-left:8px">姓名/学号/组织为申请快照，可批量通过 / 驳回</span>
         </div>
         <div class="filters">
           <el-button
@@ -77,7 +77,12 @@
       </el-table>
     </div>
 
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无用户" @selection-change="onSelect">
+    <el-table v-loading="loading" :data="items" stripe @selection-change="onSelect">
+      <template #empty>
+        <EmptyState title="暂无用户" description="没有符合条件的用户；可调整筛选条件，或直接导入名单">
+          <el-button type="primary" @click="openImportUsers">导入名单</el-button>
+        </EmptyState>
+      </template>
       <el-table-column type="selection" width="48" :selectable="(row) => row.verify_status === 'approved'" />
       <el-table-column prop="real_name" label="姓名" width="100" />
       <el-table-column prop="username" label="用户名" width="120" />
@@ -167,6 +172,9 @@
             <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
           </template>
         </el-table-column>
+        <el-table-column label="申请快照" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ snapshotSummary(row) }}</template>
+        </el-table-column>
         <el-table-column prop="material_note" label="材料" min-width="120" show-overflow-tooltip />
         <el-table-column prop="review_note" label="审核备注" min-width="100" show-overflow-tooltip />
         <el-table-column label="提交" width="150">
@@ -180,13 +188,29 @@
     </el-dialog>
 
     <el-dialog v-model="reviewVisible" title="审核用户" width="760px">
+      <el-alert
+        v-if="current && current.snapshot_available === false"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="历史申请无资料快照，不能把当前资料当作当时申请内容"
+        style="margin-bottom:12px"
+      />
+      <el-alert
+        v-else-if="snapshotStale"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="用户当前资料已与本申请快照不一致，请关闭后刷新待审列表再审最新申请"
+        style="margin-bottom:12px"
+      />
       <el-descriptions :column="compactViewport ? 1 : 2" border style="margin-bottom:12px">
         <el-descriptions-item label="用户名">{{ current?.username || '-' }}</el-descriptions-item>
         <el-descriptions-item label="昵称">{{ current?.display_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="姓名">{{ current?.real_name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="申请姓名">{{ snapshotOrUnknown(current?.real_name) }}</el-descriptions-item>
         <el-descriptions-item label="手机">{{ current?.phone || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="学号">{{ current?.student_no || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="单位/组织">{{ current?.organization || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="申请学号">{{ snapshotOrUnknown(current?.student_no) }}</el-descriptions-item>
+        <el-descriptions-item label="申请组织">{{ snapshotOrUnknown(current?.organization) }}</el-descriptions-item>
         <el-descriptions-item label="注册时间">{{ formatTime(current?.account_created_at) }}</el-descriptions-item>
         <el-descriptions-item label="当前状态">
           <StatusTag :text="verifyStatusText(current?.verify_status)" :type="verifyStatusType(current?.verify_status)" />
@@ -212,6 +236,9 @@
           <template #default="{ row }">
             <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
           </template>
+        </el-table-column>
+        <el-table-column label="申请快照" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ snapshotSummary(row) }}</template>
         </el-table-column>
         <el-table-column prop="material_note" label="材料说明" min-width="190" show-overflow-tooltip />
         <el-table-column prop="review_note" label="审核备注" min-width="150" show-overflow-tooltip />
@@ -277,77 +304,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="importUsersVisible" title="导入用户名单" width="560px">
-      <el-alert type="info" :closable="false" style="margin-bottom:12px"
-        title="支持 .xlsx / .csv / .txt / .docx；列：姓名、学号、用户名、手机、邮箱（可选）、组织、备注（首行可为表头）"
-        description="导入用户直接视为核验通过（可直接发券/入账时长），统一初始密码见导入结果。用户名缺省时自动用学号或手机号；名单含邮箱且系统已配置 SMTP 时可自动发送开通邮件。"
-      />
-      <el-upload
-        drag
-        :auto-upload="false"
-        :limit="1"
-        accept=".xlsx,.csv,.txt,.docx"
-        :on-change="onImportUsersFile"
-        :on-remove="() => (importUsersFile = null)"
-      >
-        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
-      </el-upload>
-      <div style="margin-top:12px">
-        <el-checkbox v-model="importDryRun">仅校验不写入（试运行）</el-checkbox>
-        <el-checkbox v-model="importNotify">向含邮箱的用户发送开通邮件</el-checkbox>
-      </div>
-      <template #footer>
-        <el-button @click="downloadUsersTemplate">下载模板</el-button>
-        <el-button type="primary" :loading="importing" :disabled="!importUsersFile" @click="doImportUsers">
-          {{ importDryRun ? '开始校验' : '开始导入' }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="importIssueVisible" title="按名单发券" width="560px">
-      <el-alert type="info" :closable="false" style="margin-bottom:12px"
-        title="文件每行一个用户标识（用户名 / 邮箱 / 手机 / 学号）"
-        description="仅核验通过的用户可发券；查无此人、未核验的行会跳过并在结果中说明。"
-      />
-      <el-form label-width="90px">
-        <el-form-item label="券模板">
-          <el-select v-model="importIssueForm.template_id" style="width:100%" filterable>
-            <el-option
-              v-for="t in templates"
-              :key="t.id"
-              :label="`${t.name}（${t.merchant_name}）`"
-              :value="t.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="每人数量">
-          <el-input-number v-model="importIssueForm.quantity" :min="1" :max="10" />
-        </el-form-item>
-      </el-form>
-      <el-upload
-        drag
-        :auto-upload="false"
-        :limit="1"
-        accept=".xlsx,.csv,.txt,.docx"
-        :on-change="onImportIssueFile"
-        :on-remove="() => (importIssueFile = null)"
-      >
-        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
-      </el-upload>
-      <template #footer>
-        <el-button @click="downloadIssueTemplate">下载模板</el-button>
-        <el-button
-          type="primary"
-          :loading="importing"
-          :disabled="!importIssueFile || !importIssueForm.template_id"
-          @click="doImportIssue"
-        >
-          开始发放
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <ImportResultDialog v-model="importResultVisible" :result="importResult" />
+    <ImportWizard v-model="importUsersVisible" kind="users" @done="load" />
+    <ImportWizard v-model="importIssueVisible" kind="issue" :templates="templates" @done="load" />
   </div>
 </template>
 
@@ -355,9 +313,11 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import api, { downloadFile } from '../../api'
 import { useAuth } from '../../auth'
-import ImportResultDialog from '../../components/ImportResultDialog.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import ImportWizard from '../../components/ImportWizard.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, verifyStatusText, verifyStatusType } from '../../utils/format'
+import { idempotencyHeader, newIdempotencyKey } from '../../utils/idempotency'
 
 const auth = useAuth()
 const isSuperAdmin = computed(() => auth.account?.role === 'super_admin')
@@ -375,6 +335,9 @@ const reviewNote = ref('')
 const reviewMaterial = ref('')
 const templates = ref([])
 const issueForm = reactive({ template_id: '', quantity: 1 })
+// 发券/导入的幂等键：同一操作意图（弹窗会话）复用，重新打开弹窗生成新 key
+const issueKey = ref('')
+const batchIssueKey = ref('')
 const pendingMap = ref({})
 const pendingList = ref([])
 const selected = ref([])
@@ -387,6 +350,26 @@ const pageSize = ref(20)
 const revealing = ref(false)
 const revealedCard = ref('')
 const selectedApproved = computed(() => selected.value.filter((r) => r.verify_status === 'approved'))
+const snapshotStale = computed(() => {
+  const row = current.value
+  if (!row?.snapshot_available) return false
+  return (
+    (row.current_real_name || '') !== (row.real_name || '')
+    || (row.current_student_no || '') !== (row.student_no || '')
+    || (row.current_organization || '') !== (row.organization || '')
+  )
+})
+
+function snapshotOrUnknown(value) {
+  if (current.value && current.value.snapshot_available === false) return '历史未知'
+  return value || '-'
+}
+
+function snapshotSummary(row) {
+  if (!row?.snapshot_available) return '历史未知'
+  const parts = [row.snapshot_real_name, row.snapshot_student_no, row.snapshot_organization].filter(Boolean)
+  return parts.join(' · ') || '—'
+}
 const compactViewport = ref(false)
 const viewportWidth = ref(0)
 const actionColumnWidth = computed(() => {
@@ -519,10 +502,18 @@ async function doReview(approve) {
     ElMessage.warning('未找到待审记录')
     return
   }
-  await api.post(`/users/verifications/${vid}/review`, { approve, review_note: reviewNote.value })
-  ElMessage.success(approve ? '已通过' : '已驳回')
-  reviewVisible.value = false
-  load()
+  try {
+    await api.post(`/users/verifications/${vid}/review`, {
+      approve,
+      review_note: reviewNote.value,
+      expected_version: current.value.snapshot_version || undefined,
+    })
+    ElMessage.success(approve ? '已通过' : '已驳回')
+    reviewVisible.value = false
+    load()
+  } catch {
+    load()
+  }
 }
 
 async function doBatchReview(approve, note = '') {
@@ -550,6 +541,9 @@ async function doBatchReview(approve, note = '') {
       review_note: note,
     })
     ElMessage.success(res.data.message || '批量处理完成')
+    if (res.data.version_conflict > 0) {
+      ElMessage.warning(`${res.data.version_conflict} 条因资料已更新未处理，请刷新后审核最新申请`)
+    }
     selectedPending.value = []
     load()
   } finally {
@@ -572,6 +566,7 @@ function openIssue(row) {
   current.value = row
   issueForm.template_id = templates.value[0]?.id || ''
   issueForm.quantity = 1
+  issueKey.value = newIdempotencyKey()
   issueVisible.value = true
 }
 
@@ -590,11 +585,15 @@ async function doIssue() {
   } catch {
     return
   }
-  await api.post('/coupons/issue', {
-    user_id: current.value.id,
-    template_id: issueForm.template_id,
-    quantity: issueForm.quantity,
-  })
+  await api.post(
+    '/coupons/issue',
+    {
+      user_id: current.value.id,
+      template_id: issueForm.template_id,
+      quantity: issueForm.quantity,
+    },
+    { headers: idempotencyHeader(issueKey.value) },
+  )
   ElMessage.success('发券成功')
   issueVisible.value = false
 }
@@ -602,6 +601,7 @@ async function doIssue() {
 function openBatchIssue() {
   issueForm.template_id = templates.value[0]?.id || ''
   issueForm.quantity = 1
+  batchIssueKey.value = newIdempotencyKey()
   batchIssueVisible.value = true
 }
 
@@ -621,115 +621,31 @@ async function doBatchIssue() {
   } catch {
     return
   }
-  const res = await api.post('/coupons/issue-batch', {
-    user_ids: selectedApproved.value.map((u) => u.id),
-    template_id: issueForm.template_id,
-    quantity: issueForm.quantity,
-  })
+  const res = await api.post(
+    '/coupons/issue-batch',
+    {
+      user_ids: selectedApproved.value.map((u) => u.id),
+      template_id: issueForm.template_id,
+      quantity: issueForm.quantity,
+    },
+    { headers: idempotencyHeader(batchIssueKey.value) },
+  )
   const ok = res.data.issued?.length || 0
   const fail = res.data.failed?.length || 0
   ElMessage.success(`批量完成：生成 ${ok} 张券，失败 ${fail} 人`)
   batchIssueVisible.value = false
 }
 
-// ---- 批量导入（名单文件：xlsx / csv / txt / docx）----
+// ---- 统一导入（T14：预检 → 确认执行 → 逐行结果，见 ImportWizard）----
 const importUsersVisible = ref(false)
 const importIssueVisible = ref(false)
-const importResultVisible = ref(false)
-const importUsersFile = ref(null)
-const importIssueFile = ref(null)
-const importDryRun = ref(false)
-const importNotify = ref(true)
-const importing = ref(false)
-const importResult = ref(null)
-const importIssueForm = reactive({ template_id: '', quantity: 1 })
-const IMPORT_TIMEOUT = 60000
-
-function onImportUsersFile(uploadFile) {
-  importUsersFile.value = uploadFile?.raw || null
-}
-
-function onImportIssueFile(uploadFile) {
-  importIssueFile.value = uploadFile?.raw || null
-}
 
 function openImportUsers() {
-  importUsersFile.value = null
-  importDryRun.value = false
   importUsersVisible.value = true
 }
 
 function openImportIssue() {
-  importIssueFile.value = null
-  importIssueForm.template_id = importIssueForm.template_id || templates.value[0]?.id || ''
-  importIssueForm.quantity = 1
   importIssueVisible.value = true
-}
-
-function _downloadTextCsv(filename, lines) {
-  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-function downloadUsersTemplate() {
-  _downloadTextCsv('用户名单模板.csv', [
-    '姓名,学号,用户名,手机,邮箱,组织,备注',
-    '张三,20260001,zhangsan,13800000001,zhangsan@example.com,某某大学,',
-    '李四,20260002,,13800000002,,某某大学,班长',
-  ])
-}
-
-function downloadIssueTemplate() {
-  _downloadTextCsv('发券名单模板.csv', ['用户标识（用户名/邮箱/手机/学号）', 'youth1', '13800000001'])
-}
-
-function showImportResult(res) {
-  importResult.value = res.data
-  importResultVisible.value = true
-}
-
-async function doImportUsers() {
-  const fd = new FormData()
-  fd.append('file', importUsersFile.value)
-  fd.append('dry_run', importDryRun.value ? 'true' : 'false')
-  fd.append('notify', importNotify.value ? 'true' : 'false')
-  importing.value = true
-  try {
-    const res = await api.post('/users/import', fd, { timeout: IMPORT_TIMEOUT })
-    importUsersVisible.value = false
-    showImportResult(res)
-    if (!importDryRun.value && res.data.succeeded > 0) load()
-  } finally {
-    importing.value = false
-  }
-}
-
-async function doImportIssue() {
-  if (!importIssueForm.template_id) {
-    ElMessage.warning('请选择模板')
-    return
-  }
-  const fd = new FormData()
-  fd.append('file', importIssueFile.value)
-  fd.append('template_id', importIssueForm.template_id)
-  fd.append('quantity', String(importIssueForm.quantity))
-  importing.value = true
-  try {
-    const res = await api.post('/coupons/issue-import', fd, { timeout: IMPORT_TIMEOUT })
-    importIssueVisible.value = false
-    showImportResult(res)
-    if (res.data.succeeded > 0) load()
-  } finally {
-    importing.value = false
-  }
 }
 
 onMounted(async () => {

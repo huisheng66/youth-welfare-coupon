@@ -35,7 +35,13 @@
       </el-form-item>
       <el-form-item label="验证码">
         <div class="code-row">
-          <el-input v-model="emailForm.code" maxlength="8" placeholder="邮箱验证码" />
+          <el-input
+            v-model="emailForm.code"
+            maxlength="6"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            placeholder="6 位数字验证码"
+          />
           <el-button :disabled="emailCooldown > 0 || codeSending" :loading="codeSending" @click="sendBindCode">
             {{ emailCooldown > 0 ? `${emailCooldown}s` : '获取验证码' }}
           </el-button>

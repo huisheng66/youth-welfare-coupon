@@ -82,7 +82,7 @@
         <el-button type="success" :disabled="!canSubmit" :loading="submitting" @click="submit">
           提交审核
         </el-button>
-        <span v-if="verifyStatus === 'pending'" class="muted">审核中，请耐心等待</span>
+        <span v-if="verifyStatus === 'pending'" class="muted">审核中，无需重复提交</span>
         <span v-else-if="verifyStatus === 'approved'" class="muted">已通过，可领券 / 兑换</span>
       </div>
     </div>
@@ -90,11 +90,17 @@
     <div class="page-card">
       <h2 class="page-title">核验历史</h2>
       <p class="page-desc">含审核备注（驳回原因会显示在此）</p>
-      <el-table :data="history" stripe empty-text="暂无提交记录">
+      <el-table :data="history" stripe>
+        <template #empty>
+          <EmptyState title="暂无提交记录" description="提交核验后，审核进度与备注会显示在这里" />
+        </template>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
           </template>
+        </el-table-column>
+        <el-table-column label="申请快照" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ snapshotText(row) }}</template>
         </el-table-column>
         <el-table-column prop="material_note" label="材料说明" min-width="160" show-overflow-tooltip />
         <el-table-column prop="review_note" label="审核备注" min-width="140" show-overflow-tooltip />
@@ -145,12 +151,18 @@ const statusAlertType = computed(() => {
 const statusHint = computed(() => {
   const m = {
     draft: '请完善资料并提交核验材料',
-    pending: '管理员审核中，暂不可重复提交',
-    approved: '已通过，可在「我的优惠券」「时长兑换」使用福利；可自愿绑定银行卡',
+    pending: '管理员审核中。若因身份资料变更自动进入待审，无需再点提交。',
+    approved: '已通过，可在「我的优惠券」「时长兑换」使用福利；可自愿绑定银行卡。修改姓名/学号/组织后会自动重新待审。',
     rejected: '请根据审核备注修改资料后重新提交',
   }
   return m[verifyStatus.value] || ''
 })
+
+function snapshotText(row) {
+  if (!row?.snapshot_available) return '历史未知'
+  const parts = [row.snapshot_real_name, row.snapshot_student_no, row.snapshot_organization].filter(Boolean)
+  return parts.join(' · ') || '—'
+}
 
 function syncAuth(profile) {
   if (!auth.account) return
@@ -222,9 +234,16 @@ async function clearBank() {
 async function save() {
   saving.value = true
   try {
+    const prev = verifyStatus.value
     await api.put('/users/me/profile', form)
-    ElMessage.success('资料已保存')
     await load()
+    if (prev === 'approved' && verifyStatus.value === 'pending') {
+      ElMessage.success('身份资料已变更，已自动进入待审，无需再提交核验')
+    } else if (prev === 'pending' && verifyStatus.value === 'pending') {
+      ElMessage.success('资料已保存；待审申请已按最新资料更新，无需再提交')
+    } else {
+      ElMessage.success('资料已保存')
+    }
   } finally {
     saving.value = false
   }

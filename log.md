@@ -271,3 +271,144 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - `npm run e2e`：12/12 通过，连续 3 轮（29.6s / 29.9s / 26.9s），每轮全新随机库。
 - 后端全量回归（database.py 改动后）：153 passed。
 - 剩余范围：真实 Android/iOS 摄像头权限与 HTTPS 信任仍按计划单独实机验收（T21 第 5 项）。
+
+## 2026-09-05（第四批：前端体验收口 + T11 审核快照）
+
+### 前端体验收口（未提交 polish）
+
+- 修改 `frontend/src/auth.js`：`logout()` 先同步 `clearAuthState()` 再调后端，避免路由守卫因 token 仍在把 `/login` 弹回业务首页。
+- 修改 `frontend/e2e/core.spec.js`：退出后立即断言跳转登录页。
+- 管理/商家/用户壳层：侧栏图标、折叠待审红点、精确激活「首页/核销」、深色 shell 改 CSS 变量；登录/绑定邮箱验证码改为 6 位数字输入。
+- 管理列表空状态改用 `EmptyState` 并补导入；商家核销页手机端把扫码提前，文案去掉永久码核销入口。
+- 补 `AdminLayout` 图标 import 与各管理页 `EmptyState` import（此前模板已引用但未导入，构建会留下运行时缺口）。
+
+### T11：审核资料快照及并发审核
+
+- 新增 `user_profiles.profile_version`；`user_verifications` 增加身份快照、`snapshot_version`、`source`；`VerifyStatus.superseded` 仅用于申请记录。
+- 新增迁移 `backend/alembic/versions/e4f8a2c1b907_verification_snapshots.py`（head）；`ensure_schema` / `REQUIRED_SCHEMA_COLUMNS` 同步。
+- 新增 `backend/app/services/verifications.py`：身份变更递增版本并失效旧待审；审核用 `WHERE status=pending` 条件更新；快照版本与当前资料不一致则拒绝。
+- 修改 `backend/app/api/users.py`：待审列表身份字段取申请快照（历史未知不回填当前资料）；单条审核 409 版本冲突；批量审核返回逐条 `success/already_processed/version_conflict/not_found`。
+- 名单导入为已通过账号写入 `source=bulk_import` 的已审申请（含文件名与操作者）。
+- 种子 youth1/youth2 写入快照，避免演示账号无来源的 approved/pending。
+- 前端：资料页在自动待审时提示无需再提交；审核弹窗展示申请快照，快照与当前资料不一致时警告；批量结果区分版本冲突。
+
+**验证**
+- `pytest tests/test_verification.py tests/test_authz.py tests/test_import.py`：相关用例通过（含 7 个 T11 新用例）。
+- 其余 `pytest tests/`：69 passed，17 skipped（本机未跑 MySQL；新增 `test_concurrent_review_single_winner` 随 T20 套件 skip）。
+- `alembic heads` 为 `e4f8a2c1b907`；`upgrade head --sql` 含快照列 DDL。
+- `npm run build` 通过（3.60s）。
+- Playwright `e2e/core.spec.js` + `e2e/verification.spec.js`：7 passed（含退出立即跳转、批量通过）。
+
+## 2026-09-06（第五批：T12 业务资格规则统一）
+
+### T12：资格判断集中到领域服务
+
+- 新增 `backend/app/services/eligibility.py`：账号启用/用户核验/门店启用/模板启用
+  四类资格集中判定。`require_benefit_user`（角色+账号启用+核验通过，停用账号
+  新增拦截）、`require_issuable_template`、`require_exchangeable_template`；
+  资格异常 `EligibilityError` 是 `ValueError` 子类，批量/导入入口行级捕获不变。
+  各入口核验拒绝文案为对外稳定契约（导入结果与测试断言依赖原文），按动作保留
+  原措辞，仅统一判定来源。
+- 修改 `backend/app/api/coupons.py`：单条/批量/名单导入三个发券入口统一走
+  `require_issuable_template` + `require_benefit_user(action="发券")`，删除各入口
+  散写的模板/商家/核验检查；发券写入模板快照。
+- 修改 `backend/app/api/points.py`：`_grant_one`（单人/批量/名单导入共用）与
+  兑换统一走资格检查；兑换目录 join Merchant 过滤停用门店（不再让用户点击后
+  才发现商家不可用）；兑换券写入模板快照。
+- 券实例快照：`coupon_instances` 新增 `template_name`/`template_description`
+  （可空）；迁移 `a9d3e71b2c05`（head，Revises `e4f8a2c1b907`）；`ensure_schema`
+  与 `REQUIRED_SCHEMA_COLUMNS` 同步；`coupon_to_out`/出码响应优先快照、历史行
+  （NULL）回退模板当前值，不回填伪造历史；`seed.py` 演示券同步写快照。
+- 行为矩阵写入 `PRODUCT.md`「业务资格规则」：停用账号/复核中/门店停用/模板
+  停用/未标价模板 × 发券/入账/兑换/已有券 的完整矩阵与补充约定。
+- 顺带修复：`test_secret_scan_exit_codes_as_gate` 子进程从裸 `python` 改为
+  `sys.executable`（Linux PATH 只有 python3，此前在该环境 FileNotFoundError，
+  与本次改动无关的跨平台缺陷）。
+
+**验证**
+- 新增 `tests/test_eligibility.py` 9 用例：停用账号三入口统一拒绝、复核中暂停
+  新增权益但已有券可出码、目录过滤停用门店、停用门店兑换/发券拒绝且余额不变、
+  模板停用只停新增（已发券出码→预览→核销全通）、快照在模板改名后保留、历史
+  无快照回退、未核验用户四入口判定一致、EligibilityError 类型契约。
+- `pytest tests/ -q`：153 passed，17 skipped（本机未跑 MySQL）。
+- `alembic heads` 为 `a9d3e71b2c05`；`upgrade head --sql` 含快照列 DDL。
+- `scripts/scan_staged_secrets.py --tree` 退出 0；`npm run build` 通过（3.60s）。
+
+## 2026-09-06（第六批：T13 写操作幂等）
+
+### T13：Idempotency-Key 与结果重放
+
+- 新增 `idempotency_keys` 表（迁移 `b6c2f84a1d09`，head）：`actor_id + action +
+  key` 唯一约束；仅存请求摘要（规范化 JSON 的 SHA-256）与结果 JSON，不保存
+  敏感原始请求体；默认保留 7 天（`IDEMPOTENCY_RETENTION_DAYS`），
+  `sweep_expired` 按 `IDEMPOTENCY_SWEEP_INTERVAL` 节流清理。
+- 新增 `backend/app/services/idempotency.py`：`extract_key`（超长 400）、
+  `replay`（同 key 同摘要重放原结果、不同摘要 409）、`store`（与业务写入
+  同事务登记）、`commit_idempotent`（唯一约束竞争 → 败者重放胜者结果；
+  胜者未提交可见时 409“处理中”）、`sweep_with_settings`。
+- 七个写接口接入：发券单条/批量/名单导入（`api/coupons.py`）、时长单人/
+  批量/名单导入与兑换（`api/points.py`）。导入接口请求摘要以文件内容
+  SHA-256 代替原始名单。幂等记录与券/账本同一事务提交；业务 4xx 失败
+  不留记录，修正后可用同 key 重发；不带 key 行为完全不变。
+- 前端（`utils/idempotency.js`）：兑换（user/Points）、时长调整与导入
+  （admin/Points）、单人/批量发券与名单发券（admin/Users）按“操作意图”
+  生成 key 并随 `Idempotency-Key` 头发送；超时/失败保留 key 供重试复用，
+  成功或重新打开弹窗生成新 key。
+- 修复重构引入的缺陷：发券 `_preload_coupons` 移到 commit 前后实例主键
+  （Python 端 default）尚未分配，需在收集 id 前 `db.flush()`（全量回归
+  暴露，3 个既有用例失败已全部关闭）。
+
+**验证**
+- 新增 `tests/test_idempotency.py` 11 用例：发券/兑换/入账重放不重复、
+  同 key 不同请求 409、操作者与动作双重隔离、失败不留痕、导入同文件
+  重放不重复入账（文件变更 409）、超长 key 400、7 天保留清理、记录不含
+  请求自由文本、无 key 行为不变。
+- `tests/test_mysql_concurrency.py` 新增 `test_idempotent_commit_race_single_record`
+  （双连接同 key 并发提交：一提交一重放、唯一记录）；本机无 mysqld 随套件
+  skip，CI mysql:8.4 service 真实运行。
+- `pytest tests/ -q`：164 passed，18 skipped；`alembic heads` 为
+  `b6c2f84a1d09`；`npm run build` 通过（3.61s）；密钥扫描退出 0。
+
+## 2026-09-06（第七批：T14 统一导入预检、批次与逐行结果）
+
+### T14：预检 → 确认执行 → 批次结果
+
+- 新增 `import_batches` / `import_rows` 表（迁移 `c7e1d95b3a10`，head）：
+  批次保存类型/操作者/文件 SHA-256/参数/状态/计数；逐行保存预检与执行
+  状态、失败原因、业务对象关联（ref_id）。原始文件不保留，仅存摘要；
+  预检失败为终态（precheck_failed），执行失败（failed）可重试。
+- 新增 `backend/app/services/imports.py`：预检不写业务数据；执行逐行
+  独立事务（条件 UPDATE 领取 → 业务写入与行状态同一 commit），断点
+  续执只处理未完成行；本轮失败的行下一轮才可重试（否则无限循环——
+  首跑即暴露并修复）；已完成批次无失败行时幂等返回。
+- 标识解析升级 `resolve_user_detailed`：用户名 → 邮箱 → 手机 → 学号
+  优先级；跨字段命中不同用户或学号多命中报告歧义（旧行为静默取首个
+  或返回 None）；姓名不作为唯一标识。旧 `resolve_user` 委托新实现。
+- 文件内重复策略：users 按用户名/手机/邮箱、issue/points 按解析后用户，
+  重复行预检即拒绝并保留首次出现（修复旧 issue-import 静默重复发券）。
+- 执行时重新验证：资格/唯一冲突在每行执行时重新检查（预检不代替执行
+  检查）；users 批次共用一次 bcrypt 初始密码哈希——实测单次 0.157s，
+  1000 行朴素逐行 ≈157s 超请求窗口，共用哈希降到一次，同步执行可行。
+- 解析加固（import_file.py）：列数上限 64、单元格 512 字符、Office
+  zip 解压体积 50MB 与压缩比 100 倍快速拒绝；时长字段显式拒绝
+  NaN/Infinity/零/超界。
+- 新增 `api/imports.py`：`POST /imports/preview`（multipart）、
+  `POST /imports/{id}/execute`（仅创建者可执行；可带文件摘要确认，
+  不一致 409；users 批次返回初始密码并排队开通邮件）、
+  `GET /imports/{id}`、`GET /imports/{id}/rows`（分页+状态过滤）、
+  `GET /imports/{id}/rows.csv`（全部逐行明细，错误证据不截断）。
+  旧三类导入端点阶段性保留。
+- 前端：新增 `ImportWizard.vue`（步骤条：上传预检 → 确认执行 → 批次
+  结果，含初始密码提示、重试失败行、逐行 CSV 下载）与
+  `ImportErrorsTable.vue`；Users/Points 管理页三个导入入口全部切换
+  到向导，删除旧导入逻辑与已无引用的 ImportResultDialog。
+
+**验证**
+- 新增 `tests/test_imports.py` 11 用例：预检不写业务数据、users 执行
+  +重复执行幂等+批次共用哈希、执行时唯一冲突复检、摘要确认 409、非
+  创建者 403、issue 重复/未核验/歧义预检、执行时资格复检、points
+  NaN/Infinity/零/格式/重复预检、执行期失败修复后续执不重复入账、
+  rows 分页与 CSV 全量、超长单元格/列数 400。
+- `pytest tests/ -q`：174 passed，18 skipped（本机未跑 MySQL）。
+- `alembic heads` 为 `c7e1d95b3a10`；`npm run build` 通过（3.61s）；
+  密钥扫描退出 0。

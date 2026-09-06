@@ -22,7 +22,12 @@
         <el-button type="primary" plain @click="openCreate">新增商家</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无商家">
+    <el-table v-loading="loading" :data="items" stripe>
+      <template #empty>
+        <EmptyState title="暂无商家" description="没有符合条件的商家；可调整搜索条件，或直接新增">
+          <el-button type="primary" @click="openCreate">新增商家</el-button>
+        </EmptyState>
+      </template>
       <el-table-column prop="name" label="名称" min-width="140" />
       <el-table-column prop="contact_name" label="联系人" width="120" />
       <el-table-column prop="contact_phone" label="电话" width="140" />
@@ -65,6 +70,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import api from '../../api'
+import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
 
 const items = ref([])

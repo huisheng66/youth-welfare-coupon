@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api import auth, coupons, export, merchants, points, stats, users
+from app.api import auth, coupons, export, imports, merchants, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import assert_secure_startup, get_settings
 import app.core.database as db
@@ -220,6 +220,7 @@ def create_app() -> FastAPI:
     app.include_router(stats.router, prefix="/api")
     app.include_router(points.router, prefix="/api")
     app.include_router(export.router, prefix="/api")
+    app.include_router(imports.router, prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict:

@@ -13,17 +13,28 @@
         router
         :collapse="collapsed"
         background-color="transparent"
-        text-color="#c5d0d8"
+        text-color="var(--shell-ink)"
         active-text-color="#ffffff"
         class="nav-menu"
       >
         <el-menu-item v-for="item in visibleNavItems" :key="item.path" :index="item.path">
-          <span>{{ item.label }}</span>
+          <!-- 折叠时只露图标：待审用红点提示；展开时显示数量徽标；tooltip 展示完整标签+数量 -->
           <el-badge
-            v-if="item.showPending && pendingCount > 0 && !collapsed"
-            :value="pendingCount"
-            class="badge"
-          />
+            v-if="item.showPending && pendingCount > 0 && collapsed"
+            is-dot
+            class="icon-dot"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+          </el-badge>
+          <el-icon v-else><component :is="item.icon" /></el-icon>
+          <template #title>
+            <span>{{ item.label }}</span>
+            <el-badge
+              v-if="item.showPending && pendingCount > 0"
+              :value="pendingCount"
+              class="badge"
+            />
+          </template>
         </el-menu-item>
       </el-menu>
       <button
@@ -97,6 +108,7 @@
         @select="mobileNavOpen = false"
       >
         <el-menu-item v-for="item in visibleNavItems" :key="item.path" :index="item.path">
+          <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
           <el-badge
             v-if="item.showPending && pendingCount > 0"
@@ -113,7 +125,20 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close as CloseIcon, Menu as MenuIcon } from '@element-plus/icons-vue'
+import {
+  Close as CloseIcon,
+  Document,
+  List,
+  Menu as MenuIcon,
+  Odometer,
+  Setting,
+  Shop,
+  Ticket,
+  Tickets,
+  Timer,
+  User,
+  UserFilled,
+} from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 import api from '../api'
 import { roleLabel as mapRole } from '../utils/format'
@@ -129,16 +154,16 @@ const pendingCount = ref(0)
 
 /** Single source of truth for sidebar + mobile drawer menus. */
 const navItems = [
-  { path: '/admin', label: '仪表盘' },
-  { path: '/admin/users', label: '用户核验', showPending: true },
-  { path: '/admin/merchants', label: '商家管理' },
-  { path: '/admin/templates', label: '券模板' },
-  { path: '/admin/coupons', label: '券列表' },
-  { path: '/admin/redemptions', label: '核销流水' },
-  { path: '/admin/points', label: '志愿时长', title: '志愿服务时长' },
-  { path: '/admin/accounts', label: '账号管理', superOnly: true },
-  { path: '/admin/audit', label: '审计日志', superOnly: true },
-  { path: '/admin/settings', label: '账号设置' },
+  { path: '/admin', label: '仪表盘', icon: Odometer },
+  { path: '/admin/users', label: '用户核验', icon: User, showPending: true },
+  { path: '/admin/merchants', label: '商家管理', icon: Shop },
+  { path: '/admin/templates', label: '券模板', icon: Ticket },
+  { path: '/admin/coupons', label: '券列表', icon: Tickets },
+  { path: '/admin/redemptions', label: '核销流水', icon: List },
+  { path: '/admin/points', label: '志愿时长', icon: Timer, title: '志愿服务时长' },
+  { path: '/admin/accounts', label: '账号管理', icon: UserFilled, superOnly: true },
+  { path: '/admin/audit', label: '审计日志', icon: Document, superOnly: true },
+  { path: '/admin/settings', label: '账号设置', icon: Setting },
 ]
 const visibleNavItems = computed(() =>
   navItems.filter((item) => !item.superOnly || isSuper.value),
@@ -176,7 +201,7 @@ watch(() => route.path, () => {
 }
 
 .aside {
-  background: #122a30;
+  background: var(--shell-bg);
   color: #fff;
   display: flex;
   flex-direction: column;
@@ -197,7 +222,7 @@ watch(() => route.path, () => {
   font-weight: 700;
   font-size: 1.125rem;
   letter-spacing: 0.04em;
-  color: #2bb5a0;
+  color: var(--brand-bright);
   text-transform: lowercase;
   font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
 }
@@ -210,7 +235,7 @@ watch(() => route.path, () => {
 
 .brand-sub {
   font-size: 0.75rem;
-  color: #9fb0b8;
+  color: var(--shell-ink-muted);
   margin-top: 2px;
   letter-spacing: 0.02em;
 }
@@ -236,15 +261,21 @@ watch(() => route.path, () => {
 }
 
 .nav-menu :deep(.el-menu-item.is-active) {
-  background: color-mix(in srgb, var(--brand) 55%, #0a1c20) !important;
+  background: color-mix(in srgb, var(--brand) 55%, var(--shell-bg-deep)) !important;
   font-weight: 600;
+}
+
+/* 折叠态红点贴在图标右上角，避免被窄宽菜单裁切 */
+.icon-dot :deep(.el-badge__content.is-dot) {
+  right: 6px;
+  top: 4px;
 }
 
 .collapse-btn {
   margin: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: transparent;
-  color: #c5d0d8;
+  color: var(--shell-ink);
   border-radius: 8px;
   padding: 8px;
   cursor: pointer;

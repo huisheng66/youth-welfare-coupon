@@ -51,12 +51,15 @@ export function ensureAuthReady() {
 }
 
 export async function logout() {
+  // 必须先清本地登录态再调后端：调用方紧接着 router.push('/login')，
+  // 若等接口返回再清理，路由守卫会因 token 仍在而把 /login 弹回业务首页，
+  // 表现为“点击退出后停留在原页面，再次点击/刷新才跳转”。
+  clearAuthState()
   try {
     await api.post('/auth/logout')
   } catch {
-    // 即便网络失败也清理本地状态
+    // 网络失败时本地状态已清理，HttpOnly Cookie 由后端过期策略兜底
   }
-  clearAuthState()
 }
 
 export function homePathByRole(role) {

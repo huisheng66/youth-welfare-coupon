@@ -41,13 +41,14 @@ test('错误密码登录失败有可读提示并可重试', async ({ page }) => 
   await expect(page).toHaveURL(/\/admin$/)
 })
 
-test('用户退出登录后访问受保护页被拦回登录页', async ({ page }) => {
+test('用户退出登录后立即跳转登录页且受保护页被拦截', async ({ page }) => {
   await uiLogin(page, ...ACC.youth1)
   await expect(page).toHaveURL(/\/user$/)
   await page.getByRole('button', { name: '退出', exact: true }).click()
-  // onLogout 未 await logout()：push('/login') 时登录标记尚未清除会被守卫
-  // 弹回首页（真实应用语义）；退出生效后直接访问受保护页应被拦回登录页
-  await page.waitForTimeout(500)
+  // logout() 先同步清本地登录态再调后端：守卫看到 token 已清空放行 /login，
+  // 点击退出后应立即跳转，无需二次点击或刷新
+  await expect(page).toHaveURL(/\/login/)
+  // 退出生效后直接访问受保护页仍会被拦回登录页
   await page.goto('/user/coupons')
   await expect(page).toHaveURL(/\/login/)
 })

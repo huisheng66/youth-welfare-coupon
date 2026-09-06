@@ -37,7 +37,12 @@
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无优惠券">
+    <el-table v-loading="loading" :data="items" stripe>
+      <template #empty>
+        <EmptyState title="暂无优惠券" description="没有符合条件的券；可在用户核验页为已通过用户发券">
+          <el-button type="primary" @click="$router.push('/admin/users')">去用户核验</el-button>
+        </EmptyState>
+      </template>
       <el-table-column prop="code" label="券码" width="140" />
       <el-table-column prop="username" label="用户" width="120" />
       <el-table-column prop="template_name" label="模板" min-width="120" />
@@ -74,6 +79,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import api, { dateRangeParams, downloadFile } from '../../api'
+import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'
 

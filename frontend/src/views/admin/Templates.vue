@@ -15,7 +15,12 @@
         <el-button type="primary" @click="openCreate">新建模板</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无模板，请先创建">
+    <el-table v-loading="loading" :data="items" stripe>
+      <template #empty>
+        <EmptyState title="暂无模板" description="创建模板后即可为已通过用户发券，或开放时长兑换">
+          <el-button type="primary" @click="openCreate">新建模板</el-button>
+        </EmptyState>
+      </template>
       <el-table-column prop="name" label="名称" min-width="120" />
       <el-table-column prop="merchant_name" label="指定商家" min-width="120" />
       <el-table-column prop="valid_days" label="有效天数" width="100" />
@@ -71,6 +76,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import api from '../../api'
+import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatHours } from '../../utils/format'
 

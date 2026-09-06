@@ -24,6 +24,16 @@
   --brand-soft: #d8f0ee;
   --accent: var(--brand);
 
+  /* —— Dark shell（管理侧栏 / 商家顶栏专用，勿用于浅色场景） —— */
+  --shell-bg: #122a30;
+  --shell-bg-deep: #0a1c20;
+  --shell-ink: #c5d0d8;
+  --shell-ink-muted: #9fb0b8;
+  /* 亮青在深色底对比度足够，但在浅色底仅约 2.3:1（低于 WCAG AA 3:1 大字门槛），
+   * 浅色场景一律使用 --brand（约 5.9:1） */
+  --brand-bright: #2bb5a0;
+  --shell-danger: #f0a8a8;
+
   /* —— Semantic —— */
   --success: #1b7f4e;
   --warning: #b45309;

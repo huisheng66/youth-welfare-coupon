@@ -15,7 +15,9 @@ from app.models.entities import (
     Role,
     UserProfile,
     UserVerification,
+    VerificationSource,
     VerifyStatus,
+    utcnow,
 )
 from app.services.points import apply_points, get_or_create_account
 
@@ -55,6 +57,8 @@ def ensure_demo_coupon(db: Session) -> None:
             issued_by=admin.id,
             issued_at=now,
             expires_at=now + timedelta(days=template.valid_days or 90),
+            template_name=template.name,
+            template_description=template.description,
         )
     )
 
@@ -139,10 +143,11 @@ def ensure_extra_demo(db: Session) -> None:
         db.add(profile)
         db.flush()
         db.add(
-            UserVerification(
-                profile_id=profile.id,
+            UserVerification.from_profile(
+                profile,
                 material_note="社区青年名单第 28 号（演示待审）",
                 status=VerifyStatus.pending,
+                source=VerificationSource.user_submit,
             )
         )
         db.add(PointAccount(user_id=youth2.id, balance=0))
@@ -228,14 +233,26 @@ def seed_if_empty(db: Session) -> None:
     db.add_all([admin, issuer, merchant_acc, demo_user])
     db.flush()
 
+    youth1_profile = UserProfile(
+        account_id=demo_user.id,
+        real_name="李青年",
+        organization="示例社区",
+        student_no="2024001001",
+        verify_status=VerifyStatus.approved,
+        remark="种子演示用户，已通过核验",
+        profile_version=1,
+    )
+    db.add(youth1_profile)
+    db.flush()
     db.add(
-        UserProfile(
-            account_id=demo_user.id,
-            real_name="李青年",
-            organization="示例社区",
-            student_no="2024001001",
-            verify_status=VerifyStatus.approved,
-            remark="种子演示用户，已通过核验",
+        UserVerification.from_profile(
+            youth1_profile,
+            material_note="种子演示账号，已通过核验",
+            status=VerifyStatus.approved,
+            source=VerificationSource.seed,
+            reviewer_id=admin.id,
+            review_note="种子数据",
+            reviewed_at=utcnow(),
         )
     )
     db.add(

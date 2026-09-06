@@ -34,6 +34,9 @@ REQUIRED_LEGACY_TABLES = frozenset(
 REQUIRED_SCHEMA_COLUMNS = {
     "accounts": ("session_version", "must_change_password"),
     "redemption_logs": ("reason",),
+    "user_profiles": ("profile_version",),
+    "user_verifications": ("snapshot_version", "source"),
+    "coupon_instances": ("template_name", "template_description"),
 }
 
 
@@ -375,6 +378,41 @@ def ensure_schema(engine: Engine) -> None:
     _add_column_if_missing(engine, "user_profiles", "bank_card_last4", "bank_card_last4 VARCHAR(4) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
     _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")
+    _add_column_if_missing(
+        engine, "user_profiles", "profile_version", "profile_version INTEGER DEFAULT 1 NOT NULL"
+    )
+    _add_column_if_missing(
+        engine,
+        "user_verifications",
+        "snapshot_real_name",
+        "snapshot_real_name VARCHAR(64) DEFAULT '' NOT NULL",
+    )
+    _add_column_if_missing(
+        engine,
+        "user_verifications",
+        "snapshot_student_no",
+        "snapshot_student_no VARCHAR(64) DEFAULT '' NOT NULL",
+    )
+    _add_column_if_missing(
+        engine,
+        "user_verifications",
+        "snapshot_organization",
+        "snapshot_organization VARCHAR(128) DEFAULT '' NOT NULL",
+    )
+    _add_column_if_missing(
+        engine,
+        "user_verifications",
+        "snapshot_version",
+        "snapshot_version INTEGER DEFAULT 0 NOT NULL",
+    )
+    _add_column_if_missing(
+        engine,
+        "user_verifications",
+        "source",
+        "source VARCHAR(32) DEFAULT 'legacy_unknown' NOT NULL",
+    )
+    _add_column_if_missing(engine, "coupon_instances", "template_name", "template_name VARCHAR(128)")
+    _add_column_if_missing(engine, "coupon_instances", "template_description", "template_description TEXT")
     _widen_email_code_column(engine)
     _migrate_hours_to_decimal(engine)
     _ensure_indexes(engine)

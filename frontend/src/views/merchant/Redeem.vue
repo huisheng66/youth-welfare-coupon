@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <div class="page-card" style="margin-bottom:16px">
+  <div class="redeem-page">
+    <div class="page-card stats-card" style="margin-bottom:16px">
       <h2 class="page-title">{{ stats?.merchant_name || '本店' }}</h2>
       <p class="page-desc">仅可核销本店适用券；支持扫用户动态二维码或粘贴券码</p>
       <el-skeleton v-if="!stats" animated :rows="2" />
@@ -24,7 +24,7 @@
       </div>
     </div>
 
-    <div class="page-card" style="margin-bottom:16px">
+    <div class="page-card scan-card" style="margin-bottom:16px">
       <div class="page-header">
         <div>
           <h2 class="page-title">扫码核销</h2>
@@ -39,15 +39,15 @@
       <QrScanner ref="scannerRef" @scan="onScanned" />
     </div>
 
-    <div class="page-card">
+    <div class="page-card code-card">
       <h2 class="page-title">券码核销</h2>
-      <p class="page-desc">也可手动粘贴动态码 / 输入永久码</p>
+      <p class="page-desc">也可手动粘贴用户出示的动态码（永久编号已不能核销）</p>
       <el-input
         v-model="code"
         size="large"
         type="textarea"
         :rows="3"
-        placeholder="粘贴动态券码，或输入永久券码（Ctrl+Enter 预览）"
+        placeholder="粘贴动态券码（Ctrl+Enter 预览）"
         clearable
         @keydown.ctrl.enter.prevent="onPreview"
       />
@@ -80,7 +80,7 @@
       />
     </div>
 
-    <div class="page-card" style="margin-top:16px">
+    <div class="page-card recent-card" style="margin-top:16px">
       <div class="page-header">
         <div>
           <h2 class="page-title">今日 / 近期核销</h2>
@@ -244,3 +244,34 @@ onMounted(() => {
   loadRecent()
 })
 </script>
+
+<style scoped>
+/* 手机端商家打开页面即扫：扫码核销 → 券码核销 → 数据看板 → 近期核销；
+ * 桌面端保持原顺序（数据看板 → 扫码核销 → 券码核销 → 近期核销） */
+@media (max-width: 640px) {
+  .redeem-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .scan-card {
+    order: 1;
+  }
+
+  .code-card {
+    order: 2;
+    margin-bottom: 16px;
+  }
+
+  .stats-card {
+    order: 3;
+  }
+
+  .recent-card {
+    order: 4;
+    /* stats-card 的 margin-bottom 已提供 16px 间距；flex 容器内边距不折叠，
+     * !important 用于覆盖内联 margin-top 避免叠加成 32px */
+    margin-top: 0 !important;
+  }
+}
+</style>

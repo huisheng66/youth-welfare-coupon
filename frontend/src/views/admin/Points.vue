@@ -67,7 +67,10 @@
         </div>
         <el-button @click="loadLedger" :loading="ledgerLoading">刷新</el-button>
       </div>
-      <el-table v-loading="ledgerLoading" :data="ledger" stripe empty-text="暂无流水">
+      <el-table v-loading="ledgerLoading" :data="ledger" stripe>
+        <template #empty>
+          <EmptyState title="暂无流水" description="入账、扣减、兑换变动都会记录在这里" />
+        </template>
         <el-table-column label="用户" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ usernameOf(row.user_id) }}</template>
         </el-table-column>
@@ -99,48 +102,23 @@
       </div>
     </div>
 
-    <el-dialog v-model="importPointsVisible" title="批量导入时长" width="560px">
-      <el-alert type="info" :closable="false" style="margin-bottom:12px"
-        title="支持 .xlsx / .csv / .txt / .docx；每行：用户标识、时长(小时)、说明（可选）"
-        description="用户标识支持用户名 / 邮箱 / 手机 / 学号；时长可两位小数，负数为扣减；仅核验通过的用户可入账。"
-      />
-      <el-form label-width="90px">
-        <el-form-item label="默认说明">
-          <el-input v-model="importPointsForm.reason" placeholder="行内未填说明时使用" />
-        </el-form-item>
-      </el-form>
-      <el-upload
-        drag
-        :auto-upload="false"
-        :limit="1"
-        accept=".xlsx,.csv,.txt,.docx"
-        :on-change="onImportPointsFile"
-        :on-remove="() => (importPointsFile = null)"
-      >
-        <div class="el-upload__text">拖拽文件到此处或 <em>点击选择</em></div>
-      </el-upload>
-      <template #footer>
-        <el-button @click="downloadPointsTemplate">下载模板</el-button>
-        <el-button type="primary" :loading="importing" :disabled="!importPointsFile" @click="doImportPoints">
-          开始导入
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <ImportResultDialog v-model="importResultVisible" :result="importResult" />
+    <ImportWizard v-model="importPointsVisible" kind="points" @done="onImported" />
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import api, { downloadFile } from '../../api'
-import ImportResultDialog from '../../components/ImportResultDialog.vue'
+import ImportWizard from '../../components/ImportWizard.vue'
 import { formatHours, formatTime } from '../../utils/format'
+import { idempotencyHeader, newIdempotencyKey } from '../../utils/idempotency'
 
 const users = ref([])
 const loading = ref(false)
 const balanceText = ref('')
 const form = reactive({ user_ids: [], amount: 2, reason: '志愿服务时长入账' })
+// 同一调整/导入意图复用同一幂等键；成功后重置，重新发起的独立业务用新 key
+let grantKey = ''
 const ledger = ref([])
 const ledgerLoading = ref(false)
 const ledgerTotal = ref(0)
@@ -193,24 +171,35 @@ async function grant() {
     return
   }
   loading.value = true
+  // 同一调整意图复用同一幂等键：超时/失败后重试由服务端重放，不重复入账
+  if (!grantKey) grantKey = newIdempotencyKey()
   try {
     if (form.user_ids.length === 1) {
-      const res = await api.post('/points/grant', {
-        user_id: form.user_ids[0],
-        amount: amt,
-        reason: form.reason,
-      })
+      const res = await api.post(
+        '/points/grant',
+        {
+          user_id: form.user_ids[0],
+          amount: amt,
+          reason: form.reason,
+        },
+        { headers: idempotencyHeader(grantKey) },
+      )
       balanceText.value = `调整成功，当前余额：${formatHours(res.data.balance)} 小时`
       ElMessage.success('已调整')
     } else {
-      const res = await api.post('/points/grant-batch', {
-        user_ids: form.user_ids,
-        amount: amt,
-        reason: form.reason,
-      })
+      const res = await api.post(
+        '/points/grant-batch',
+        {
+          user_ids: form.user_ids,
+          amount: amt,
+          reason: form.reason,
+        },
+        { headers: idempotencyHeader(grantKey) },
+      )
       balanceText.value = res.data.message
       ElMessage.success(res.data.message)
     }
+    grantKey = ''
     loadLedger()
   } finally {
     loading.value = false
@@ -235,60 +224,16 @@ async function onExportLedger() {
   ElMessage.success('已开始下载')
 }
 
-// ---- 批量导入时长（名单文件：xlsx / csv / txt / docx）----
+// ---- 统一导入（T14：预检 → 确认执行 → 逐行结果，见 ImportWizard）----
 const importPointsVisible = ref(false)
-const importResultVisible = ref(false)
-const importPointsFile = ref(null)
-const importing = ref(false)
-const importResult = ref(null)
-const importPointsForm = reactive({ reason: '志愿服务时长入账' })
-const IMPORT_TIMEOUT = 60000
-
-function onImportPointsFile(uploadFile) {
-  importPointsFile.value = uploadFile?.raw || null
-}
 
 function openImportPoints() {
-  importPointsFile.value = null
   importPointsVisible.value = true
 }
 
-function downloadPointsTemplate() {
-  const blob = new Blob(
-    [
-      '\ufeff' +
-        ['用户标识（用户名/邮箱/手机/学号）,时长(小时),说明', 'youth1,2.5,社区志愿服务', '13800000001,-1,'].join('\n'),
-    ],
-    { type: 'text/csv;charset=utf-8' },
-  )
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = '时长导入模板.csv'
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-async function doImportPoints() {
-  const fd = new FormData()
-  fd.append('file', importPointsFile.value)
-  fd.append('reason', importPointsForm.reason)
-  importing.value = true
-  try {
-    const res = await api.post('/points/grant-import', fd, { timeout: IMPORT_TIMEOUT })
-    importPointsVisible.value = false
-    importResult.value = res.data
-    importResultVisible.value = true
-    if (res.data.succeeded > 0) {
-      loadLedger()
-      loadUsers()
-    }
-  } finally {
-    importing.value = false
-  }
+function onImported() {
+  loadLedger()
+  loadUsers()
 }
 
 onMounted(async () => {

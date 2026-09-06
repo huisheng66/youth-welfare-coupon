@@ -7,16 +7,12 @@
           <div class="who">商家核销 · {{ auth.account?.display_name }}</div>
         </div>
       </div>
-      <el-button
-        class="mobile-logout"
-        text
-        circle
-        :icon="SwitchButton"
-        aria-label="退出登录"
-        @click="onLogout"
-      />
+      <el-button class="mobile-logout" text @click="onLogout">退出登录</el-button>
       <nav aria-label="商家导航">
-        <router-link to="/merchant"><el-icon><Camera /></el-icon><span>核销</span></router-link>
+        <!-- /merchant 是父路由，inclusive 匹配会让「核销」在子页常驻高亮，故仅精确匹配时才激活 -->
+        <router-link to="/merchant" active-class="" exact-active-class="router-link-active">
+          <el-icon><Camera /></el-icon><span>核销</span>
+        </router-link>
         <router-link to="/merchant/logs"><el-icon><List /></el-icon><span>记录</span></router-link>
         <router-link to="/merchant/settings"><el-icon><Setting /></el-icon><span>设置</span></router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
@@ -30,7 +26,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
-import { Camera, List, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { Camera, List, Setting } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 
 const auth = useAuth()
@@ -54,7 +50,7 @@ function onLogout() {
   gap: 12px;
   flex-wrap: wrap;
   padding: 10px 20px;
-  background: #122a30;
+  background: var(--shell-bg);
   color: #fff;
   position: sticky;
   top: 0;
@@ -66,12 +62,17 @@ function onLogout() {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.brand-block > div {
+  min-width: 0;
 }
 
 .brand {
   font-weight: 700;
   font-size: 1.125rem;
-  color: #2bb5a0;
+  color: var(--brand-bright);
   letter-spacing: 0.04em;
   text-transform: lowercase;
   font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
@@ -79,8 +80,11 @@ function onLogout() {
 
 .who {
   font-size: 0.75rem;
-  color: #9fb0b8;
+  color: var(--shell-ink-muted);
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 nav {
@@ -94,7 +98,7 @@ nav a {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #c5d0d8;
+  color: var(--shell-ink);
   padding: 7px 11px;
   border-radius: 8px;
   font-size: 0.875rem;
@@ -109,7 +113,7 @@ nav a:hover {
 }
 
 nav a.router-link-active {
-  background: color-mix(in srgb, var(--brand) 50%, #0a1c20);
+  background: color-mix(in srgb, var(--brand) 50%, var(--shell-bg-deep));
   color: #fff;
   font-weight: 600;
 }
@@ -120,7 +124,7 @@ nav a:focus-visible {
 }
 
 .logout {
-  color: #f0a8a8 !important;
+  color: var(--shell-danger) !important;
   margin-left: 4px;
 }
 
@@ -143,9 +147,12 @@ nav a:focus-visible {
 
   .mobile-logout {
     display: inline-flex;
-    width: 44px;
-    height: 44px;
-    color: #f0a8a8;
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0 8px;
+    color: var(--shell-danger);
+    font-weight: 500;
+    white-space: nowrap;
   }
 
   nav {
@@ -159,7 +166,7 @@ nav a:focus-visible {
     gap: 0;
     min-height: 58px;
     padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
-    background: #122a30;
+    background: var(--shell-bg);
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 

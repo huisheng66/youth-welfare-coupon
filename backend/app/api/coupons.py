@@ -1,10 +1,11 @@
+import hashlib
 import logging
 import secrets
 import string
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -19,8 +20,6 @@ from app.models.entities import (
     Merchant,
     RedemptionLog,
     Role,
-    UserProfile,
-    VerifyStatus,
 )
 from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import Page
@@ -40,6 +39,12 @@ from app.schemas.coupon import (
     VoidCouponIn,
 )
 from app.services.audit import write_audit
+from app.services.eligibility import (
+    EligibilityError,
+    require_benefit_user,
+    require_issuable_template,
+)
+from app.services import idempotency as idem
 from app.services.live_code import create_live_code, decode_live_code, looks_like_live_code
 from app.services.coupons import expire_stale_coupons
 from app.services.import_file import (
@@ -89,7 +94,8 @@ def coupon_to_out(c: CouponInstance) -> CouponOut:
         user_id=c.user_id,
         username=user.username if user else None,
         template_id=c.template_id,
-        template_name=template.name if template else None,
+        # 优先发放时快照；历史行无快照回退模板当前名称
+        template_name=c.template_name or (template.name if template else None),
         merchant_id=c.merchant_id,
         merchant_name=merchant.name if merchant else None,
         status=c.status,
@@ -239,9 +245,8 @@ def _issue_for_user(
     quantity: int,
     admin: Account,
 ) -> list[CouponInstance]:
-    profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).first()
-    if not profile or profile.verify_status != VerifyStatus.approved:
-        raise ValueError("仅可为已核验通过的用户发券")
+    # 统一资格检查（T12）：角色/账号启用/核验状态，单条、批量与名单导入同一判定
+    require_benefit_user(db, user, action="发券")
     now = datetime.now(timezone.utc)
     expires = now + timedelta(days=template.valid_days)
     created: list[CouponInstance] = []
@@ -258,6 +263,8 @@ def _issue_for_user(
             issued_by=admin.id,
             issued_at=now,
             expires_at=expires,
+            template_name=template.name,
+            template_description=template.description,
         )
         db.add(inst)
         created.append(inst)
@@ -267,21 +274,23 @@ def _issue_for_user(
 @router.post("/issue", response_model=list[CouponOut])
 def issue_coupons(
     body: IssueCouponIn,
+    request: Request,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> list[CouponOut]:
+):
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="coupon.issue", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
     user = db.get(Account, body.user_id)
-    if not user or user.role != Role.user:
-        raise HTTPException(status_code=400, detail="目标用户无效")
     template = db.get(CouponTemplate, body.template_id)
-    if not template or not template.is_active:
-        raise HTTPException(status_code=400, detail="券模板不可用")
-    merchant = db.get(Merchant, template.merchant_id)
-    if not merchant or not merchant.is_active:
-        raise HTTPException(status_code=400, detail="关联商家不可用")
     try:
+        require_issuable_template(db, template)
         created = _issue_for_user(db, user=user, template=template, quantity=body.quantity, admin=admin)
-    except ValueError as exc:
+    except EligibilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     write_audit(
         db,
@@ -291,7 +300,15 @@ def issue_coupons(
         target_id=user.id,
         detail=f"template={template.id}, qty={body.quantity}, merchant={template.merchant_id}",
     )
-    db.commit()
+    db.flush()  # 分配实例主键（Python 端 default 在 flush 时生效）
+    loaded = _preload_coupons(db, [c.id for c in created])
+    result = [coupon_to_out(c).model_dump(mode="json") for c in loaded]
+    # 幂等记录与券写入同事务提交：不会出现“记为完成但券未落库”（T13）
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="coupon.issue", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="coupon.issue", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
     logger.info(
         "coupon.issue",
         extra={
@@ -302,22 +319,28 @@ def issue_coupons(
             "quantity": body.quantity,
         },
     )
-    loaded = _preload_coupons(db, [c.id for c in created])
-    return [coupon_to_out(c) for c in loaded]
+    return result
 
 
 @router.post("/issue-batch", response_model=BatchIssueResult)
 def issue_coupons_batch(
     body: BatchIssueCouponIn,
+    request: Request,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> BatchIssueResult:
+):
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="coupon.issue_batch", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
     template = db.get(CouponTemplate, body.template_id)
-    if not template or not template.is_active:
-        raise HTTPException(status_code=400, detail="券模板不可用")
-    merchant = db.get(Merchant, template.merchant_id)
-    if not merchant or not merchant.is_active:
-        raise HTTPException(status_code=400, detail="关联商家不可用")
+    try:
+        require_issuable_template(db, template)
+    except EligibilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     issued: list[CouponOut] = []
     failed: list[dict] = []
@@ -330,7 +353,7 @@ def issue_coupons_batch(
         try:
             created = _issue_for_user(db, user=user, template=template, quantity=body.quantity, admin=admin)
             all_created.extend(created)
-        except ValueError as exc:
+        except EligibilityError as exc:
             failed.append({"user_id": uid, "username": user.username, "reason": str(exc)})
     write_audit(
         db,
@@ -340,35 +363,59 @@ def issue_coupons_batch(
         target_id=template.id,
         detail=f"users={len(body.user_ids)}, qty_each={body.quantity}, ok={len(all_created)}, fail={len(failed)}",
     )
-    db.commit()
+    db.flush()  # 分配实例主键（Python 端 default 在 flush 时生效）
     loaded = _preload_coupons(db, [c.id for c in all_created])
     issued = [coupon_to_out(c) for c in loaded]
-    return BatchIssueResult(issued=issued, failed=failed)
+    result = BatchIssueResult(issued=issued, failed=failed).model_dump(mode="json")
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="coupon.issue_batch", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="coupon.issue_batch", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.post("/issue-import", response_model=ImportResultOut)
 def issue_coupons_import(
+    request: Request,
     file: UploadFile = File(..., description="用户标识名单（.xlsx / .csv / .txt / .docx）"),
     template_id: str = Form(...),
     quantity: int = Form(1, ge=1, le=10),
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> ImportResultOut:
+):
     """按名单文件发券：每行一个用户标识（用户名 / 邮箱 / 手机 / 学号）。
 
     复用单用户发券的全部校验（核验状态、模板/商家可用性），单行失败记入
-    errors 不中断；未核验、查无此人的行会明确报错。
+    errors 不中断；未核验、查无此人的行会明确报错。支持 Idempotency-Key：
+    同 key + 同文件重放不重复发券。
     """
     settings = get_settings()
-    template = db.get(CouponTemplate, template_id)
-    if not template or not template.is_active:
-        raise HTTPException(status_code=400, detail="券模板不可用")
-    merchant = db.get(Merchant, template.merchant_id)
-    if not merchant or not merchant.is_active:
-        raise HTTPException(status_code=400, detail="关联商家不可用")
-
+    idem_key = idem.extract_key(request)
     try:
         data = read_upload_bytes(file.file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 请求摘要以文件内容哈希代替原始文件：名单内容不入幂等记录
+    fp = idem.fingerprint(
+        {
+            "template_id": template_id,
+            "quantity": quantity,
+            "file_sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="coupon.issue_import", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
+    template = db.get(CouponTemplate, template_id)
+    try:
+        require_issuable_template(db, template)
+    except EligibilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
         rows = parse_table_file(file.filename or "", data, max_rows=settings.import_max_rows)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -397,7 +444,7 @@ def issue_coupons_import(
             continue
         try:
             created = _issue_for_user(db, user=user, template=template, quantity=quantity, admin=admin)
-        except ValueError as exc:
+        except EligibilityError as exc:
             errors.append(ImportRowError(row=lineno, identifier=token, reason=str(exc)))
             continue
         created_all.extend(created)
@@ -411,18 +458,23 @@ def issue_coupons_import(
         target_id=template.id,
         detail=f"rows={len(data_rows)}, qty_each={quantity}, ok={ok}, fail={len(errors)}",
     )
-    db.commit()
     shown = errors[:100]
     message = f"按名单发券完成：共 {len(data_rows)} 行，成功 {ok} 人（{len(created_all)} 张券），失败 {len(errors)} 行"
     if len(errors) > len(shown):
         message += "（错误明细仅显示前 100 条）"
-    return ImportResultOut(
+    result = ImportResultOut(
         total=len(data_rows),
         succeeded=ok,
         failed=len(errors),
         errors=shown,
         message=message,
-    )
+    ).model_dump(mode="json")
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="coupon.issue_import", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="coupon.issue_import", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.post("/preview", response_model=CouponOut)
@@ -485,7 +537,7 @@ def get_live_code(
         live_code=live,
         expires_in=seconds,
         expires_at=exp,
-        template_name=template.name if template else None,
+        template_name=coupon.template_name or (template.name if template else None),
         merchant_name=merchant.name if merchant else None,
     )
 

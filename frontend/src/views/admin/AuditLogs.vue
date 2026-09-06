@@ -30,7 +30,10 @@
         <el-button type="primary" @click="onFilter">查询</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无审计记录">
+    <el-table v-loading="loading" :data="items" stripe>
+      <template #empty>
+        <EmptyState title="暂无审计记录" description="发券、审核、核销等敏感操作发生后自动记录；当前筛选条件下暂无数据" />
+      </template>
       <el-table-column prop="actor_name" label="操作人" width="120" />
       <el-table-column prop="action" label="动作" width="160" />
       <el-table-column prop="target_type" label="对象类型" width="110" />
@@ -56,6 +59,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import api, { dateRangeParams } from '../../api'
+import EmptyState from '../../components/EmptyState.vue'
 import { formatTime } from '../../utils/format'
 
 const items = ref([])

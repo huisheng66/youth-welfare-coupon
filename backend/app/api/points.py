@@ -1,7 +1,8 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -17,8 +18,6 @@ from app.models.entities import (
     PointAccount,
     PointLedger,
     Role,
-    UserProfile,
-    VerifyStatus,
 )
 from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import MessageOut, Page
@@ -32,6 +31,12 @@ from app.schemas.points import (
     PointLedgerOut,
 )
 from app.services.audit import write_audit
+from app.services.eligibility import (
+    EligibilityError,
+    require_benefit_user,
+    require_exchangeable_template,
+)
+from app.services import idempotency as idem
 from app.services.points import ZERO, apply_points, get_or_create_account, quantize_hours
 from app.services.import_file import (
     KIND_POINTS,
@@ -62,7 +67,8 @@ def _coupon_out(c: CouponInstance) -> CouponOut:
         user_id=c.user_id,
         username=user.username if user else None,
         template_id=c.template_id,
-        template_name=template.name if template else None,
+        # 优先发放时快照；历史行无快照回退模板当前名称
+        template_name=c.template_name or (template.name if template else None),
         merchant_id=c.merchant_id,
         merchant_name=merchant.name if merchant else None,
         status=c.status,
@@ -137,11 +143,8 @@ def _grant_one(
     admin: Account,
 ) -> PointAccountOut:
     user = db.get(Account, user_id)
-    if not user or user.role != Role.user:
-        raise ValueError("目标用户无效")
-    profile = db.query(UserProfile).filter(UserProfile.account_id == user.id).first()
-    if not profile or profile.verify_status != VerifyStatus.approved:
-        raise ValueError("仅可为已核验用户调整时长")
+    # 统一资格检查（T12）：单人/批量/名单导入同一判定（角色/账号启用/核验状态）
+    require_benefit_user(db, user, action="调整时长")
     amount = quantize_hours(amount)
     ref_type = "grant" if amount > 0 else "adjust"
     try:
@@ -170,9 +173,17 @@ def _grant_one(
 @router.post("/grant", response_model=PointAccountOut)
 def grant_points(
     body: GrantPointsIn,
+    request: Request,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> PointAccountOut:
+):
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="points.grant", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
     try:
         out = _grant_one(
             db,
@@ -183,16 +194,30 @@ def grant_points(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    db.commit()
-    return out
+    result = out.model_dump(mode="json")
+    # 幂等记录与余额/账本写入同事务提交（T13）
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="points.grant", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="points.grant", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.post("/grant-batch", response_model=MessageOut)
 def grant_points_batch(
     body: BatchGrantPointsIn,
+    request: Request,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> MessageOut:
+):
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="points.grant_batch", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
     ok = 0
     failed: list[str] = []
     for uid in body.user_ids:
@@ -201,28 +226,47 @@ def grant_points_batch(
             ok += 1
         except ValueError as exc:
             failed.append(f"{uid[:8]}:{exc}")
-    db.commit()
     msg = f"成功 {ok} 人"
     if failed:
         msg += f"，失败 {len(failed)}：{'; '.join(failed[:5])}"
-    return MessageOut(message=msg)
+    result = MessageOut(message=msg).model_dump(mode="json")
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="points.grant_batch", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="points.grant_batch", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.post("/grant-import", response_model=ImportResultOut)
 def grant_points_import(
+    request: Request,
     file: UploadFile = File(..., description="时长名单（.xlsx / .csv / .txt / .docx）"),
     reason: str = Form("志愿服务时长入账", description="行内未填说明时使用的默认说明"),
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> ImportResultOut:
+):
     """按名单文件调整时长：每行「用户标识、时长(小时)、说明(可选)」。
 
     复用单人发放的全部校验（核验状态、两位小数、余额不为负），单行失败
-    记入 errors 不中断；时长支持负数（扣减）。
+    记入 errors 不中断；时长支持负数（扣减）。支持 Idempotency-Key：
+    同 key + 同文件重放不重复入账。
     """
     settings = get_settings()
+    idem_key = idem.extract_key(request)
     try:
         data = read_upload_bytes(file.file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    fp = idem.fingerprint(
+        {"reason": reason, "file_sha256": hashlib.sha256(data).hexdigest()}
+    )
+    if idem_key:
+        replayed = idem.replay(db, actor_id=admin.id, action="points.grant_import", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
+    try:
         rows = parse_table_file(file.filename or "", data, max_rows=settings.import_max_rows)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -275,18 +319,23 @@ def grant_points_import(
         target_type="account",
         detail=f"rows={len(data_rows)}, ok={ok}, fail={len(errors)}",
     )
-    db.commit()
     shown = errors[:100]
     message = f"按名单时长调整完成：共 {len(data_rows)} 行，成功 {ok} 行，失败 {len(errors)} 行"
     if len(errors) > len(shown):
         message += "（错误明细仅显示前 100 条）"
-    return ImportResultOut(
+    result = ImportResultOut(
         total=len(data_rows),
         succeeded=ok,
         failed=len(errors),
         errors=shown,
         message=message,
-    )
+    ).model_dump(mode="json")
+    if idem_key:
+        idem.store(db, actor_id=admin.id, action="points.grant_import", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=admin.id, action="points.grant_import", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.get("/catalog")
@@ -294,10 +343,16 @@ def exchange_catalog(
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.user, Role.super_admin, Role.issue_admin)),
 ) -> list[dict]:
+    # 目录提前过滤停用门店（T12）：不让用户点击后才发现商家不可用
     rows = (
         db.query(CouponTemplate)
+        .join(Merchant, CouponTemplate.merchant_id == Merchant.id)
         .options(joinedload(CouponTemplate.merchant))
-        .filter(CouponTemplate.is_active.is_(True), CouponTemplate.cost_points > 0)
+        .filter(
+            CouponTemplate.is_active.is_(True),
+            CouponTemplate.cost_points > 0,
+            Merchant.is_active.is_(True),
+        )
         .order_by(CouponTemplate.cost_points.asc())
         .all()
     )
@@ -323,19 +378,27 @@ def exchange_catalog(
 @router.post("/exchange", response_model=ExchangeOut)
 def exchange(
     body: ExchangeIn,
+    request: Request,
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.user)),
-) -> ExchangeOut:
-    profile = db.query(UserProfile).filter(UserProfile.account_id == account.id).first()
-    if not profile or profile.verify_status != VerifyStatus.approved:
-        raise HTTPException(status_code=400, detail="请先完成身份核验")
+):
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=account.id, action="points.exchange", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
     template = db.get(CouponTemplate, body.template_id)
-    cost = quantize_hours(getattr(template, "cost_points", 0) if template else 0)
-    if not template or not template.is_active or cost <= 0:
+    try:
+        # 统一资格检查（T12）：与发券/入账同一判定，复核期间暂停兑换
+        require_benefit_user(db, account, action="兑换")
+        require_exchangeable_template(db, template)
+    except EligibilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cost = quantize_hours(template.cost_points)
+    if cost <= 0:
         raise HTTPException(status_code=400, detail="该券不可兑换")
-    merchant = db.get(Merchant, template.merchant_id)
-    if not merchant or not merchant.is_active:
-        raise HTTPException(status_code=400, detail="关联商家不可用")
 
     # 先建券实例并 flush 取 id：兑换账本的 ref_id 关联实际券而非模板，
     # 扣减失败时整个事务回滚，不会留下“有券无扣减”或“有扣减无券”
@@ -352,6 +415,8 @@ def exchange(
         issued_by=account.id,
         issued_at=now,
         expires_at=now + timedelta(days=template.valid_days),
+        template_name=template.name,
+        template_description=template.description,
     )
     db.add(coupon)
     db.flush()
@@ -377,14 +442,18 @@ def exchange(
         target_id=template.id,
         detail=f"cost={cost}, coupon={coupon.id}",
     )
-    db.commit()
-    db.refresh(coupon)
-    db.refresh(acc)
-    return ExchangeOut(
+    result = ExchangeOut(
         message="兑换成功",
         balance=acc.balance,
         coupon=_coupon_out(coupon),
-    )
+    ).model_dump(mode="json")
+    # 幂等记录与券实例/账本同一事务提交：重放不重复扣时长、不重复出券（T13）
+    if idem_key:
+        idem.store(db, actor_id=account.id, action="points.exchange", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=account.id, action="points.exchange", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
 
 
 @router.get("/reconcile")

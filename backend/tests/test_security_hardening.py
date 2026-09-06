@@ -766,8 +766,10 @@ class TestSensitiveFileGuard(unittest.TestCase):
     def test_secret_scan_exit_codes_as_gate(self) -> None:
         """F04 补测：以子进程验证扫描脚本退出码——命中 1、干净 0。"""
         import subprocess
+        import sys
         import tempfile as _tempfile
 
+        # 用当前解释器而非裸 "python"：Linux 环境 PATH 通常只有 python3
         script = BACKEND_ROOT.parent / "scripts" / "scan_staged_secrets.py"
         with _tempfile.TemporaryDirectory() as td:
             repo = Path(td)
@@ -784,7 +786,7 @@ class TestSensitiveFileGuard(unittest.TestCase):
 
             # 干净暂存区 → 退出 0
             proc = subprocess.run(
-                ["python", str(script), "--cwd", str(repo)],
+                [sys.executable, str(script), "--cwd", str(repo)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -796,7 +798,7 @@ class TestSensitiveFileGuard(unittest.TestCase):
             )
             git("add", "config.py")
             proc = subprocess.run(
-                ["python", str(script), "--cwd", str(repo)],
+                [sys.executable, str(script), "--cwd", str(repo)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             self.assertEqual(proc.returncode, 1, proc.stdout)

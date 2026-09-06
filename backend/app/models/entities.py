@@ -40,6 +40,16 @@ class VerifyStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+    # 仅用于核验申请记录：资料更新后旧申请失效，资料状态本身不会是 superseded
+    superseded = "superseded"
+
+
+class VerificationSource(str, enum.Enum):
+    user_submit = "user_submit"
+    profile_change = "profile_change"
+    bulk_import = "bulk_import"
+    seed = "seed"
+    legacy_unknown = "legacy_unknown"
 
 
 class CouponStatus(str, enum.Enum):
@@ -104,6 +114,8 @@ class UserProfile(Base):
     bank_card_bank_name: Mapped[str] = mapped_column(String(64), default="")  # 开户行（选填）
     bank_card_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verify_status: Mapped[VerifyStatus] = mapped_column(_str_enum(VerifyStatus), default=VerifyStatus.draft, index=True)
+    # 身份字段（姓名/学号/组织）每次变更递增；核验申请快照对照此版本
+    profile_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     account = relationship("Account", back_populates="profile")
@@ -125,9 +137,29 @@ class UserVerification(Base):
     review_note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 提交时的身份快照；snapshot_version=0 表示历史未知，不能用当前资料冒充
+    snapshot_real_name: Mapped[str] = mapped_column(String(64), default="")
+    snapshot_student_no: Mapped[str] = mapped_column(String(64), default="")
+    snapshot_organization: Mapped[str] = mapped_column(String(128), default="")
+    snapshot_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source: Mapped[VerificationSource] = mapped_column(
+        _str_enum(VerificationSource), default=VerificationSource.legacy_unknown
+    )
 
     profile = relationship("UserProfile", back_populates="verifications")
     reviewer = relationship("Account", foreign_keys=[reviewer_id])
+
+    @classmethod
+    def from_profile(cls, profile: "UserProfile", **kwargs) -> "UserVerification":
+        """用当前资料生成带快照的申请记录。调用前 profile 必须已有主键。"""
+        return cls(
+            profile_id=profile.id,
+            snapshot_real_name=profile.real_name or "",
+            snapshot_student_no=profile.student_no or "",
+            snapshot_organization=profile.organization or "",
+            snapshot_version=profile.profile_version or 1,
+            **kwargs,
+        )
 
 
 class CouponTemplate(Base):
@@ -170,6 +202,10 @@ class CouponInstance(Base):
     redeemed_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("accounts.id"), nullable=True)
     redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     void_reason: Mapped[str] = mapped_column(String(255), default="")
+    # 发放时的权益快照（T12）：模板名称/描述随后续编辑变化，券面以发放时为准；
+    # 历史行为 NULL（无快照），展示回退到模板当前值，不回填伪造历史
+    template_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    template_description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user = relationship("Account", back_populates="coupons", foreign_keys=[user_id])
     template = relationship("CouponTemplate", back_populates="instances")
@@ -236,6 +272,100 @@ class PointLedger(Base):
     ref_type: Mapped[str] = mapped_column(String(32), default="")
     ref_id: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class IdempotencyRecord(Base):
+    """写操作幂等记录（T13）。
+
+    键按 操作者 + 操作类型 + 客户端键 限定范围；只保存请求摘要（SHA-256）与
+    结果关联（响应 JSON），不保存敏感原始请求体。仅记录已成功完成的操作；
+    默认保留 7 天，由 services.idempotency.sweep_expired 定期清理。
+    """
+
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "action", "key", name="uq_idempotency_scope"),
+        Index("ix_idempotency_keys_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(128))
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
+    action: Mapped[str] = mapped_column(String(48))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="completed")
+    result_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ImportBatchStatus(str, enum.Enum):
+    previewed = "previewed"  # 预检完成，待确认执行
+    executing = "executing"  # 执行中（可断点续执）
+    completed = "completed"  # 全部行处理完毕
+
+
+class ImportRowStatus(str, enum.Enum):
+    pending = "pending"  # 预检通过，待执行
+    precheck_failed = "precheck_failed"  # 预检失败（终态，不进入执行）
+    running = "running"  # 已被某个执行者领取
+    ok = "ok"
+    failed = "failed"  # 执行期失败，可通过再次执行重试
+
+
+class ImportBatch(Base):
+    """统一导入批次（T14）：预检 → 确认执行 → 逐行结果。
+
+    保存类型、操作者、文件摘要、参数、状态与计数；原始文件本身不保留
+    （仅 SHA-256 摘要用于执行确认），名单内容以逐行结构化结果形式留档。
+    """
+
+    __tablename__ = "import_batches"
+    __table_args__ = (
+        Index("ix_import_batches_actor_created_at", "actor_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(16), index=True)  # users / issue / points
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("accounts.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    file_sha256: Mapped[str] = mapped_column(String(64), default="")
+    params_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[ImportBatchStatus] = mapped_column(
+        _str_enum(ImportBatchStatus), default=ImportBatchStatus.previewed, index=True
+    )
+    total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    succeeded: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    message: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    rows = relationship("ImportRow", back_populates="batch", cascade="all, delete-orphan")
+
+
+class ImportRow(Base):
+    """导入批次逐行结果：预检/执行状态、失败原因与业务对象关联。"""
+
+    __tablename__ = "import_rows"
+    __table_args__ = (
+        Index("ix_import_rows_batch_row_no", "batch_id", "row_no"),
+        Index("ix_import_rows_batch_status", "batch_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(String(36), ForeignKey("import_batches.id"), index=True)
+    row_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    identifier: Mapped[str] = mapped_column(String(128), default="")
+    # 解析后的逻辑字段（users: 姓名/学号/...；issue: identifier；points: identifier/hours/reason）
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[ImportRowStatus] = mapped_column(
+        _str_enum(ImportRowStatus), default=ImportRowStatus.pending
+    )
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    ref_id: Mapped[str] = mapped_column(String(36), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    batch = relationship("ImportBatch", back_populates="rows")
 
 
 class EmailCodePurpose(str, enum.Enum):

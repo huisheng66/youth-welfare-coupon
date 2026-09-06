@@ -76,6 +76,7 @@ class SubmitVerificationIn(BaseModel):
 class ReviewVerificationIn(BaseModel):
     approve: bool
     review_note: str = ""
+    expected_version: int | None = None
 
     @field_validator("review_note")
     @classmethod
@@ -92,6 +93,12 @@ class VerificationOut(ORMModel):
     review_note: str
     created_at: datetime
     reviewed_at: datetime | None
+    snapshot_real_name: str = ""
+    snapshot_student_no: str = ""
+    snapshot_organization: str = ""
+    snapshot_version: int = 0
+    source: str = "legacy_unknown"
+    snapshot_available: bool = False
     # enriched fields for admin review
     user_id: str | None = None
     username: str | None = None
@@ -100,6 +107,9 @@ class VerificationOut(ORMModel):
     phone: str | None = None
     student_no: str | None = None
     organization: str | None = None
+    current_real_name: str | None = None
+    current_student_no: str | None = None
+    current_organization: str | None = None
     remark: str | None = None
     verify_status: VerifyStatus | None = None
     account_created_at: datetime | None = None
@@ -148,3 +158,19 @@ class BatchReviewIn(BaseModel):
     @classmethod
     def clean_note(cls, v: str) -> str:
         return sanitize_note(v, max_length=2000)
+
+
+class BatchReviewItemOut(BaseModel):
+    verification_id: str
+    result: str
+    message: str = ""
+
+
+class BatchReviewOut(BaseModel):
+    total: int
+    succeeded: int
+    already_processed: int = 0
+    version_conflict: int = 0
+    not_found: int = 0
+    items: list[BatchReviewItemOut]
+    message: str

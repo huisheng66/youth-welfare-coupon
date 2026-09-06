@@ -40,7 +40,10 @@
 
     <div class="page-card">
       <h2 class="page-title">时长流水</h2>
-      <el-table :data="ledger" stripe empty-text="暂无流水">
+      <el-table :data="ledger" stripe>
+        <template #empty>
+          <EmptyState title="暂无流水" description="管理员入账或自助兑换后，变动会记录在这里" />
+        </template>
         <el-table-column prop="change" label="变动" width="110">
           <template #default="{ row }">
             <span :style="{ color: row.change >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
@@ -66,6 +69,7 @@ import { useRouter } from 'vue-router'
 import api from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import { formatHours, formatTime } from '../../utils/format'
+import { idempotencyHeader, newIdempotencyKey } from '../../utils/idempotency'
 
 const router = useRouter()
 
@@ -84,13 +88,28 @@ async function load() {
   ledger.value = l.data.items
 }
 
+// 同一兑换意图复用同一幂等键：超时/失败后重试由服务端重放，不会重复扣时长
+let exchangeKey = ''
+
 async function exchange(item) {
   await ElMessageBox.confirm(
     `确认用 ${formatHours(item.cost_points)} 小时兑换「${item.name}」？兑换后不可撤销。`,
     '兑换确认',
     { type: 'warning', confirmButtonText: '确认兑换', cancelButtonText: '取消' },
   )
-  const res = await api.post('/points/exchange', { template_id: item.id })
+  if (!exchangeKey) exchangeKey = newIdempotencyKey()
+  let res
+  try {
+    res = await api.post(
+      '/points/exchange',
+      { template_id: item.id },
+      { headers: idempotencyHeader(exchangeKey) },
+    )
+  } catch (err) {
+    // 保留 key：用户重试本次兑换时复用，服务端按 key 重放原结果
+    throw err
+  }
+  exchangeKey = ''
   ElMessage.success(`兑换成功，券码 ${res.data.coupon.code}`)
   const couponId = res.data.coupon?.id
   if (couponId) {

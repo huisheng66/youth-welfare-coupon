@@ -18,7 +18,14 @@
           </el-form-item>
           <el-form-item label="验证码" required>
             <div class="code-row">
-              <el-input v-model="forgot.code" size="large" maxlength="8" placeholder="6 位验证码" />
+              <el-input
+                v-model="forgot.code"
+                size="large"
+                maxlength="6"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                placeholder="6 位数字验证码"
+              />
               <el-button
                 size="large"
                 :disabled="forgotCooldown > 0 || codeSending"
@@ -82,7 +89,14 @@
             </el-form-item>
             <el-form-item label="邮箱验证码" required>
               <div class="code-row">
-                <el-input v-model="reg.code" size="large" maxlength="8" placeholder="6 位验证码" />
+                <el-input
+                  v-model="reg.code"
+                  size="large"
+                  maxlength="6"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  placeholder="6 位数字验证码"
+                />
                 <el-button
                   size="large"
                   :disabled="regCooldown > 0 || codeSending"
@@ -347,11 +361,12 @@ onUnmounted(() => {
 }
 h1 {
   margin: 0 0 4px;
-  font-size: 1.75rem;
+  /* 收敛到字阶上限 22px；浅色背景用 --brand 保证对比度（亮青仅 2.3:1 不达标） */
+  font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1.25;
-  color: #2bb5a0;
+  color: var(--brand);
   text-transform: lowercase;
   font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
   text-wrap: balance;

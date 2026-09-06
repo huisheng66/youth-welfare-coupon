@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session, joinedload
@@ -8,13 +7,23 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import require_roles
 from app.core.security import hash_password
-from app.models.entities import Account, Role, UserProfile, UserVerification, VerifyStatus, utcnow
+from app.models.entities import (
+    Account,
+    Role,
+    UserProfile,
+    UserVerification,
+    VerificationSource,
+    VerifyStatus,
+    utcnow,
+)
 from app.schemas.bulk_import import ImportResultOut, ImportRowError
 from app.schemas.common import MessageOut, Page
 from app.schemas.user import (
     BankCardIn,
     BankCardPlainOut,
     BatchReviewIn,
+    BatchReviewItemOut,
+    BatchReviewOut,
     ProfileUpdateIn,
     ReviewVerificationIn,
     SubmitVerificationIn,
@@ -26,6 +35,16 @@ from app.services.crypto import decrypt_text, encrypt_text, mask_bank_card, vali
 from app.services.import_file import KIND_USERS, map_columns, parse_table_file, read_upload_bytes
 from app.services.mail import send_email_html
 from app.services.points import get_or_create_account
+from app.services.verifications import (
+    RESULT_ALREADY,
+    RESULT_CONFLICT,
+    RESULT_MESSAGES,
+    RESULT_NOT_FOUND,
+    RESULT_SUCCESS,
+    apply_review,
+    bump_identity_version,
+    supersede_pending,
+)
 from app.services.sanitize import (
     password_has_letter_and_digit,
     sanitize_note,
@@ -129,16 +148,32 @@ def _user_item(
     )
 
 
+def _source_value(verification: UserVerification) -> str:
+    source = verification.source
+    return source.value if hasattr(source, "value") else (source or VerificationSource.legacy_unknown.value)
+
+
 def _enrich_verification(db: Session, verification: UserVerification) -> VerificationOut:
     data = VerificationOut.model_validate(verification)
+    data.source = _source_value(verification)
+    data.snapshot_available = bool(verification.snapshot_version)
+    # 有快照时身份字段只展示申请当时内容；历史未知不回填当前资料
+    if data.snapshot_available:
+        data.real_name = verification.snapshot_real_name
+        data.student_no = verification.snapshot_student_no
+        data.organization = verification.snapshot_organization
+    else:
+        data.real_name = ""
+        data.student_no = ""
+        data.organization = ""
     # List endpoints eager-load this graph; retain a lazy fallback for single-row writes.
     profile = verification.profile
     if profile:
         acc = profile.account
         data.user_id = profile.account_id
-        data.real_name = profile.real_name
-        data.organization = profile.organization
-        data.student_no = profile.student_no
+        data.current_real_name = profile.real_name
+        data.current_student_no = profile.student_no
+        data.current_organization = profile.organization
         data.remark = profile.remark
         data.verify_status = profile.verify_status
         data.bank_card_bound = bool(profile.bank_card_encrypted)
@@ -157,6 +192,14 @@ def _enrich_verification(db: Session, verification: UserVerification) -> Verific
     if verification.reviewer:
         data.reviewer_name = verification.reviewer.display_name or verification.reviewer.username
     return data
+
+
+def _review_http_error(result: str) -> None:
+    if result == RESULT_NOT_FOUND:
+        raise HTTPException(status_code=404, detail=RESULT_MESSAGES[result])
+    if result == RESULT_CONFLICT:
+        raise HTTPException(status_code=409, detail=RESULT_MESSAGES[result])
+    raise HTTPException(status_code=400, detail=RESULT_MESSAGES.get(result, "审核失败"))
 
 
 @router.get("/me/profile", response_model=UserListItem)
@@ -197,24 +240,28 @@ def update_my_profile(
         setattr(profile, field, value.strip())
     if body.remark is not None:
         profile.remark = body.remark
-    if identity_changed and profile.verify_status == VerifyStatus.approved:
-        # 已核验身份资料变更后立即暂停资格，并自动生成待审记录，避免绕过复核继续发券/兑换。
-        profile.verify_status = VerifyStatus.pending
-        db.add(
-            UserVerification(
-                profile_id=profile.id,
-                material_note="已核验身份资料发生变更，需重新审核",
-                status=VerifyStatus.pending,
+    if identity_changed:
+        bump_identity_version(profile)
+        if profile.verify_status in (VerifyStatus.approved, VerifyStatus.pending):
+            # 已核验或待审期间身份变更：旧申请失效，新快照进入待审，避免旧决定批准新资料。
+            superseded = supersede_pending(db, profile)
+            profile.verify_status = VerifyStatus.pending
+            db.add(
+                UserVerification.from_profile(
+                    profile,
+                    material_note="身份资料发生变更，需重新审核",
+                    status=VerifyStatus.pending,
+                    source=VerificationSource.profile_change,
+                )
             )
-        )
-        write_audit(
-            db,
-            actor_id=account.id,
-            action="profile_change_requires_review",
-            target_type="profile",
-            target_id=profile.id,
-            detail="verified identity fields changed",
-        )
+            write_audit(
+                db,
+                actor_id=account.id,
+                action="profile_change_requires_review",
+                target_type="profile",
+                target_id=profile.id,
+                detail=f"identity fields changed superseded={superseded}",
+            )
     db.commit()
     return my_profile(account, db)
 
@@ -343,10 +390,11 @@ def submit_verification(
         raise HTTPException(status_code=400, detail="已有待审核申请")
     if not profile.real_name:
         raise HTTPException(status_code=400, detail="请先完善真实姓名等基本资料")
-    verification = UserVerification(
-        profile_id=profile.id,
+    verification = UserVerification.from_profile(
+        profile,
         material_note=body.material_note,
         status=VerifyStatus.pending,
+        source=VerificationSource.user_submit,
     )
     profile.verify_status = VerifyStatus.pending
     db.add(verification)
@@ -460,6 +508,7 @@ def import_users(
     seen_phones: set[str] = set()
     seen_emails: set[str] = set()
     to_notify: list[tuple[str, str, str]] = []  # (email, username, display_name)
+    import_filename = (file.filename or "unnamed").strip() or "unnamed"
 
     for lineno, row in enumerate(data_rows, start=1):
         real_name = sanitize_plain_text(cell_of(row, "real_name", 0), max_length=64)
@@ -529,14 +578,26 @@ def import_users(
             )
             db.add(account)
             db.flush()
+            profile = UserProfile(
+                account_id=account.id,
+                real_name=real_name,
+                student_no=student_no,
+                organization=organization,
+                remark=remark,
+                verify_status=VerifyStatus.approved,
+                profile_version=1,
+            )
+            db.add(profile)
+            db.flush()
             db.add(
-                UserProfile(
-                    account_id=account.id,
-                    real_name=real_name,
-                    student_no=student_no,
-                    organization=organization,
-                    remark=remark,
-                    verify_status=VerifyStatus.approved,
+                UserVerification.from_profile(
+                    profile,
+                    material_note=f"名单导入直接核验（文件：{import_filename}，操作者：{admin.username}）",
+                    status=VerifyStatus.approved,
+                    source=VerificationSource.bulk_import,
+                    reviewer_id=admin.id,
+                    review_note="名单导入直接核验",
+                    reviewed_at=utcnow(),
                 )
             )
             get_or_create_account(db, account.id)
@@ -587,41 +648,6 @@ def import_users(
     )
 
 
-def _apply_review(
-    db: Session,
-    verification: UserVerification,
-    admin: Account,
-    approve: bool,
-    review_note: str,
-) -> UserVerification:
-    if verification.status != VerifyStatus.pending:
-        raise HTTPException(status_code=400, detail="该申请已处理")
-    profile = db.get(UserProfile, verification.profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="用户资料不存在")
-    now = datetime.now(timezone.utc)
-    if approve:
-        verification.status = VerifyStatus.approved
-        profile.verify_status = VerifyStatus.approved
-        action = "approve_verification"
-    else:
-        verification.status = VerifyStatus.rejected
-        profile.verify_status = VerifyStatus.rejected
-        action = "reject_verification"
-    verification.reviewer_id = admin.id
-    verification.review_note = review_note
-    verification.reviewed_at = now
-    write_audit(
-        db,
-        actor_id=admin.id,
-        action=action,
-        target_type="verification",
-        target_id=verification.id,
-        detail=review_note,
-    )
-    return verification
-
-
 @router.post("/verifications/{verification_id}/review", response_model=VerificationOut)
 def review_verification(
     verification_id: str,
@@ -629,31 +655,63 @@ def review_verification(
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> VerificationOut:
-    verification = db.get(UserVerification, verification_id)
-    if not verification:
-        raise HTTPException(status_code=404, detail="审核记录不存在")
-    _apply_review(db, verification, admin, body.approve, body.review_note)
+    result, verification = apply_review(
+        db,
+        verification_id,
+        admin,
+        body.approve,
+        body.review_note,
+        expected_version=body.expected_version,
+    )
+    if result != RESULT_SUCCESS or verification is None:
+        db.rollback()
+        _review_http_error(result)
     db.commit()
     db.refresh(verification)
     return _enrich_verification(db, verification)
 
 
-@router.post("/verifications/batch-review", response_model=MessageOut)
+@router.post("/verifications/batch-review", response_model=BatchReviewOut)
 def batch_review(
     body: BatchReviewIn,
     db: Session = Depends(get_db),
     admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
-) -> MessageOut:
-    count = 0
+) -> BatchReviewOut:
+    items: list[BatchReviewItemOut] = []
+    counts = {
+        RESULT_SUCCESS: 0,
+        RESULT_ALREADY: 0,
+        RESULT_CONFLICT: 0,
+        RESULT_NOT_FOUND: 0,
+    }
     for vid in body.verification_ids:
-        verification = db.get(UserVerification, vid)
-        if not verification or verification.status != VerifyStatus.pending:
-            continue
-        _apply_review(db, verification, admin, body.approve, body.review_note)
-        count += 1
+        result, _verification = apply_review(
+            db, vid, admin, body.approve, body.review_note
+        )
+        counts[result] = counts.get(result, 0) + 1
+        items.append(
+            BatchReviewItemOut(
+                verification_id=vid,
+                result=result,
+                message=RESULT_MESSAGES.get(result, result),
+            )
+        )
     db.commit()
     action = "通过" if body.approve else "驳回"
-    return MessageOut(message=f"已批量{action} {count} 条")
+    succeeded = counts[RESULT_SUCCESS]
+    message = (
+        f"批量{action}完成：成功 {succeeded} 条，已处理 {counts[RESULT_ALREADY]} 条，"
+        f"版本冲突 {counts[RESULT_CONFLICT]} 条，不存在 {counts[RESULT_NOT_FOUND]} 条"
+    )
+    return BatchReviewOut(
+        total=len(body.verification_ids),
+        succeeded=succeeded,
+        already_processed=counts[RESULT_ALREADY],
+        version_conflict=counts[RESULT_CONFLICT],
+        not_found=counts[RESULT_NOT_FOUND],
+        items=items,
+        message=message,
+    )
 
 
 @router.get("/{user_id}", response_model=UserListItem)

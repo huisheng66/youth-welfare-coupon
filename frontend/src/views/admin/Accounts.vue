@@ -24,7 +24,10 @@
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="items" stripe empty-text="暂无账号">
+      <el-table v-loading="loading" :data="items" stripe>
+        <template #empty>
+          <EmptyState title="暂无账号" description="没有符合条件的账号；可在下方创建发券管理员或商家账号" />
+        </template>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="email" label="邮箱" min-width="160" show-overflow-tooltip />
         <el-table-column prop="display_name" label="昵称" min-width="120" />

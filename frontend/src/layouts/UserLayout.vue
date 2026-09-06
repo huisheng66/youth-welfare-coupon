@@ -16,10 +16,13 @@
         @click="onLogout"
       />
       <nav aria-label="用户导航">
-        <router-link to="/user"><el-icon><HomeFilled /></el-icon><span>首页</span></router-link>
+        <!-- /user 是父路由，inclusive 匹配会让「首页」在子页常驻高亮，故仅精确匹配时才激活 -->
+        <router-link to="/user" active-class="" exact-active-class="router-link-active">
+          <el-icon><HomeFilled /></el-icon><span>首页</span>
+        </router-link>
         <router-link to="/user/profile"><el-icon><User /></el-icon><span>资料</span></router-link>
         <router-link to="/user/coupons"><el-icon><Ticket /></el-icon><span>我的券</span></router-link>
-        <router-link to="/user/points"><el-icon><Timer /></el-icon><span>兑换</span></router-link>
+        <router-link to="/user/points"><el-icon><Timer /></el-icon><span>时长兑换</span></router-link>
         <router-link to="/user/settings"><el-icon><Setting /></el-icon><span>设置</span></router-link>
         <el-button link class="logout" @click="onLogout">退出</el-button>
       </nav>
@@ -72,7 +75,8 @@ function onLogout() {
 .brand {
   font-weight: 700;
   font-size: 1.125rem;
-  color: #2bb5a0;
+  /* 浅色顶栏上用 --brand 保证对比度；亮青 --brand-bright 仅限深色 shell */
+  color: var(--brand);
   letter-spacing: 0.04em;
   text-transform: lowercase;
   font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;

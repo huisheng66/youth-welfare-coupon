@@ -19,6 +19,11 @@ KIND_ISSUE = "issue"
 KIND_POINTS = "points"
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+# 解析阶段资源上限（T14）：列数、单元格长度、Office 解压体积与压缩比
+MAX_COLUMNS_PER_ROW = 64
+MAX_CELL_LENGTH = 512
+MAX_DECOMPRESSED_BYTES = 50 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
 
 # 无表头时的固定列序（每种导入类型）
 KIND_POSITIONAL_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -74,9 +79,31 @@ def _cell_str(v) -> str:
     return str(v).strip()
 
 
+def _check_zip_sizes(data: bytes) -> None:
+    """Office 文件（zip）解压体积与压缩比检查，快速拒绝 zip 炸弹。
+
+    在 openpyxl/python-docx 解析前执行：仅读 zip 目录，不解压内容。
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total = sum(info.file_size for info in zf.infolist())
+            compressed = sum(info.compress_size for info in zf.infolist())
+    except zipfile.BadZipFile:
+        return  # 非 zip 内容交给后续解析器报「无法解析」
+    if total > MAX_DECOMPRESSED_BYTES:
+        raise ValueError(
+            f"文件解压后体积过大（上限 {MAX_DECOMPRESSED_BYTES // 1024 // 1024} MB），已拒绝解析"
+        )
+    if compressed > 0 and total / max(compressed, 1) > MAX_COMPRESSION_RATIO:
+        raise ValueError("文件压缩比异常（疑似压缩炸弹），已拒绝解析")
+
+
 def _parse_xlsx(data: bytes) -> list[list[str]]:
     from openpyxl import load_workbook
 
+    _check_zip_sizes(data)
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         try:
@@ -84,6 +111,8 @@ def _parse_xlsx(data: bytes) -> list[list[str]]:
             return [[_cell_str(v) for v in row] for row in ws.iter_rows(values_only=True)]
         finally:
             wb.close()
+    except ValueError:
+        raise
     except Exception as exc:  # BadZipFile / KeyError / InvalidFileException 等 → 统一 400
         raise ValueError(f"xlsx 文件无法解析：{exc}") from exc
 
@@ -91,8 +120,11 @@ def _parse_xlsx(data: bytes) -> list[list[str]]:
 def _parse_docx(data: bytes) -> list[list[str]]:
     import docx  # python-docx
 
+    _check_zip_sizes(data)
     try:
         document = docx.Document(io.BytesIO(data))
+    except ValueError:
+        raise
     except Exception as exc:  # BadZipFile / PackageNotFoundError 等 → 统一 400
         raise ValueError(f"docx 文件无法解析：{exc}") from exc
     if document.tables:
@@ -140,6 +172,12 @@ def parse_table_file(filename: str, data: bytes, *, max_rows: int) -> list[list[
         raise ValueError("文件中没有数据")
     if len(cleaned) > max_rows:
         raise ValueError(f"数据行数 {len(cleaned)} 超过上限 {max_rows}，请分批导入")
+    for lineno, row in enumerate(cleaned, start=1):
+        if len(row) > MAX_COLUMNS_PER_ROW:
+            raise ValueError(f"第 {lineno} 行列数 {len(row)} 超过上限 {MAX_COLUMNS_PER_ROW}")
+        for cell in row:
+            if len(cell) > MAX_CELL_LENGTH:
+                raise ValueError(f"第 {lineno} 行存在超长单元格（上限 {MAX_CELL_LENGTH} 字符）")
     return cleaned
 
 
@@ -183,26 +221,50 @@ def resolve_user(db: Session, token: str) -> Account | None:
     学号可能重复（转学/重号），匹配不唯一或查无此人时返回 None，
     由调用方记为行级错误。
     """
+    account, _reason = resolve_user_detailed(db, token)
+    return account
+
+
+def resolve_user_detailed(db: Session, token: str) -> tuple[Account | None, str | None]:
+    """标识解析（T14）：返回 (账号, 失败原因)。
+
+    匹配优先级：用户名 → 邮箱 → 手机 → 学号（姓名不作为唯一标识）。
+    - 同一标识跨字段命中不同用户 → 歧义，必须报告而不是静默取第一个；
+    - 学号命中多个用户 → 歧义；
+    - 全部未命中 → 查无此人。
+    """
     token = (token or "").strip()
     if not token:
-        return None
+        return None, "用户标识为空"
     q = db.query(Account).filter(Account.role == Role.user)
+    hits: dict[str, Account] = {}
+
     account = q.filter(Account.username == token).first()
     if account:
-        return account
+        hits[account.id] = account
     account = q.filter(Account.email == token.lower()).first()
     if account:
-        return account
+        hits[account.id] = account
     account = q.filter(Account.phone == token).first()
     if account:
-        return account
-    profiles = (
-        db.query(UserProfile)
-        .join(Account, UserProfile.account_id == Account.id)
-        .filter(UserProfile.student_no == token, Account.role == Role.user)
-        .limit(2)
-        .all()
-    )
-    if len(profiles) == 1:
-        return db.get(Account, profiles[0].account_id)
-    return None
+        hits[account.id] = account
+    if not hits:
+        profiles = (
+            db.query(UserProfile)
+            .join(Account, UserProfile.account_id == Account.id)
+            .filter(UserProfile.student_no == token, Account.role == Role.user)
+            .limit(2)
+            .all()
+        )
+        if len(profiles) > 1:
+            return None, "学号匹配到多个用户，存在歧义，请改用用户名/手机/邮箱"
+        if len(profiles) == 1:
+            account = db.get(Account, profiles[0].account_id)
+            if account:
+                hits[account.id] = account
+
+    if len(hits) > 1:
+        return None, "该标识在不同字段命中多个用户，存在歧义，请改用更精确的标识"
+    if hits:
+        return next(iter(hits.values())), None
+    return None, "用户不存在或无法唯一识别（支持用户名/邮箱/手机/学号）"

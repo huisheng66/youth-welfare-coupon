@@ -14,11 +14,23 @@ export function formatTime(v) {
 }
 
 export function verifyStatusText(s) {
-  return { draft: '未提交', pending: '待审核', approved: '已通过', rejected: '已驳回' }[s] || s || '-'
+  return {
+    draft: '未提交',
+    pending: '待审核',
+    approved: '已通过',
+    rejected: '已驳回',
+    superseded: '已失效',
+  }[s] || s || '-'
 }
 
 export function verifyStatusType(s) {
-  return { draft: 'info', pending: 'warning', approved: 'success', rejected: 'danger' }[s] || 'info'
+  return {
+    draft: 'info',
+    pending: 'warning',
+    approved: 'success',
+    rejected: 'danger',
+    superseded: 'info',
+  }[s] || 'info'
 }
 
 export function couponStatusText(s) {

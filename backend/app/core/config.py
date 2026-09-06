@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     import_initial_password: str = "youth123456"
     # 读取路径过期券扫描节流（秒），0 = 每次列表请求都扫描
     coupon_expire_scan_interval: int = 30
+    # 写操作幂等记录保留天数（T13）：短期请求幂等与长期业务批次留档区分
+    idempotency_retention_days: int = 7
+    # 幂等记录清理节流（秒），进程内复用与过期券扫描相同的节流模式
+    idempotency_sweep_interval: int = 300
 
     # 认证 Cookie：将 JWT 从 localStorage 迁到 HttpOnly Cookie，消除 XSS 窃取 token 的链路
     auth_cookie_name: str = "token"

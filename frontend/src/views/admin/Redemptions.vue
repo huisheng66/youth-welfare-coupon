@@ -35,7 +35,10 @@
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe empty-text="暂无核销记录">
+    <el-table v-loading="loading" :data="items" stripe>
+      <template #empty>
+        <EmptyState title="暂无核销记录" description="核销成功与失败记录都会出现在这里；当前筛选条件下暂无数据" />
+      </template>
       <el-table-column prop="code" label="券码" min-width="140" show-overflow-tooltip />
       <el-table-column prop="merchant_name" label="商家" min-width="120" />
       <el-table-column prop="username" label="用户" width="110" />
@@ -71,6 +74,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import api, { dateRangeParams, downloadFile } from '../../api'
+import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { formatTime, redeemResultType } from '../../utils/format'
 

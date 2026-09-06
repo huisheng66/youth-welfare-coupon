@@ -1,11 +1,11 @@
 # 安全加固交接
 
-更新时间：2026-09-05（第二批：T08–T10、T20 与审查报告 F01–F05）
+更新时间：2026-09-06（第七批：T14 统一导入）
 
 ## 已完成
 
-`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-05 第二批，除最初的四项外，
-`docs/开发计划.md` 中的 T00–T10、T19（部分）、T20 已实施：
+`log.md` 已记录并通过对应回归测试的修改。截至 2026-09-06 第七批，
+`docs/开发计划.md` 中的 T00–T14、T19（部分）、T20、T21（部分）已实施：
 
 1. 生产环境不返回邮箱验证码。
 2. 后端强制首次改密。
@@ -27,8 +27,8 @@
 18. T08 生产 worker 只读校验 schema；DDL 由 `deploy/migrate-release.sh`（迁移账号）发布期执行。
 19. T09 `setup-mysql.sql` 三账号拆分（app/migrate/backup，仅 localhost 最小权限）。
 20. T10 备份临时文件+校验+原子发布；`deploy/restore-mysql.sh` 恢复并自动对账。
-21. T20 `tests/test_mysql_concurrency.py`（10 用例）与 `tests/test_mysql_migration.py`
-    （6 用例）在本地临时 MySQL 8.4 全部通过；CI 已配 mysql:8.4 service。
+21. T20 `tests/test_mysql_concurrency.py`（11 用例，含 T11 双审核竞争）与
+    `tests/test_mysql_migration.py`（6 用例）；CI 已配 mysql:8.4 service。
 22. F06 夹具自动供给修复：`--init-file` 创建可 TCP 连入的 `welfare_t20` 测试账户，
     供给失败一律 skip 而非 error；不设 `MYSQL_TEST_URL` 时 16 个 MySQL 用例自动
     供给临时实例并全过（连续 3 轮）。
@@ -38,6 +38,24 @@
     连续 3 轮全绿；CI 新增 frontend-e2e job（失败自动上传 trace）。真实手机摄像头
     与 HTTPS 信任待实机验收。
 25. SQLite 连接补 busy_timeout=30s（并发轮询+写事务下避免 database is locked）。
+26. T11 核验申请保存姓名/学号/组织快照与资料版本；待审期间改资料会使旧申请
+    superseded，旧决定不能批准新资料；双人审核条件更新单胜者；批量审核返回逐条
+    结果；名单导入写入 `bulk_import` 来源记录。
+27. 前端退出登录先清本地态；管理空状态、侧栏图标、商家扫码页手机顺序与验证码
+    6 位输入已收口。
+28. T12 资格规则统一：`services/eligibility.py` 集中账号/核验/门店/模板资格判定，
+    发券（单条/批量/名单）与时长调整、兑换复用；停用账号新增拦截；兑换目录过滤
+    停用门店；券实例保存发放时模板快照（历史行回退模板当前值）；行为矩阵见
+    `PRODUCT.md`「业务资格规则」。
+29. T13 写操作幂等：`idempotency_keys` 表（actor+action+key 唯一）+
+    `services/idempotency.py`；发券/时长/兑换 7 接口支持 `Idempotency-Key`
+    重放、同 key 不同请求 409、并发单胜者；记录与业务写入同事务、仅存摘要
+    与结果、保留 7 天；前端按操作意图复用 key。
+30. T14 统一导入：`import_batches`/`import_rows` 表 + `services/imports.py`
+    （预检不写业务数据、逐行独立事务、断点续执只重试失败行）；`/imports`
+    preview/execute/detail/rows/rows.csv 五接口；歧义解析、文件内重复拒绝、
+    解析资源上限（列数/单元格/zip 防爆/NaN）；users 批次共用密码哈希；
+    前端 `ImportWizard` 替换三个导入入口。旧导入端点阶段性保留。
 
 ### E2E 运行方式
 
@@ -53,7 +71,7 @@ npm run e2e        # 首次需 npx playwright install chromium
 - `e2e/run-frontend.mjs` 的 chdir 启动器是为非 ASCII 项目根 + 特定 shell 会话的
   spawn 限制所设，常规环境同样适用，无需特殊配置。
 
-当前迁移链 head 为 `cf60b31a7e22`。发布迁移执行方式已变更：**先**
+当前迁移链 head 为 `c7e1d95b3a10`（`b6c2f84a1d09` 之后新增 import_batches/import_rows）。发布迁移执行方式已变更：**先**
 `MIGRATE_DATABASE_URL=... bash deploy/migrate-release.sh`（迁移账号），**再**启动应用；
 生产 worker 启动只做只读 schema 校验，版本落后或缺列会拒绝启动。
 
@@ -65,17 +83,15 @@ $env:MYSQL_TEST_URL = "mysql+pymysql://root@127.0.0.1:33307"   # 指向一次性
 .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-结果为 153 passed（2026-09-05 全量回归含 MySQL 套件）。前端 `npm run build` 通过
-（本批无前端改动）。
+SQLite 回归全量 174 passed，18 skipped（本机未跑 MySQL，CI 真实运行）。前端
+`npm run build` 通过；密钥扫描门禁退出 0。
 
 ## 后续顺序
 
 按 `docs/开发计划.md` 第 12 节检查表推进：
 
-1. S3 运营增强：T11 审核快照与并发审核、T12 资格规则统一、T13 写操作幂等、
-   T14 导入预检与批次、T15 激活与可靠邮件。
-2. T16–T18 体验与性能、T19 剩余项（前端 build/E2E 接入、Nuclei 修复）、
-   T21 跨平台 E2E、T22 健康与指标、T23 发布验收包。
+1. S3 运营增强剩余：T15 激活与可靠邮件。
+2. T16–T18 体验与性能、T19 剩余项（Nuclei 修复）、T22 健康与指标、T23 发布验收包。
 3. 独立运维动作（不随代码走）：历史泄漏凭据的轮换证据收集、生产服务器实际状态核实、
    季度恢复演练（首次已演练，见 log.md 2026-09-05）。
 
@@ -84,7 +100,7 @@ $env:MYSQL_TEST_URL = "mysql+pymysql://root@127.0.0.1:33307"   # 指向一次性
 - `.env` 和 `secrets/` 已加入 `.gitignore`；仍不要读取、输出、提交或删除其内容。
 - `backend/alembic/versions/2c984c17c453_baseline.py` 的 git 状态为换行符噪音，内容
   diff 为空，不要提交无意义换行变更。
-- 新增迁移不得重写既有已部署迁移；`2c984c17c453`→`cf60b31a7e22` 链保持原样。
+- 新增迁移不得重写既有已部署迁移；`2c984c17c453`→`e4f8a2c1b907` 链保持原样。
 - MySQL 回归用例读 `MYSQL_TEST_URL`（不含库名的根 URL）；未提供时自动供给一次性
   mysqld（`--init-file` 创建 `welfare_t20` 测试账户），供给失败自动 skip。注意 mysqld
   对非 ASCII 工作路径敏感，临时实例目录必须纯 ASCII。
