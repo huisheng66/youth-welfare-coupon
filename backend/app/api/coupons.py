@@ -729,9 +729,18 @@ _STATUS_REASON = {
 @router.post("/redeem", response_model=RedeemOut)
 def redeem(
     body: RedeemIn,
+    request: Request,
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.merchant)),
 ) -> RedeemOut:
+    # T16：核销支持 Idempotency-Key——响应丢失（超时）后同 key 重试重放原结果，
+    # 失败（4xx）不留记录，重试重新确定性判定
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=account.id, action="coupon.redeem", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return RedeemOut(**replayed)
     if not account.merchant_id:
         # 无绑定门店：无法满足 redemption_logs 的合法外键，走结构化日志留痕
         logger.warning(
@@ -897,7 +906,27 @@ def redeem(
         target_id=coupon.id,
         detail=coupon.code,
     )
-    db.commit()
+    # 同事务内 refresh 拿到核销后状态，构建可重放结果
+    db.refresh(coupon)
+    result = RedeemOut(message="核销成功", coupon=coupon_to_out(coupon)).model_dump(mode="json")
+    if idem_key:
+        idem.store(
+            db,
+            actor_id=account.id,
+            action="coupon.redeem",
+            key=idem_key,
+            request_hash=fp,
+            result=result,
+        )
+    raced = idem.commit_idempotent(
+        db, actor_id=account.id, action="coupon.redeem", key=idem_key, request_hash=fp
+    )
+    if raced is not None:
+        logger.info(
+            "coupon.redeem.replayed",
+            extra={"coupon_id": coupon.id, "merchant_id": account.merchant_id, "operator_id": account.id},
+        )
+        return RedeemOut(**raced)
     logger.info(
         "coupon.redeem",
         extra={
@@ -907,9 +936,7 @@ def redeem(
             "user_id": coupon.user_id,
         },
     )
-    coupon = db.get(CouponInstance, coupon.id)
-    assert coupon is not None
-    return RedeemOut(message="核销成功", coupon=coupon_to_out(coupon))
+    return RedeemOut(**result)
 
 
 @router.get("/redemptions", response_model=Page[RedemptionLogOut])

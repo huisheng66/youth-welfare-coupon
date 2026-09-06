@@ -35,12 +35,12 @@
 
     <el-dialog
       v-model="visible"
-      :title="redeemed ? '核销成功' : '到店出示动态券码'"
+      :title="dialogTitle"
       width="440px"
       @closed="onDialogClosed"
     >
-      <!-- 商家核销后立即展示 -->
-      <div v-if="redeemed" class="success-wrap">
+      <!-- 核销成功：商家扫码后由状态轮询触发 -->
+      <div v-if="phase === 'redeemed'" class="success-wrap">
         <el-result icon="success" title="核销成功" sub-title="商家已完成扫码核销，本券已使用">
           <template #extra>
             <el-button type="primary" @click="closeAfterSuccess">完成</el-button>
@@ -51,6 +51,15 @@
         </p>
       </div>
 
+      <!-- 终态：已作废 / 已过期（轮询发现后展示） -->
+      <div v-else-if="phase === 'gone'" class="success-wrap">
+        <el-result icon="warning" :title="`本券${couponStatusText(goneReason)}`" sub-title="动态码已不能出示">
+          <template #extra>
+            <el-button @click="visible = false">关闭</el-button>
+          </template>
+        </el-result>
+      </div>
+
       <template v-else>
         <el-alert
           type="info"
@@ -58,9 +67,30 @@
           title="动态码约 30 秒刷新一次。店员扫码核销后，本页会立即显示成功，无需等待刷新。"
           style="margin-bottom:12px"
         />
-        <div v-if="live">
+
+        <!-- 断网 / 刷新失败：保留上次有效动态码（若未过期）+ 重试入口 -->
+        <el-alert
+          v-if="offline"
+          type="error"
+          :closable="false"
+          style="margin-bottom:12px"
+          title="网络连接不稳定"
+          :description="live ? '正在自动重试；下方动态码在过期前仍可出示。' : '正在自动重试，也可手动重试。'"
+        >
+          <el-button size="small" type="primary" plain :loading="refreshing" @click="manualRetry">
+            立即重试
+          </el-button>
+        </el-alert>
+
+        <div v-if="live" class="live-wrap" :class="{ 'is-stale': offline }">
           <QrCode :value="live.live_code" :size="200" :key="live.live_code" />
-          <div class="countdown">剩余 {{ remain }} 秒后自动刷新</div>
+          <div class="countdown">
+            <span v-if="remain > 0">剩余 {{ remain }} 秒后自动刷新</span>
+            <span v-else>
+              <el-icon class="is-loading" style="vertical-align:-2px"><Loading /></el-icon>
+              正在获取新动态码…
+            </span>
+          </div>
           <el-input
             type="textarea"
             :rows="3"
@@ -78,6 +108,7 @@
             无摄像头时店员可手动输入动态码核销；永久编号已不能用于核销
           </p>
         </div>
+        <!-- 首次加载 / 无有效动态码：骨架屏 -->
         <el-skeleton v-else animated :rows="4" />
       </template>
     </el-dialog>
@@ -85,8 +116,9 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Loading } from '@element-plus/icons-vue'
 import api from '../../api'
 import QrCode from '../../components/QrCode.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -102,11 +134,36 @@ const visible = ref(false)
 const current = ref(null)
 const live = ref(null)
 const remain = ref(0)
-const redeemed = ref(false)
+/** loading → ready；redeemed / gone 为终态（T16 条款 1） */
+const phase = ref('loading')
+const goneReason = ref('')
+/** 网络不可用 / 刷新失败（T16 条款 4：退避 + 手动重试） */
+const offline = ref(false)
+const refreshing = ref(false)
+
+const dialogTitle = computed(() => {
+  if (phase.value === 'redeemed') return '核销成功'
+  if (phase.value === 'gone') return '动态码不可用'
+  return '到店出示动态券码'
+})
 
 let refreshTimer = null
 let tickTimer = null
 let pollTimer = null
+let retryTimer = null
+/** 服务端校准的动态码到期时刻（ms）：每次签发按 expires_in 重新锚定，
+ * 倒计时从 deadline 推算而非每秒递减，后台节流/休眠后自动对齐（T16 条款 2） */
+let deadlineMs = 0
+/** 请求代次：开窗/切券/回到前台/手动重试时递增；晚到响应按代次丢弃（T16 条款 3） */
+let gen = 0
+/** 轮询与刷新单飞标志（T16 条款 4） */
+let pollInFlight = false
+let refreshInFlight = false
+/** 网络错误退避序列（秒） */
+let backoffIdx = 0
+let abortCtrl = null
+
+const BACKOFF_STEPS_MS = [1000, 2000, 4000, 8000, 10000]
 
 async function load() {
   const res = await api.get('/coupons/my', { params: { status: status.value || undefined } })
@@ -130,9 +187,27 @@ function clearTimers() {
   if (refreshTimer) clearTimeout(refreshTimer)
   if (tickTimer) clearInterval(tickTimer)
   if (pollTimer) clearInterval(pollTimer)
+  if (retryTimer) clearTimeout(retryTimer)
   refreshTimer = null
   tickTimer = null
   pollTimer = null
+  retryTimer = null
+}
+
+function abortInflight() {
+  if (abortCtrl) {
+    abortCtrl.abort()
+    abortCtrl = null
+  }
+}
+
+/** 递增代次并断开在途请求：调用方保证随后发起新一代请求 */
+function nextGen() {
+  gen += 1
+  abortInflight()
+  pollInFlight = false
+  refreshInFlight = false
+  return gen
 }
 
 function stopLiveOnly() {
@@ -145,10 +220,14 @@ function stopLiveOnly() {
 }
 
 function onDialogClosed() {
+  nextGen()
   clearTimers()
   live.value = null
   remain.value = 0
-  redeemed.value = false
+  phase.value = 'loading'
+  goneReason.value = ''
+  offline.value = false
+  refreshing.value = false
   current.value = null
 }
 
@@ -158,63 +237,121 @@ function closeAfterSuccess() {
   load()
 }
 
-async function checkRedeemed() {
-  if (!current.value || redeemed.value) return false
-  try {
-    // 静默查询：不走会弹错误的 live-code
-    const res = await api.get('/coupons/my', { silent: true })
-    const hit = (res.data || []).find((c) => c.id === current.value.id)
-    if (hit) {
-      current.value = { ...current.value, ...hit }
-      if (hit.status === 'used') {
-        onRedeemedSuccess()
-        return true
-      }
-    }
-  } catch {
-    // ignore poll errors
-  }
-  return false
-}
-
 function onRedeemedSuccess() {
-  if (redeemed.value) return
-  redeemed.value = true
-  stopLiveOnly()
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+  if (phase.value === 'redeemed') return
+  phase.value = 'redeemed'
+  offline.value = false
+  nextGen()
+  clearTimers()
   ElMessage.success('商家已核销成功')
   // 后台列表同步
   load()
 }
 
-async function refreshLive() {
-  if (!current.value || redeemed.value) return
-  // 刷新前先看是否已核销
-  if (await checkRedeemed()) return
+/** 轮询券状态：核销 → 成功弹窗；作废/过期 → 终态。单飞 + 页面隐藏暂停。 */
+async function checkRedeemed() {
+  const g = gen
+  if (!current.value || pollInFlight || phase.value === 'redeemed' || phase.value === 'gone') return
+  pollInFlight = true
   try {
-    const res = await api.get(`/coupons/instances/${current.value.id}/live-code`, { silent: true })
-    if (redeemed.value) return
-    live.value = res.data
-    remain.value = res.data.expires_in
-    if (refreshTimer) clearTimeout(refreshTimer)
-    if (tickTimer) clearInterval(tickTimer)
-    tickTimer = setInterval(() => {
-      remain.value = Math.max(0, remain.value - 1)
-    }, 1000)
-    // 到期前约 3 秒刷新（30s 周期）
-    const waitMs = Math.max(3, res.data.expires_in - 3) * 1000
-    refreshTimer = setTimeout(refreshLive, waitMs)
-  } catch (e) {
-    const detail = e?.response?.data?.detail || ''
-    // 核销后 live-code 会返回「当前状态不可出示：used」
-    if (typeof detail === 'string' && detail.includes('used')) {
-      onRedeemedSuccess()
-      return
+    // 静默查询：不走会弹错误的 live-code
+    const res = await api.get('/coupons/my', { silent: true })
+    if (g !== gen) return
+    const hit = (res.data || []).find((c) => c.id === current.value.id)
+    if (hit) {
+      current.value = { ...current.value, ...hit }
+      if (hit.status === 'used') {
+        onRedeemedSuccess()
+        return
+      }
+      if (hit.status === 'void' || hit.status === 'expired') {
+        phase.value = 'gone'
+        goneReason.value = hit.status
+        nextGen()
+        clearTimers()
+        return
+      }
     }
-    // 其它错误不关窗，继续轮询状态
+  } catch {
+    // 状态查询失败不打断展示，下一轮继续
+  } finally {
+    if (g === gen) pollInFlight = false
+  }
+}
+
+function startTick() {
+  if (tickTimer) clearInterval(tickTimer)
+  tickTimer = setInterval(() => {
+    remain.value = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000))
+  }, 500)
+}
+
+function scheduleRefresh(g) {
+  const waitSec = Math.max(3, Math.ceil((deadlineMs - Date.now()) / 1000) - 3)
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => {
+    if (g === gen) refreshLive()
+  }, waitSec * 1000)
+}
+
+async function refreshLive() {
+  const g = gen
+  if (!current.value || refreshInFlight) return
+  if (phase.value === 'redeemed' || phase.value === 'gone') return
+  // 刷新前先看是否已核销/终态
+  await checkRedeemed()
+  if (g !== gen || phase.value === 'redeemed' || phase.value === 'gone') return
+  refreshInFlight = true
+  refreshing.value = true
+  abortCtrl = new AbortController()
+  try {
+    const res = await api.get(`/coupons/instances/${current.value.id}/live-code`, {
+      silent: true,
+      signal: abortCtrl.signal,
+    })
+    if (g !== gen) return
+    backoffIdx = 0
+    offline.value = false
+    live.value = res.data
+    // 服务端校准：以响应到达时刻 + 服务端剩余秒数重锚定 deadline
+    deadlineMs = Date.now() + res.data.expires_in * 1000
+    remain.value = res.data.expires_in
+    phase.value = 'ready'
+    startTick()
+    scheduleRefresh(g)
+  } catch (e) {
+    if (g !== gen) return
+    if (e?.code === 'ERR_CANCELED') return
+    const status_ = e?.response?.status
+    const detail = e?.response?.data?.detail || ''
+    if (status_ === 400) {
+      // 核销后 live-code 返回「当前状态不可出示：used」
+      if (String(detail).includes('used')) {
+        onRedeemedSuccess()
+        return
+      }
+      if (String(detail).includes('expired') || String(detail).includes('void')) {
+        phase.value = 'gone'
+        goneReason.value = String(detail).includes('void') ? 'void' : 'expired'
+        nextGen()
+        clearTimers()
+        return
+      }
+    }
+    // 401 会话失效由 api.js 拦截器统一跳登录（T05 全局行为）
+    // 其它（网络/5xx）：退避重试，不清弹窗
+    offline.value = true
+    const delay = BACKOFF_STEPS_MS[Math.min(backoffIdx, BACKOFF_STEPS_MS.length - 1)]
+    backoffIdx += 1
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => {
+      if (g === gen) refreshLive()
+    }, delay)
+  } finally {
+    if (g === gen) {
+      refreshInFlight = false
+      refreshing.value = false
+    }
   }
 }
 
@@ -227,19 +364,31 @@ function startStatusPoll() {
 }
 
 async function showCode(c) {
+  nextGen()
   current.value = c
-  redeemed.value = false
+  phase.value = 'loading'
   visible.value = true
   live.value = null
+  remain.value = 0
+  offline.value = false
   clearTimers()
   startStatusPoll()
-  try {
-    await refreshLive()
-  } catch {
-    if (!redeemed.value) {
-      visible.value = false
-    }
+  await refreshLive()
+  if (gen > 0 && phase.value === 'loading' && !live.value && !offline.value) {
+    // 首签发失败且非终态时兜底关窗，避免空壳弹窗
+    visible.value = false
   }
+}
+
+function manualRetry() {
+  if (!current.value || phase.value === 'redeemed' || phase.value === 'gone') return
+  backoffIdx = 0
+  offline.value = false
+  const g = nextGen()
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => {
+    if (g === gen) refreshLive()
+  }, 0)
 }
 
 async function copyLive() {
@@ -252,11 +401,39 @@ async function copyLive() {
   }
 }
 
+function onVisibilityChange() {
+  if (!visible.value || phase.value === 'redeemed' || phase.value === 'gone') return
+  if (document.visibilityState === 'hidden') {
+    // 页面隐藏：暂停倒计时与轮询（定时器被浏览器节流不可靠）
+    if (refreshTimer) clearTimeout(refreshTimer)
+    if (pollTimer) clearInterval(pollTimer)
+    refreshTimer = null
+    pollTimer = null
+    if (tickTimer) clearInterval(tickTimer)
+    tickTimer = null
+    return
+  }
+  // 回到前台：重新同步——先查状态再重签动态码（不依赖本地倒计时）
+  const g = nextGen()
+  deadlineMs = 0
+  remain.value = 0
+  startTick()
+  checkRedeemed()
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => {
+    if (g === gen) refreshLive()
+  }, 0)
+  startStatusPoll()
+}
+
 onMounted(async () => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
   await load()
   await openFromQuery()
 })
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  nextGen()
   clearTimers()
 })
 </script>
@@ -271,6 +448,9 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
 }
 .coupon-card:last-child { border-bottom: none; }
+.live-wrap.is-stale {
+  opacity: 0.72;
+}
 .countdown {
   text-align: center;
   margin-top: 8px;

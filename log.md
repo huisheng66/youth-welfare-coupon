@@ -453,3 +453,40 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - `tests/test_imports.py` 对齐新契约：`default_password` 不再返回，双轨断言。
 - `pytest tests/ -q`：184 passed，18 skipped（本机未跑 MySQL）；
   `alembic heads` 为 `d8f2a06c4b11`；`npm run build` 通过；密钥扫描退出 0。
+
+## 2026-09-06（第九批：T16 出码与扫码的异常恢复）
+
+### T16：用户出码弹窗状态机 + 商家扫码/核销可靠性
+
+- **后端**：`POST /coupons/redeem` 支持 `Idempotency-Key`（T13 机制复用）——
+  成功结果（RedeemOut JSON）与核销写入同事务暂存，`commit_idempotent` 保证
+  并发同 key 单胜者；响应丢失（超时）后同 key 重试重放原结果，不重复写流水；
+  失败（4xx）不留记录，重试重新确定性判定。业务执行前 `db.refresh` 构建
+  可重放结果。
+- **用户出码弹窗**（`user/Coupons.vue` 重写状态机）：
+  - 状态覆盖：加载（skeleton）→ 有效 → 刷新中（倒计时归零显示）→ 断网
+    （保留未过期动态码半透明 + 手动重试）→ 已核销（成功页）→ 已作废/已过期
+    （终态原因）；会话失效沿用 api.js 401 拦截器全局跳登录。
+  - 倒计时按服务端 `expires_in` 重锚定 deadline（每 500ms 由 deadline 推算，
+    不再每秒递减），后台节流/休眠恢复后自动对齐；`visibilitychange` 回前台
+    重新同步状态并重签动态码。
+  - 请求代次：开窗/切券/回前台/手动重试递增 `gen`，晚到响应按代次丢弃；
+    live-code 请求带 AbortController，关窗/切券即取消。
+  - 轮询单飞（in-flight 标志）+ 页面隐藏暂停 + 网络错误退避
+    （1/2/4/8/10s 上限）+ 成功重置。
+- **商家核销页**（`merchant/Redeem.vue`）：
+  - 预览锁定 `lockedCode`：扫码/输入与预览对应同一券码才可核销；输入变化
+    即清理旧预览与旧结果（修复"预览 A 后改输 B，确认弹窗显示 A 实际核销 B"
+    的预览错位缺陷）。
+  - 确认核销前强制重新预览（动态码可能已过期/被作废）。
+  - 核销携带每意图幂等 key（超时重试复用）；超时/断网进入「结果确认中」，
+    通过本店流水查询 + 同 key 重试确认，均不能确定性判定时报"核销未成功，
+    请人工核对"，不把"已使用"当作本次成功。
+  - 离开页面自动关闭摄像头。
+
+**验证**
+
+- `tests/test_idempotency.py` 新增 3 用例：核销响应丢失重放（不重复写流水）、
+  失败不留痕且同 key 重试确定性失败、不带 key 行为不变。
+- `pytest tests/ -q`：184 passed，18 skipped；前端 `npm run build` 通过；
+  E2E 12 用例全绿（含出码→预览→核销→用户成功状态链路）；密钥扫描退出 0。

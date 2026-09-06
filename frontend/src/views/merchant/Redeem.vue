@@ -74,10 +74,15 @@
       <el-result
         v-if="result"
         class="section-gap"
-        :icon="result.ok ? 'success' : 'error'"
+        :icon="result.icon"
         :title="result.title"
         :sub-title="result.sub"
-      />
+      >
+        <template v-if="result.icon === 'warning'" #extra>
+          <el-button type="primary" :loading="loading" @click="queryRedeemResult">查询结果</el-button>
+          <el-button @click="$router.push('/merchant/logs')">查看核销记录</el-button>
+        </template>
+      </el-result>
     </div>
 
     <div class="page-card recent-card" style="margin-top:16px">
@@ -108,11 +113,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import api from '../../api'
 import QrScanner from '../../components/QrScanner.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { couponStatusText, couponStatusType, formatTime } from '../../utils/format'
+import { newIdempotencyKey, idempotencyHeader } from '../../utils/idempotency'
 
 const code = ref('')
 const loading = ref(false)
@@ -124,8 +130,30 @@ const recent = ref([])
 const autoRedeem = ref(false)
 const scannerRef = ref(null)
 const handling = ref(false)
+/** T16 条款 5：预览锁定——扫码/输入与预览对应同一券码时才可核销 */
+const lockedCode = ref('')
+/** T16 条款 7：核销请求在途时的幂等键（超时后同 key 查询/重试） */
+let redeemKey = ''
+/** 结果确认请求单飞 */
+let confirmInFlight = false
 
-const canRedeem = computed(() => !!code.value.trim() && preview.value?.status === 'unused')
+const canRedeem = computed(
+  () =>
+    !!code.value.trim() &&
+    !!preview.value &&
+    preview.value.status === 'unused' &&
+    lockedCode.value === code.value.trim(),
+)
+
+// 输入变化即清理旧预览/旧结果：预览只对应锁定时的券码（T16 条款 5）
+watch(code, () => {
+  if (lockedCode.value && lockedCode.value !== code.value.trim()) {
+    preview.value = null
+    result.value = null
+    lockedCode.value = ''
+    redeemKey = ''
+  }
+})
 
 async function loadStats() {
   const res = await api.get('/merchant-dashboard')
@@ -145,6 +173,8 @@ function reset() {
   code.value = ''
   preview.value = null
   result.value = null
+  lockedCode.value = ''
+  redeemKey = ''
 }
 
 async function continueScan() {
@@ -160,8 +190,12 @@ async function onScanned(text) {
   if (handling.value) return
   handling.value = true
   try {
-    code.value = text
+    // 新扫码：清理旧预览与旧结果，锁定到新码（T16 条款 5）
+    preview.value = null
     result.value = null
+    redeemKey = ''
+    code.value = text
+    lockedCode.value = ''
     ElMessage.success('已识别二维码')
     // pause camera to avoid multi-fire while processing
     await scannerRef.value?.stop?.()
@@ -182,9 +216,17 @@ async function onPreview() {
   previewing.value = true
   preview.value = null
   result.value = null
+  lockedCode.value = ''
+  redeemKey = ''
+  // 锁定发起请求时的输入；响应回来时输入已变则丢弃（T16 条款 3/5）
+  const sentCode = code.value.trim()
   try {
-    const res = await api.post('/coupons/preview', { code: code.value.trim() })
+    const res = await api.post('/coupons/preview', { code: sentCode })
+    if (code.value.trim() !== sentCode) {
+      return false
+    }
     preview.value = res.data
+    lockedCode.value = sentCode
     if (res.data.status !== 'unused') {
       ElMessage.warning(`当前状态：${couponStatusText(res.data.status)}，不可核销`)
       return false
@@ -199,10 +241,13 @@ async function onPreview() {
 }
 
 async function onRedeem() {
-  if (!code.value.trim()) {
-    ElMessage.warning('请输入券码')
+  if (!canRedeem.value) {
+    ElMessage.warning('请先预览券信息，且输入与预览一致后再核销')
     return
   }
+  // 确认前重新验证：动态码可能在预览后过期/被作废（T16 条款 5）
+  const ok = await onPreview()
+  if (!ok) return
   try {
     const who = preview.value
       ? `${preview.value.template_name || '优惠券'} · ${preview.value.username || ''}`
@@ -216,32 +261,105 @@ async function onRedeem() {
   }
   loading.value = true
   result.value = null
+  // 一次核销意图一个幂等 key；超时重试复用同一 key
+  redeemKey = newIdempotencyKey()
   try {
-    const res = await api.post('/coupons/redeem', { code: code.value.trim() })
+    const res = await api.post('/coupons/redeem', { code: code.value.trim() }, {
+      headers: idempotencyHeader(redeemKey),
+      timeout: 20000,
+    })
     result.value = {
-      ok: true,
+      icon: 'success',
       title: '核销成功',
       sub: `${res.data.coupon.template_name || ''} · 用户 ${res.data.coupon.username || ''}`,
     }
     code.value = ''
     preview.value = null
+    lockedCode.value = ''
+    redeemKey = ''
     ElMessage.success('核销成功')
     loadStats()
     loadRecent()
   } catch (e) {
-    result.value = {
-      ok: false,
-      title: '核销失败',
-      sub: e.response?.data?.detail || e.message,
+    if (e?.code === 'ECONNABORTED' || e?.message === 'Network Error' || !e?.response) {
+      // 超时/断网：请求可能已成功，不能把重试报「已使用」当失败（T16 条款 7）
+      result.value = {
+        icon: 'warning',
+        title: '结果确认中',
+        sub: '核销请求超时，结果未知。请点击「查询结果」确认，不要重复扫码核销。',
+      }
+    } else {
+      result.value = {
+        icon: 'error',
+        title: '核销失败',
+        sub: e.response?.data?.detail || e.message,
+      }
+      redeemKey = ''
     }
   } finally {
     loading.value = false
   }
 }
 
+/** 结果确认：先查本店流水，无记录再用同 key 重试核销（服务端幂等重放原结果） */
+async function queryRedeemResult() {
+  if (!redeemKey || confirmInFlight) return
+  confirmInFlight = true
+  loading.value = true
+  try {
+    const res = await api.get('/coupons/redemptions', {
+      params: { result: 'success', limit: 20 },
+      silent: true,
+    })
+    const hit = (res.data?.items || []).find(
+      (r) => r.code && preview.value && r.code === (preview.value.code || '').slice(0, 32),
+    )
+    if (hit) {
+      result.value = { icon: 'success', title: '核销成功', sub: '已在核销记录中确认本次核销结果' }
+      loadStats()
+      loadRecent()
+      return
+    }
+    // 无成功记录：同 key 重试（若首次实际已成功，服务端幂等重放；若未到达，正常执行）
+    const retry = await api.post('/coupons/redeem', { code: code.value.trim() }, {
+      headers: idempotencyHeader(redeemKey),
+      timeout: 20000,
+    })
+    result.value = {
+      icon: 'success',
+      title: '核销成功',
+      sub: `${retry.data.coupon.template_name || ''} · 用户 ${retry.data.coupon.username || ''}`,
+    }
+    code.value = ''
+    preview.value = null
+    lockedCode.value = ''
+    redeemKey = ''
+    loadStats()
+    loadRecent()
+  } catch (e) {
+    result.value = {
+      icon: 'error',
+      title: '核销未成功',
+      sub: e?.response?.data?.detail || '确认失败，请到核销记录中人工核对后再操作',
+    }
+    redeemKey = ''
+  } finally {
+    loading.value = false
+    confirmInFlight = false
+  }
+}
+
 onMounted(() => {
   loadStats()
   loadRecent()
+})
+onBeforeUnmount(() => {
+  // 离开页面：关闭摄像头，防止残留（T16 验收：页面切换后无残留摄像头）
+  try {
+    scannerRef.value?.stop?.()
+  } catch {
+    // ignore
+  }
 })
 </script>
 

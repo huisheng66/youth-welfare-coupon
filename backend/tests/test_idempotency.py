@@ -19,6 +19,7 @@ from app.models.entities import (
     CouponTemplate,
     IdempotencyRecord,
     PointAccount,
+    RedemptionLog,
 )
 from tests._helpers import TempApp, reset_env_defaults
 
@@ -317,3 +318,76 @@ class TestIdempotency(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    # ---- T16：核销幂等（商家响应丢失后同 key 重试） ----
+    def test_redeem_replay_after_lost_response(self) -> None:
+        """核销成功但响应丢失：同 key 重试重放原结果，不重复写流水。"""
+        with TempApp() as ta:
+            merchant = ta.login("merchant1", "merchant123")
+            coupon_id = _first_unused_coupon(ta)
+            code = _live_code_of(ta, coupon_id)
+            with ta.session() as db:
+                before = db.query(RedemptionLog).filter(RedemptionLog.result == "success").count()
+            with ta.client() as c:
+                r1 = c.post(
+                    "/api/coupons/redeem",
+                    headers={**ta.bearer(merchant), "Idempotency-Key": KEY},
+                    json={"code": code},
+                )
+                self.assertEqual(r1.status_code, 200, r1.text)
+                # 模拟响应丢失后的重试：同一 key + 同一 code
+                r2 = c.post(
+                    "/api/coupons/redeem",
+                    headers={**ta.bearer(merchant), "Idempotency-Key": KEY},
+                    json={"code": code},
+                )
+                self.assertEqual(r2.status_code, 200, r2.text)
+                self.assertEqual(
+                    r2.json()["coupon"]["id"], r1.json()["coupon"]["id"], "重放返回原结果"
+                )
+            with ta.session() as db:
+                after = db.query(RedemptionLog).filter(RedemptionLog.result == "success").count()
+            self.assertEqual(after, before + 1, "重试不得重复写核销流水")
+            self.assertEqual(len(_idem_records(ta, "coupon.redeem")), 1)
+
+    def test_redeem_failure_leaves_no_record_and_retries(self) -> None:
+        """核销失败（他人已核销）：不留幂等记录，同 key 重试重新确定性判定。"""
+        with TempApp() as ta:
+            merchant = ta.login("merchant1", "merchant123")
+            coupon_id = _first_unused_coupon(ta)
+            code = _live_code_of(ta, coupon_id)
+            # 他人先核销（不带 key）
+            with ta.client() as c:
+                r0 = c.post("/api/coupons/redeem", headers=ta.bearer(merchant), json={"code": code})
+                self.assertEqual(r0.status_code, 200, r0.text)
+                r = c.post(
+                    "/api/coupons/redeem",
+                    headers={**ta.bearer(merchant), "Idempotency-Key": KEY},
+                    json={"code": code},
+                )
+                self.assertEqual(r.status_code, 400, r.text)
+            self.assertEqual(_idem_records(ta, "coupon.redeem"), [])
+            # 同 key 重试仍是确定性失败
+            with ta.client() as c:
+                r2 = c.post(
+                    "/api/coupons/redeem",
+                    headers={**ta.bearer(merchant), "Idempotency-Key": KEY},
+                    json={"code": code},
+                )
+                self.assertEqual(r2.status_code, 400)
+                self.assertEqual(r2.json()["detail"], r.json()["detail"])
+            self.assertEqual(_idem_records(ta, "coupon.redeem"), [])
+
+    def test_redeem_without_key_unchanged(self) -> None:
+        """不带 key 的核销行为不变（逐次判定，第二次报已核销）。"""
+        with TempApp() as ta:
+            merchant = ta.login("merchant1", "merchant123")
+            coupon_id = _first_unused_coupon(ta)
+            code = _live_code_of(ta, coupon_id)
+            with ta.client() as c:
+                r1 = c.post("/api/coupons/redeem", headers=ta.bearer(merchant), json={"code": code})
+                self.assertEqual(r1.status_code, 200, r1.text)
+                r2 = c.post("/api/coupons/redeem", headers=ta.bearer(merchant), json={"code": code})
+                self.assertEqual(r2.status_code, 400)
+                self.assertIn("已核销", r2.json()["detail"])
+            self.assertEqual(_idem_records(ta), [])
