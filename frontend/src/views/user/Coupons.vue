@@ -5,7 +5,7 @@
         <h2 class="page-title">我的优惠券</h2>
         <p class="page-desc">到店前打开动态券码，约 30 秒刷新一次；商家核销后会立即提示成功</p>
       </div>
-      <el-radio-group v-model="status" @change="load">
+      <el-radio-group v-model="status" @change="onStatusChange">
         <el-radio-button label="">全部</el-radio-button>
         <el-radio-button label="unused">未使用</el-radio-button>
         <el-radio-button label="used">已使用</el-radio-button>
@@ -31,6 +31,17 @@
         </div>
       </div>
       <el-button type="primary" :disabled="c.status !== 'unused'" @click="showCode(c)">出示动态券码</el-button>
+    </div>
+
+    <div v-if="total > pageSize" class="pager">
+      <span class="muted">共 {{ total }} 张</span>
+      <el-pagination
+        v-model:current-page="page"
+        layout="prev, pager, next"
+        :page-size="pageSize"
+        :total="total"
+        @current-change="load"
+      />
     </div>
 
     <el-dialog
@@ -130,6 +141,9 @@ const router = useRouter()
 
 const items = ref([])
 const status = ref('')
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(50)
 const visible = ref(false)
 const current = ref(null)
 const live = ref(null)
@@ -166,16 +180,29 @@ let abortCtrl = null
 const BACKOFF_STEPS_MS = [1000, 2000, 4000, 8000, 10000]
 
 async function load() {
-  const res = await api.get('/coupons/my', { params: { status: status.value || undefined } })
-  items.value = res.data
+  const res = await api.get('/coupons/my', {
+    params: {
+      status: status.value || undefined,
+      skip: (page.value - 1) * pageSize.value,
+      limit: pageSize.value,
+    },
+  })
+  items.value = res.data.items
+  total.value = res.data.total
   return res.data
+}
+
+// 筛选切换回第一页
+function onStatusChange() {
+  page.value = 1
+  load()
 }
 
 async function openFromQuery() {
   const openId = route.query.open
   if (!openId || typeof openId !== 'string') return
-  const list = items.value.length ? items.value : await load()
-  const hit = list.find((c) => c.id === openId && c.status === 'unused')
+  const data = items.value.length ? { items: items.value } : await load()
+  const hit = (data.items || []).find((c) => c.id === openId && c.status === 'unused')
   if (hit) {
     await showCode(hit)
   }
@@ -248,32 +275,28 @@ function onRedeemedSuccess() {
   load()
 }
 
-/** 轮询券状态：核销 → 成功弹窗；作废/过期 → 终态。单飞 + 页面隐藏暂停。 */
+/** 轮询单券轻量状态（T18）：成本不随用户券数增长；核销 → 成功，作废/过期 → 终态。 */
 async function checkRedeemed() {
   const g = gen
   if (!current.value || pollInFlight || phase.value === 'redeemed' || phase.value === 'gone') return
   pollInFlight = true
   try {
-    // 静默查询：不走会弹错误的 live-code
-    const res = await api.get('/coupons/my', { silent: true })
+    const res = await api.get(`/coupons/instances/${current.value.id}/status`, { silent: true })
     if (g !== gen) return
-    const hit = (res.data || []).find((c) => c.id === current.value.id)
-    if (hit) {
-      current.value = { ...current.value, ...hit }
-      if (hit.status === 'used') {
-        onRedeemedSuccess()
-        return
-      }
-      if (hit.status === 'void' || hit.status === 'expired') {
-        phase.value = 'gone'
-        goneReason.value = hit.status
-        nextGen()
-        clearTimers()
-        return
-      }
+    const st = res.data.status
+    if (st === 'used') {
+      onRedeemedSuccess()
+      return
+    }
+    if (st === 'void' || st === 'expired') {
+      phase.value = 'gone'
+      goneReason.value = st
+      nextGen()
+      clearTimers()
+      return
     }
   } catch {
-    // 状态查询失败不打断展示，下一轮继续
+    // 404 可能是轮询间隙状态变更，不打断；其余由下一轮覆盖
   } finally {
     if (g === gen) pollInFlight = false
   }
@@ -468,6 +491,14 @@ onBeforeUnmount(() => {
 }
 .success-wrap {
   padding: 8px 0 4px;
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 @media (max-width: 640px) {

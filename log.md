@@ -520,3 +520,30 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
   /export/users 的 q 搜索生效（命中包含、未命中排除）。
 - `pytest tests/ -q`：184→186 passed，18 skipped；`npm run build` 通过；
   E2E 12 用例全绿；密钥扫描退出 0。
+
+## 2026-09-06（第十一批：T18 状态查询、分页与统计口径）
+
+### T18：单券轮询、分页、业务时区、构建分析
+
+- **本人单券轻量状态**：新增 `GET /coupons/instances/{id}/status`（仅本人），
+  返回 status/expires_at/redeemed_at/void_reason 四字段；出码弹窗 1.5s 轮询
+  从"读全部券再 find"切换到单券查询——轮询成本不再随用户券数增长。
+- **/coupons/my 分页**：升级为 `Page{total, items}`（skip/limit，默认 50 上限
+  500），稳定排序 issued_at desc, id desc；前后端同批升级：Coupons.vue 列表
+  分页 UI + 筛选回第一页、Home.vue、e2e helpers、test_authz/test_eligibility
+  断言全部适配。
+- **待审核待办**：`GET /users/pending-verifications` 补 `limit`（默认 200，
+  上限 500）与 id 次级排序。
+- **业务时区**：新增 `services/biztime.py`（Asia/Shanghai）；仪表盘两处
+  "今日"改 `biz_today_start_utc()`（北京时间跨午夜后与列表/导出口径一致）；
+  coupons/export 两处 `_day_bounds` 日期区间按业务时区转换（闭区间语义不变）。
+- **构建分析入口**：`npm run analyze`（`--mode=analyze` / `--mode analyze`
+  两种写法均识别）；实测 stats.html 生成正常。
+
+**验证**
+
+- 新增 `tests/test_status_pagination.py` 5 用例：分页无重复遗漏且与全量一致、
+  排序稳定、单券状态他券不可见且字段轻量、pending limit、业务时区跨午夜
+  划日与日期区间边界。
+- `pytest tests/ -q`：189 passed，18 skipped；`npm run build` 通过；
+  E2E 12 用例全绿；密钥扫描退出 0。

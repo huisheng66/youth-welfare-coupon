@@ -66,8 +66,10 @@ export async function adminVoidCoupon(page, couponId, reason = 'E2E 作废') {
 /** 查询目标用户的未使用券列表。 */
 export async function listMyCoupons(page, status) {
   const res = await page.request.get('/api/coupons/my', {
-    params: status ? { status } : {},
+    params: status ? { status, limit: 500 } : { limit: 500 },
   })
   if (!res.ok()) throw new Error(`coupons/my -> ${res.status()} ${await res.text()}`)
-  return res.json()
+  // T18：/coupons/my 升级为 Page 结构 { total, items }
+  const body = await res.json()
+  return body.items ?? body
 }

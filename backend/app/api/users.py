@@ -445,9 +445,11 @@ def list_users(
 
 @router.get("/pending-verifications", response_model=list[VerificationOut])
 def pending_verifications(
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> list[VerificationOut]:
+    # T18：待办上限可控（默认 200，超出提示分批处理）；稳定排序 created_at asc
     rows = (
         db.query(UserVerification)
         .options(
@@ -455,7 +457,8 @@ def pending_verifications(
             joinedload(UserVerification.reviewer),
         )
         .filter(UserVerification.status == VerifyStatus.pending)
-        .order_by(UserVerification.created_at.asc())
+        .order_by(UserVerification.created_at.asc(), UserVerification.id.asc())
+        .limit(limit)
         .all()
     )
     return [_enrich_verification(db, r) for r in rows]

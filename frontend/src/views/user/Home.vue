@@ -117,11 +117,11 @@ onMounted(async () => {
     const [profileRes, pointsRes, couponRes] = await Promise.all([
       api.get('/users/me/profile'),
       api.get('/points/me').catch(() => ({ data: { balance: 0 } })),
-      api.get('/coupons/my').catch(() => ({ data: [] })),
+      api.get('/coupons/my', { params: { limit: 50 } }).catch(() => ({ data: { items: [], total: 0 } })),
     ])
     profile.value = profileRes.data
     balance.value = pointsRes.data.balance
-    coupons.value = couponRes.data || []
+    coupons.value = couponRes.data.items || []
   } finally {
     loading.value = false
   }

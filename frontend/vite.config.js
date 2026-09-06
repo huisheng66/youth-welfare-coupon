@@ -10,7 +10,10 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 // T21：端口与后端代理目标可经环境变量覆盖，E2E 用独立端口，不占用开发服务
 const SERVER_PORT = Number(process.env.E2E_FRONT_PORT || 5173)
 const BACKEND_ORIGIN = `http://127.0.0.1:${Number(process.env.E2E_BACKEND_PORT || 19001)}`
-const analyze = process.argv.includes('--mode=analyze')
+// T18：构建分析入口统一——`npm run analyze` 或 `--mode=analyze` / `--mode analyze` 均可
+const analyze =
+  process.argv.includes('--mode=analyze') ||
+  process.argv.includes('--mode') && process.argv[process.argv.indexOf('--mode') + 1] === 'analyze'
 const visualizer = analyze
   ? (await import('rollup-plugin-visualizer')).visualizer({
       open: true,

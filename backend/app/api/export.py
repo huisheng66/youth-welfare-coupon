@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.deps import require_roles
+from app.services.biztime import day_bounds_utc_closed
 from app.models.entities import (
     Account,
     CouponInstance,
@@ -37,9 +38,8 @@ def _safe_csv_cell(value: object) -> object:
 
 
 def _day_bounds(date_from: date_cls | None, date_to: date_cls | None) -> tuple[datetime | None, datetime | None]:
-    start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc) if date_from else None
-    end = datetime.combine(date_to, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) if date_to else None
-    return start, end
+    # T18：业务日期区间统一按 Asia/Shanghai 划日（导出与列表/仪表盘口径一致）
+    return day_bounds_utc_closed(date_from, date_to)
 
 
 def _csv_response(filename: str, rows: list[list], *, truncated: bool = False) -> StreamingResponse:

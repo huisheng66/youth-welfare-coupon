@@ -257,7 +257,7 @@ class TestEligibility(unittest.TestCase):
 
                 r = c.get("/api/coupons/my", headers=ta.bearer(user))
                 self.assertEqual(r.status_code, 200, r.text)
-                by_id = {i["id"]: i for i in r.json()}
+                by_id = {i["id"]: i for i in r.json()["items"]}
                 # 新发的券保留发放时名称
                 self.assertEqual(by_id[new_coupon_id]["template_name"], "餐饮立减券")
                 # 历史无快照的券回退到模板当前名称
@@ -268,7 +268,7 @@ class TestEligibility(unittest.TestCase):
                     ).update({"template_name": None, "template_description": None})
                     db.commit()
                 r = c.get("/api/coupons/my", headers=ta.bearer(user))
-                others = [i for i in r.json() if i["id"] != new_coupon_id]
+                others = [i for i in r.json()["items"] if i["id"] != new_coupon_id]
                 self.assertTrue(others)
                 for item in others:
                     self.assertEqual(item["template_name"], "餐饮立减券·新版")

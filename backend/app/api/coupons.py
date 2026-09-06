@@ -39,6 +39,7 @@ from app.schemas.coupon import (
     VoidCouponIn,
 )
 from app.services.audit import write_audit
+from app.services.biztime import day_bounds_utc_closed
 from app.services.eligibility import (
     EligibilityError,
     require_benefit_user,
@@ -543,9 +544,8 @@ def get_live_code(
 
 
 def _day_bounds(date_from: date_cls | None, date_to: date_cls | None) -> tuple[datetime | None, datetime | None]:
-    start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc) if date_from else None
-    end = datetime.combine(date_to, datetime.max.time().replace(microsecond=0), tzinfo=timezone.utc) if date_to else None
-    return start, end
+    # T18：业务日期区间统一按 Asia/Shanghai 划日
+    return day_bounds_utc_closed(date_from, date_to)
 
 
 def _literal_like_pattern(value: str) -> str:
@@ -610,14 +610,17 @@ def list_instances(
     return Page(total=total, items=[coupon_to_out(r) for r in rows])
 
 
-@router.get("/my", response_model=list[CouponOut])
+@router.get("/my", response_model=Page[CouponOut])
 def my_coupons(
     status: CouponStatus | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     account: Account = Depends(require_roles(Role.user)),
-) -> list[CouponOut]:
+) -> Page[CouponOut]:
+    # T18：明确分页 + 稳定排序（issued_at desc, id desc）；前后端同批升级为 Page 结构
     expire_stale_coupons(db, interval_seconds=get_settings().coupon_expire_scan_interval)
-    query = (
+    base = (
         db.query(CouponInstance)
         .options(
             joinedload(CouponInstance.user),
@@ -628,11 +631,35 @@ def my_coupons(
         .order_by(CouponInstance.issued_at.desc(), CouponInstance.id.desc())
     )
     if status:
-        query = query.filter(CouponInstance.status == status)
-    rows = (
-        query.all()
+        base = base.filter(CouponInstance.status == status)
+    total = base.count()
+    rows = base.offset(skip).limit(limit).all()
+    return Page(total=total, items=[coupon_to_out(r) for r in rows])
+
+
+@router.get("/instances/{coupon_id}/status")
+def my_coupon_status(
+    coupon_id: str,
+    db: Session = Depends(get_db),
+    account: Account = Depends(require_roles(Role.user)),
+) -> dict:
+    """本人单券轻量状态（T18）：出码弹窗轮询不再读取全部券，成本不随券数增长。"""
+    coupon = (
+        db.query(CouponInstance)
+        .filter(CouponInstance.id == coupon_id, CouponInstance.user_id == account.id)
+        .first()
     )
-    return [coupon_to_out(r) for r in rows]
+    if not coupon:
+        raise HTTPException(status_code=404, detail="券不存在")
+    _transition_expired(db, coupon)
+    db.commit()
+    return {
+        "id": coupon.id,
+        "status": coupon.status.value,
+        "expires_at": coupon.expires_at,
+        "redeemed_at": coupon.redeemed_at,
+        "void_reason": coupon.void_reason or "",
+    }
 
 
 @router.post("/instances/{coupon_id}/void", response_model=CouponOut)

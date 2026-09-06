@@ -118,7 +118,7 @@ class TestAuthz(unittest.TestCase):
             with ta.client() as c:
                 r = c.get("/api/coupons/my", headers=ta.bearer(u1_token))
                 self.assertEqual(r.status_code, 200, r.text)
-                ids = [item["id"] for item in r.json()]
+                ids = [item["id"] for item in r.json()["items"]]
                 self.assertNotIn(youth2_coupon_id, ids, "youth1 看到了 youth2 的券")
 
             # youth1 不能取 youth2 券的动态码

@@ -22,6 +22,7 @@ from app.models.entities import (
 )
 from app.schemas.common import DashboardActivityItem, DashboardOut, MerchantDashboardOut, Page
 from app.schemas.coupon import AuditLogOut
+from app.services.biztime import biz_today_start_utc
 from app.services.coupons import expire_stale_coupons
 
 router = APIRouter(tags=["统计审计"])
@@ -106,7 +107,8 @@ def dashboard(
     _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
 ) -> DashboardOut:
     expire_stale_coupons(db)
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # T18：「今日」按业务时区 Asia/Shanghai 划日，与列表/导出口径一致
+    today_start = biz_today_start_utc()
     today_redemptions = (
         db.query(func.count(RedemptionLog.id))
         .filter(RedemptionLog.result == "success", RedemptionLog.created_at >= today_start)
@@ -145,7 +147,7 @@ def merchant_dashboard(
     merchant = db.get(Merchant, account.merchant_id)
     if not merchant:
         raise HTTPException(status_code=404, detail="商家不存在")
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = biz_today_start_utc()
     today_success = (
         db.query(func.count(RedemptionLog.id))
         .filter(
