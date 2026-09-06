@@ -259,7 +259,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "app": s.app_name,
-            "version": "1.4.0",
+            "version": "1.5.0",
             "live_code_expire_seconds": s.live_code_expire_seconds,
             "smtp_configured": s.smtp_configured,
             "mail_console": s.mail_console and not s.smtp_configured,
