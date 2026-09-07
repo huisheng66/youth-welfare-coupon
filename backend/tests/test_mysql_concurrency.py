@@ -20,12 +20,29 @@ from decimal import Decimal
 
 from tests._mysql_fixture import MySQLCaseEnv, get_base_url
 from tests._helpers import reset_env_defaults  # noqa: F401  保证 sys.path 已注入
+from fastapi import Request
 
 import pytest
 
 
 def _base_url() -> str:
     return get_base_url()
+
+
+def _fake_request() -> "Request":
+    """构造仅含空 headers 的最小 Request，供直调端点函数使用。
+
+    redeem() 需要 request 提取 Idempotency-Key；空 headers 即无幂等键，
+    与旧行为一致，不影响并发竞争断言。
+    """
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/coupons/redeem",
+            "headers": [],
+        }
+    )
 
 
 @pytest.fixture()
@@ -196,7 +213,7 @@ class TestMySQLConcurrency:
             try:
                 acc = db.get(Account, data["merchant_account_id"])
                 barrier.wait(timeout=10)
-                out = redeem(body=RedeemIn(code=live), db=db, account=acc)
+                out = redeem(body=RedeemIn(code=live), request=_fake_request(), db=db, account=acc)
                 results.append(out.coupon.status.value)
             except HTTPException as exc:
                 results.append(f"rejected:{exc.status_code}")
@@ -238,7 +255,7 @@ class TestMySQLConcurrency:
             try:
                 acc = db.get(Account, data["merchant_account_id"])
                 barrier.wait(timeout=10)
-                redeem(body=RedeemIn(code=live), db=db, account=acc)
+                redeem(body=RedeemIn(code=live), request=_fake_request(), db=db, account=acc)
                 results.append("redeem:200")
             except HTTPException:
                 db.rollback()
@@ -308,7 +325,7 @@ class TestMySQLConcurrency:
             live, _, _ = create_live_code(coupon_id=data["coupon_id"], user_id=user.id)
             with my.session() as db:
                 acc = db.get(Account, data["merchant_account_id"])
-                out = redeem(body=RedeemIn(code=live), db=db, account=acc)
+                out = redeem(body=RedeemIn(code=live), request=_fake_request(), db=db, account=acc)
                 assert out.coupon.status == "used"
 
             # A 的业务时钟推进：把 A 视角中的有效期改为已过（不影响数据库真实值），
@@ -516,7 +533,7 @@ class TestMySQLConcurrency:
         with my.session() as db:
             acc = db.get(Account, data["merchant_account_id"])
             with pytest.raises(HTTPException) as ctx:
-                redeem(body=RedeemIn(code=live), db=db, account=acc)
+                redeem(body=RedeemIn(code=live), request=_fake_request(), db=db, account=acc)
             assert "过期" in ctx.value.detail
         with my.session() as db:
             final = db.get(CouponInstance, data["coupon_id"])
