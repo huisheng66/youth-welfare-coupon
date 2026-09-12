@@ -78,3 +78,12 @@ class MerchantOut(ORMModel):
     latitude: str
     has_photo: bool
     photo_updated_at: datetime | None = None
+
+
+class GeoResultOut(BaseModel):
+    """高德 POI 搜索结果（GCJ-02），供管理端点选填入经纬度。"""
+
+    name: str
+    address: str
+    longitude: str
+    latitude: str

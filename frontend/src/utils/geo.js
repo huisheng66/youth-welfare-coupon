@@ -11,6 +11,18 @@ function enc(v) {
   return encodeURIComponent(v ?? '')
 }
 
+// 解析整串坐标文本：高德拾取器为 "lng,lat"，腾讯为 "lat,lng"，兼容空格/中文逗号分隔。
+// 中国大陆范围内经度 73–136、纬度 3–54，按数值范围自动判别顺序；无法判定返回 null。
+export function parseCoordinatePair(text) {
+  const m = String(text ?? '').match(/(-?\d{1,3}(?:\.\d{1,8})?)[,，;；\s]+(-?\d{1,3}(?:\.\d{1,8})?)/)
+  if (!m) return null
+  const a = Number(m[1])
+  const b = Number(m[2])
+  if (a >= 73 && a <= 136 && b >= 3 && b <= 54) return { longitude: m[1], latitude: m[2] }
+  if (b >= 73 && b <= 136 && a >= 3 && a <= 54) return { longitude: m[2], latitude: m[1] }
+  return null
+}
+
 export function buildNavLinks({ name, address, longitude, latitude }) {
   if (longitude && latitude) {
     const lng = enc(longitude)

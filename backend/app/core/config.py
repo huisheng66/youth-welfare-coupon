@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # 商家门头照（T25 门店详情页）：原图入库大小上限，需小于 MEDIUMBLOB 的 16MB
     merchant_photo_max_bytes: int = 5 * 1024 * 1024
 
+    # 高德开放平台「Web服务」key（T25 可选）：配置后商家管理页可按门店名在线搜索坐标；
+    # 未配置时该功能返回明确提示，不影响其他能力
+    amap_web_key: str = ""
+
     # 账号激活链接（T15）：一次性 token 有效期与激活页公开地址
     activation_token_expire_hours: int = 48
     # 邮件中激活链接的公开 base URL（生产必须配置为前端可访问地址）

@@ -1,3 +1,7 @@
+import json
+import urllib.parse
+import urllib.request
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
@@ -6,7 +10,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_account, require_roles
 from app.models.entities import Account, Merchant, Role, utcnow
 from app.schemas.common import Page
-from app.schemas.merchant import MerchantCreate, MerchantOut, MerchantUpdate
+from app.schemas.merchant import GeoResultOut, MerchantCreate, MerchantOut, MerchantUpdate
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/merchants", tags=["商家"])
@@ -34,6 +38,59 @@ def list_merchants(
     total = query.count()
     items = query.offset(skip).limit(limit).all()
     return Page(total=total, items=[MerchantOut.model_validate(i) for i in items])
+
+
+def _http_get_json(url: str, timeout: float = 5.0) -> dict:
+    # 高德固定 https 域名且 URL 由本函数拼装，无 SSRF 面
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
+
+@router.get("/geo-search", response_model=list[GeoResultOut])
+def geo_search(
+    keywords: str = Query(min_length=1, max_length=64),
+    city: str | None = Query(default=None, max_length=32),
+    _: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> list[GeoResultOut]:
+    """按门店名在线解析 GCJ-02 坐标（高德 Web 服务 POI 搜索）。
+
+    高德拾取器对游客/未认证开发者只显示 2 位小数，不足以定位门店；
+    配置 AMAP_WEB_KEY 后管理员直接按名称搜索并点选，免去拾取器环节。
+    """
+    key = get_settings().amap_web_key
+    if not key:
+        raise HTTPException(
+            status_code=400,
+            detail="未配置 AMAP_WEB_KEY，无法在线搜索；可在 backend/.env 配置后使用，或手动粘贴坐标",
+        )
+    params = {"key": key, "keywords": keywords, "offset": "5", "page": "1", "extensions": "base"}
+    if city:
+        params["city"] = city
+    url = "https://restapi.amap.com/v3/place/text?" + urllib.parse.urlencode(params)
+    try:
+        data = _http_get_json(url)
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail="高德服务暂不可用，请稍后再试或手动填写坐标") from exc
+    if data.get("status") != "1":
+        info = data.get("info") or "未知错误"
+        hint = (
+            "（key 无效或类型不符：需在高德开放平台创建「Web服务」类型 key 并完成实名认证）"
+            if data.get("infocode") in ("10001", "10009")
+            else ""
+        )
+        raise HTTPException(status_code=502, detail=f"高德返回错误：{info}{hint}")
+    out: list[GeoResultOut] = []
+    for poi in data.get("pois") or []:
+        lng, _, lat = (poi.get("location") or "").partition(",")
+        if not lng or not lat:
+            continue
+        address = poi.get("address") or "".join(
+            poi.get(k) or "" for k in ("pname", "cityname", "adname")
+        )
+        out.append(GeoResultOut(name=poi.get("name") or "", address=address, longitude=lng, latitude=lat))
+        if len(out) >= 5:
+            break
+    return out
 
 
 @router.post("", response_model=MerchantOut)

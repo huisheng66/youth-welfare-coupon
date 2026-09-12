@@ -60,9 +60,36 @@
             <el-input v-model="form.longitude" placeholder="经度，如 116.397428" />
             <el-input v-model="form.latitude" placeholder="纬度，如 39.909230" />
           </div>
+          <div class="coord-row">
+            <el-input
+              v-model="coordPaste"
+              placeholder="或整串粘贴坐标，自动识别经纬度顺序"
+              clearable
+              @input="onCoordPasteInput"
+            />
+          </div>
+          <div class="coord-row">
+            <el-input v-model="geoKeywords" placeholder="门店搜索关键词，默认取商家名称" @keyup.enter="geoSearch" />
+            <el-input v-model="geoCity" placeholder="城市（选填）" style="max-width: 110px; flex: none" />
+            <el-button style="flex: none" :loading="geoLoading" @click="geoSearch">搜索坐标</el-button>
+          </div>
+          <div v-if="geoResults.length" class="geo-results">
+            <button
+              v-for="r in geoResults"
+              :key="`${r.longitude},${r.latitude},${r.name}`"
+              type="button"
+              class="geo-item"
+              @click="applyGeo(r)"
+            >
+              <span class="geo-name">{{ r.name }}</span>
+              <span class="muted">{{ r.address }}</span>
+            </button>
+          </div>
           <div class="muted coord-hint">
-            选填（GCJ-02）；填写后用户端「商家详情」可直接唤起地图导航，坐标可从
-            <a href="https://lbs.amap.com/tools/picker" target="_blank" rel="noopener">高德坐标拾取器</a> 复制
+            「搜索坐标」需在 backend/.env 配置 AMAP_WEB_KEY（高德开放平台免费申请「Web服务」key），
+            搜索结果点选即填入。也可从坐标工具复制整串粘贴（GCJ-02，自动分列）。
+            注意：高德坐标拾取器游客模式仅显示 2 位小数，无法直接使用（需登录并完成个人开发者认证）。
+            填好后用户端「商家详情」可唤起地图导航。
           </div>
         </el-form-item>
         <el-form-item label="门头照">
@@ -104,6 +131,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../../api'
+import { parseCoordinatePair } from '../../utils/geo'
 import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
 
@@ -114,6 +142,11 @@ const loading = ref(false)
 const q = ref('')
 const activeOnly = ref(false)
 const uploading = ref(false)
+const coordPaste = ref('')
+const geoKeywords = ref('')
+const geoCity = ref('')
+const geoLoading = ref(false)
+const geoResults = ref([])
 const form = reactive({
   id: '',
   name: '',
@@ -160,11 +193,19 @@ function openCreate() {
     id: '', name: '', contact_name: '', contact_phone: '', address: '', description: '',
     longitude: '', latitude: '', has_photo: false, photo_updated_at: null, is_active: true,
   })
+  coordPaste.value = ''
+  geoKeywords.value = ''
+  geoCity.value = ''
+  geoResults.value = []
   visible.value = true
 }
 
 function openEdit(row) {
   Object.assign(form, row)
+  coordPaste.value = ''
+  geoKeywords.value = row.name || ''
+  geoCity.value = ''
+  geoResults.value = []
   visible.value = true
 }
 
@@ -200,10 +241,45 @@ async function save() {
   load()
 }
 
+// ---- 经纬度：整串粘贴智能分列 + 按门店名在线搜索 ----
+
+function onCoordPasteInput() {
+  const parsed = parseCoordinatePair(coordPaste.value)
+  if (!parsed) return
+  form.longitude = parsed.longitude
+  form.latitude = parsed.latitude
+  coordPaste.value = ''
+  ElMessage.success('已识别经纬度并填入')
+}
+
+async function geoSearch() {
+  const kw = (geoKeywords.value || form.name || '').trim()
+  if (!kw) {
+    ElMessage.warning('请先填写商家名称或搜索关键词')
+    return
+  }
+  geoLoading.value = true
+  try {
+    const res = await api.get('/merchants/geo-search', {
+      params: { keywords: kw, city: geoCity.value || undefined },
+    })
+    geoResults.value = res.data
+    if (!res.data.length) ElMessage.info('没有匹配的地点，试试补全城市或更完整的关键词')
+  } finally {
+    geoLoading.value = false
+  }
+}
+
+function applyGeo(r) {
+  form.longitude = r.longitude
+  form.latitude = r.latitude
+  geoResults.value = []
+  ElMessage.success(`已填入「${r.name}」的坐标`)
+}
+
 // ---- 门头照（原生 <label>+<input type=file> 触发选择，不用 el-upload）----
 
-async function onPickFile(e) {
-  const file = e.target.files?.[0]
+async function onPickFile(e) {  const file = e.target.files?.[0]
   e.target.value = '' // 允许再次选择同一文件
   if (!file) return
   if (file.size > 5 * 1024 * 1024) {
@@ -324,5 +400,43 @@ onMounted(load)
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.geo-results {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 168px;
+  overflow: auto;
+}
+
+.geo-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 150ms ease;
+}
+
+.geo-item:last-child {
+  border-bottom: none;
+}
+
+.geo-item:hover {
+  background: var(--surface-2);
+}
+
+.geo-name {
+  font-weight: 600;
+  color: var(--ink);
 }
 </style>

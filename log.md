@@ -766,3 +766,33 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - 本地冒烟（vite + uvicorn 实机）：管理员上传门头照后用户端详情页
   正常展示照片与三家导航链接，管理端弹窗回显坐标与照片管理入口；
   迁移链临时库 upgrade/downgrade 验证通过。
+
+## 2026-09-12（第十九批：T25 补充——上传入口加固与坐标获取体验）
+
+### T25b：门头照上传入口与在线坐标解析
+
+- 上传入口：管理端「上传门头照」改为原生 `<label>` 内嵌隐藏 `<input type=file>`
+  （原 JS `input.click()` 依赖浏览器用户激活判定，部分浏览器/WebView 静默失败
+  表现为点击无反应）；label 伪按钮样式与 el-button small 一致，带「上传中…」态。
+  新增 `e2e/merchant-photo.spec.js` 覆盖真实 UI 选择文件→上传→缩略图→用户端展示
+  全链路（此前仅 API 级上传用例）。注：当天另有一例"点击无反应"实为用户桌面
+  xdg-desktop-portal 文件选择故障（GNOME 50 委托 Nautilus 崩溃），非项目问题，
+  已在用户环境侧以 portals.conf 固定 FileChooser=gtk 绕过。
+- 坐标获取：高德拾取器对游客/未认证开发者仅显示 2 位小数，不足以定位门店，
+  管理端补两条路径：
+  - 在线解析：`GET /api/merchants/geo-search`（仅超管/发放管理员）代理高德
+    v3/place/text（urllib，5s 超时，无新依赖），返回前 5 条 POI 名称/地址/
+    GCJ-02 坐标，前端点选即填入；key 走 `AMAP_WEB_KEY`（.env，可选），未配置
+    返回 400 带配置指引，高德错误态映射 502（infocode 10001/10009 附 key
+    类型提示）。路由注册在 `/{merchant_id}` 之前避免路径参数吞并。
+  - 智能粘贴：`geo.js#parseCoordinatePair` 解析整串坐标（兼容中英文逗号/
+    空格分隔；中国大陆经度 73–136、纬度 3–54 自动判别 lng,lat 与 lat,lng
+    两种顺序），管理端粘贴框输入即自动分列填入。
+  - e2e `admin-coords.spec.js`：lat,lng 逆序粘贴→自动分列→保存→用户端书店
+    详情从地址搜索兜底升级为三家导航直链；未配 key 点击搜索出现配置提示。
+  - `.env.example` 增加 AMAP_WEB_KEY 说明；开发计划 T25 定义同步补充。
+
+**验证**
+
+- `pytest tests/ -q`：219 passed，21 skipped（新增 test_merchant_geo.py 4 用例）；
+  `npm run build` 通过；E2E 18 用例全绿。
