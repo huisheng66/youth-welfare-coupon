@@ -676,3 +676,193 @@ class TestMySQLConcurrency:
             profile = db.get(UserProfile, profile_id)
             assert row.status == VerifyStatus.approved
             assert profile.verify_status == VerifyStatus.approved
+
+    # ---- 双向兑换限次（T24）----
+    def _second_coupon_for(self, my: MySQLCaseEnv, data: dict) -> str:
+        """在同一用户名下再发一张未使用券（复用种子模板），返回券 id。"""
+        import secrets
+        import string
+
+        from app.models.entities import CouponInstance, CouponStatus, CouponTemplate
+
+        with my.session() as db:
+            template = db.get(CouponTemplate, data["template_id"])
+            alphabet = string.ascii_uppercase + string.digits
+            code = "".join(secrets.choice(alphabet) for _ in range(10))
+            now = datetime.now(timezone.utc)
+            coupon = CouponInstance(
+                code=code,
+                user_id=data["user_id"],
+                template_id=template.id,
+                merchant_id=template.merchant_id,
+                status=CouponStatus.unused,
+                issued_by=data["admin_id"],
+                issued_at=now,
+                expires_at=now + timedelta(days=30),
+            )
+            db.add(coupon)
+            db.commit()
+            return coupon.id
+
+    def test_exchange_back_race_two_coupons_both_succeed(self, my) -> None:
+        """同用户并发换回两张不同券：限次按券计，两次都成功、时长各退一次。"""
+        from fastapi import HTTPException
+
+        from app.api.points import exchange_back
+        from app.models.entities import Account, CouponInstance, CouponStatus
+        from app.schemas.points import ExchangeBackIn
+
+        data = _seed_store(my)
+        uid = data["user_id"]
+        cid2 = self._second_coupon_for(my, data)
+
+        results: list[str] = []
+        barrier = threading.Barrier(2)
+
+        def do_back(cid: str) -> None:
+            db = my.Session()
+            try:
+                acc = db.get(Account, uid)
+                barrier.wait(timeout=10)
+                out = exchange_back(
+                    body=ExchangeBackIn(coupon_id=cid),
+                    request=_fake_request(),
+                    db=db,
+                    account=acc,
+                )
+                results.append(f"ok:{out['refunded_hours']}")
+            except HTTPException as exc:
+                db.rollback()
+                results.append(f"rejected:{exc.status_code}:{exc.detail}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                results.append(f"err:{exc.__class__.__name__}:{exc}")
+            finally:
+                db.close()
+
+        threads = [
+            threading.Thread(target=do_back, args=(data["coupon_id"],)),
+            threading.Thread(target=do_back, args=(cid2,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        ok = [r for r in results if r.startswith("ok:")]
+        assert len(ok) == 2, f"不同券并发换回应都成功: {results}"
+        assert sorted(Decimal(r.split(":")[1]) for r in ok) == [Decimal("2.00"), Decimal("2.00")]
+        with my.session() as db:
+            statuses = {
+                db.get(CouponInstance, data["coupon_id"]).status,
+                db.get(CouponInstance, cid2).status,
+            }
+            assert statuses == {CouponStatus.void}
+
+    def test_exchange_back_race_same_coupon_single_winner(self, my) -> None:
+        """并发换回同一张券：券状态条件更新单胜者，时长只退一次。"""
+        from fastapi import HTTPException
+
+        from app.api.points import exchange_back
+        from app.models.entities import Account, CouponInstance, CouponStatus
+        from app.schemas.points import ExchangeBackIn
+
+        data = _seed_store(my)
+        uid = data["user_id"]
+        cid = data["coupon_id"]
+
+        results: list[str] = []
+        barrier = threading.Barrier(2)
+
+        def do_back() -> None:
+            db = my.Session()
+            try:
+                acc = db.get(Account, uid)
+                barrier.wait(timeout=10)
+                out = exchange_back(
+                    body=ExchangeBackIn(coupon_id=cid),
+                    request=_fake_request(),
+                    db=db,
+                    account=acc,
+                )
+                results.append(f"ok:{out['refunded_hours']}")
+            except HTTPException as exc:
+                db.rollback()
+                results.append(f"rejected:{exc.status_code}:{exc.detail}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                results.append(f"err:{exc.__class__.__name__}:{exc}")
+            finally:
+                db.close()
+
+        threads = [threading.Thread(target=do_back), threading.Thread(target=do_back)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        winners = [r for r in results if r.startswith("ok:")]
+        assert len(winners) == 1, f"并发换回同一张券必须只有一个成功: {results}"
+        assert Decimal(winners[0].split(":")[1]) == Decimal("2.00")
+        with my.session() as db:
+            from app.models.entities import PointAccount
+
+            assert db.get(CouponInstance, cid).status == CouponStatus.void
+            acc = db.query(PointAccount).filter(PointAccount.user_id == uid).one()
+            assert acc.balance == Decimal("2.00"), f"时长只退一次: {acc.balance}"
+
+    def test_forward_exchange_race_both_succeed(self, my) -> None:
+        """同用户并发时长换券：不限次，余额足够时两次都成功、余额精确。"""
+        from fastapi import HTTPException
+
+        from app.api.points import exchange
+        from app.models.entities import Account, CouponInstance
+        from app.schemas.points import ExchangeIn
+        from app.services.points import apply_points
+
+        data = _seed_store(my)
+        uid = data["user_id"]
+        with my.session() as db:
+            apply_points(db, user_id=uid, change="10", reason="预置余额")
+            db.commit()
+
+        results: list[str] = []
+        barrier = threading.Barrier(2)
+
+        def do_exchange() -> None:
+            db = my.Session()
+            try:
+                acc = db.get(Account, uid)
+                barrier.wait(timeout=10)
+                out = exchange(
+                    body=ExchangeIn(template_id=data["template_id"]),
+                    request=_fake_request(),
+                    db=db,
+                    account=acc,
+                )
+                results.append(f"ok:{out['balance']}")
+            except HTTPException as exc:
+                db.rollback()
+                results.append(f"rejected:{exc.status_code}:{exc.detail}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                results.append(f"err:{exc.__class__.__name__}:{exc}")
+            finally:
+                db.close()
+
+        threads = [threading.Thread(target=do_exchange), threading.Thread(target=do_exchange)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        ok = [r for r in results if r.startswith("ok:")]
+        assert len(ok) == 2, f"不限次后并发兑换应都成功: {results}"
+        # 两次各扣 2.00：10 → 8 → 6（串行序任意，但终值确定）
+        with my.session() as db:
+            from app.models.entities import PointAccount
+
+            acc = db.query(PointAccount).filter(PointAccount.user_id == uid).one()
+            assert acc.balance == Decimal("6.00"), f"余额应为 6.00: {acc.balance}"
+            # 种子券 1 张 + 兑换所得 2 张
+            assert db.query(CouponInstance).filter(CouponInstance.user_id == uid).count() == 3

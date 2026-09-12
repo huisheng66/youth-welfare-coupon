@@ -24,6 +24,9 @@ from app.schemas.common import MessageOut, Page
 from app.schemas.coupon import CouponOut
 from app.schemas.points import (
     BatchGrantPointsIn,
+    ExchangeBackIn,
+    ExchangeBackOptionsOut,
+    ExchangeBackOut,
     ExchangeIn,
     ExchangeOut,
     GrantPointsIn,
@@ -451,6 +454,176 @@ def exchange(
     if idem_key:
         idem.store(db, actor_id=account.id, action="points.exchange", key=idem_key, request_hash=fp, result=result)
     raced = idem.commit_idempotent(db, actor_id=account.id, action="points.exchange", key=idem_key, request_hash=fp)
+    if raced is not None:
+        return raced
+    return result
+
+
+VOID_REASON_EXCHANGE_BACK = "换回志愿服务时长"
+
+
+@router.get("/exchange-back/options", response_model=ExchangeBackOptionsOut)
+def exchange_back_options(
+    db: Session = Depends(get_db),
+    account: Account = Depends(require_roles(Role.user, Role.super_admin, Role.issue_admin)),
+):
+    """券换时长（T24）：本人可换回时长的未使用券清单。
+
+    仅限非时长兑换所得的未使用券（如管理员发放），按券模板当前标价折算
+    退回时长；标价为 0 的券无法折算，不进入清单。兑换所得的券不可换回
+    （单向流动），经账本 ref_type=exchange 的 ref_id 识别。
+    """
+    rows = (
+        db.query(CouponInstance)
+        .join(CouponTemplate, CouponInstance.template_id == CouponTemplate.id)
+        .options(joinedload(CouponInstance.template), joinedload(CouponInstance.merchant))
+        .filter(
+            CouponInstance.user_id == account.id,
+            CouponInstance.status == CouponStatus.unused,
+            CouponTemplate.cost_points > 0,
+        )
+        .order_by(CouponInstance.expires_at.asc())
+        .all()
+    )
+    # 兑换所得的券排除在可换清单外（批量查账本，避免逐行 N+1）
+    exchanged_ids: set[str] = set()
+    if rows:
+        exchanged_ids = {
+            rid
+            for (rid,) in db.query(PointLedger.ref_id)
+            .filter(
+                PointLedger.ref_type == "exchange",
+                PointLedger.ref_id.in_([c.id for c in rows]),
+            )
+            .all()
+        }
+    items = []
+    for c in rows:
+        if c.id in exchanged_ids:
+            continue
+        template = c.template
+        items.append(
+            {
+                "coupon_id": c.id,
+                "code": c.code,
+                # 优先发放时快照；历史行无快照回退模板当前名称
+                "template_name": c.template_name or (template.name if template else None),
+                "merchant_name": c.merchant.name if c.merchant else None,
+                "expires_at": c.expires_at,
+                "refund_hours": quantize_hours(template.cost_points),
+            }
+        )
+    return ExchangeBackOptionsOut(items=items)
+
+
+@router.post("/exchange-back", response_model=ExchangeBackOut)
+def exchange_back(
+    body: ExchangeBackIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    account: Account = Depends(require_roles(Role.user)),
+):
+    """券换时长（T24）：把本人一张未使用券作废，按模板当前标价换回时长。
+
+    单向流动（T24b）：仅限非时长兑换所得的券（兑换所得的券不可换回），
+    换回即作废（每张券自然只有一次）；作废券与退回时长在同一事务完成。
+    并发竞争由券状态条件更新兜底（单胜者，与核销同一模式）。
+    """
+    idem_key = idem.extract_key(request)
+    fp = idem.fingerprint(body.model_dump(mode="json"))
+    if idem_key:
+        replayed = idem.replay(db, actor_id=account.id, action="points.exchange_back", key=idem_key, request_hash=fp)
+        if replayed is not None:
+            return replayed
+        idem.sweep_with_settings(db)
+    try:
+        require_benefit_user(db, account, action="换回时长")
+    except EligibilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    coupon = db.get(CouponInstance, body.coupon_id)
+    # 他人券与不存在的券同一响应，避免券枚举
+    if not coupon or coupon.user_id != account.id:
+        raise HTTPException(status_code=404, detail="券不存在")
+
+    # 过期转换与核销同一数据库级条件更新写法：已过期的未使用券不能换回时长
+    now = datetime.now(timezone.utc)
+    expired_now = (
+        db.query(CouponInstance)
+        .filter(
+            CouponInstance.id == coupon.id,
+            CouponInstance.status == CouponStatus.unused,
+            CouponInstance.expires_at <= now,
+        )
+        .update({CouponInstance.status: CouponStatus.expired}, synchronize_session=False)
+    )
+    if expired_now:
+        raise HTTPException(status_code=400, detail="该券已过期，无法换回时长")
+    if coupon.status != CouponStatus.unused:
+        raise HTTPException(status_code=400, detail="仅未使用的券可换回时长")
+    # 单向流动（T24b）：时长换券所得的券不可再换回时长，杜绝来回兑换环路
+    exchange_source = (
+        db.query(PointLedger.id)
+        .filter(PointLedger.ref_type == "exchange", PointLedger.ref_id == coupon.id)
+        .first()
+    )
+    if exchange_source is not None:
+        raise HTTPException(status_code=400, detail="时长兑换所得的券不能换回时长")
+
+    template = coupon.template
+    if template is None:
+        raise HTTPException(status_code=400, detail="券模板不存在，无法折算时长")
+    refund = quantize_hours(template.cost_points)
+    if refund <= ZERO:
+        raise HTTPException(status_code=400, detail="该券未标价时长，无法换回")
+
+    # 条件更新作废券（单胜者）：并发换回/核销同一张券时只有一方能改状态
+    updated = (
+        db.query(CouponInstance)
+        .filter(CouponInstance.id == coupon.id, CouponInstance.status == CouponStatus.unused)
+        .update(
+            {
+                CouponInstance.status: CouponStatus.void,
+                CouponInstance.void_reason: VOID_REASON_EXCHANGE_BACK,
+            },
+            synchronize_session=False,
+        )
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="券状态已变化，请刷新后重试")
+
+    try:
+        acc = apply_points(
+            db,
+            user_id=account.id,
+            change=refund,
+            reason=f"券换回时长：{template.name}",
+            operator_id=account.id,
+            ref_type="exchange_back",
+            ref_id=coupon.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    write_audit(
+        db,
+        actor_id=account.id,
+        action="exchange_back_hours",
+        target_type="coupon_instance",
+        target_id=coupon.id,
+        detail=f"refund={refund}",
+    )
+    db.refresh(coupon)
+    result = ExchangeBackOut(
+        message="换回成功",
+        balance=acc.balance,
+        refunded_hours=refund,
+        coupon=_coupon_out(coupon),
+    ).model_dump(mode="json")
+    # 幂等记录与券作废/账本同一事务提交：重放不重复退时长、不重复作废（T13）
+    if idem_key:
+        idem.store(db, actor_id=account.id, action="points.exchange_back", key=idem_key, request_hash=fp, result=result)
+    raced = idem.commit_idempotent(db, actor_id=account.id, action="points.exchange_back", key=idem_key, request_hash=fp)
     if raced is not None:
         return raced
     return result

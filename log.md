@@ -625,3 +625,93 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - 验收包内数字全部实测核实：195 passed / 18 skipped、E2E 12 全绿、
   `npm run build` 通过、迁移 head `d8f2a06c4b11`、密钥扫描退出 0。
 - staging 实机角色验收与发布后观察窗口属运维动作，已在验收包中列出清单。
+
+## 2026-09-12（第十五批：T24 券换时长与双向兑换限次）
+
+### T24：券换时长 + 双向兑换各限一次
+
+- 规则（产品确认）：「时长换券」「券换时长」每人每方向各限一次，两方向
+  互不占用；券换时长本人所有未使用券均可换，按券模板**当前** cost_points
+  折算退回，标价 0 的券不可换，换回后券作废（void_reason="换回志愿服务时长"）。
+- 后端：
+  - 新模型 `ExchangeRecord`（`exchange_records`）：(user_id, direction)
+    唯一约束 `uq_exchange_records_user_direction` 作为并发限次最终仲裁；
+    coupon_id 正向记所得券、反向记被作废券，hours 记涉及数额。
+  - 迁移 `b4e8f21c9a73_exchange_records`（head，down=d8f2a06c4b11）；
+    `REQUIRED_SCHEMA_COLUMNS` 补 exchange_records.direction。
+  - `services/exchange.py`：`has_exchanged`（时长换券兼容账本
+    ref_type=exchange 的历史兑换）+ `record_exchange`（立即 flush，
+    唯一约束冲突在端点内转 400，早于幂等 commit 避免 409/500 误判）。
+  - `POST /points/exchange` 加限次检查与兑换登记；新增
+    `POST /points/exchange-back`（幂等 action=points.exchange_back：核验 →
+    限次 → 券校验（本人/unused/过期转换复用核销的数据库级条件更新）→
+    条件更新作废券（单胜者）→ 登记 → apply_points(ref_type=exchange_back)
+    → 审计 exchange_back_hours）与 `GET /points/exchange-back/options`
+    （可换清单 + 双向已用状态，GET /points/me 保持不变）。
+  - eligibility `_VERIFY_MESSAGES` 增加「换回时长」核验文案。
+- 前端 `views/user/Points.vue`：
+  - 目录区展示双向限次状态，「兑换」按钮在时长换券机会用完后禁用；
+  - 新增「券换时长」卡片：可换清单（名称/商家/券码/有效期/退回小时数）、
+    确认弹窗（券将作废不可撤销）、幂等键模式与兑换一致，成功后刷新；
+  - 管理端流水类型列显示原始 ref_type，无需改动。
+- 测试：
+  - `tests/test_points.py` 新增 TestExchangeQuota 13 例：往返闭环、两方向
+    限次、历史兑换占额、管理员发的券可换、标价 0 拒绝、非 unused 拒绝、
+    他人券 404、未核验拒绝、按当前模板价折算、幂等重放、可换清单过滤、
+    并发换回同一券单胜者（SQLite）。
+  - `tests/test_mysql_concurrency.py` 新增 2 例（真实 MySQL 8）：同用户并发
+    换回两张券 / 并发时长换券，唯一约束保证恰一次成功、余额精确。
+
+**验证**
+
+- `pytest tests/ -q`：228 passed，0 skipped（本机 mysqld 可用，MySQL 组
+  实际执行；无 MySQL 环境时为 208 passed / 20 skipped）；迁移链在临时库
+  `alembic upgrade head` 至 `b4e8f21c9a73` 验证通过；`npm run build` 通过；
+  E2E 12 用例全绿（exchange-flow 扩展为换入→换回→双向禁用断言）。
+
+## 2026-09-12（第十六批：T24 规则修正——限次按券计）
+
+### T24b：兑换限次从「每人每方向一次」改为「每张券各限一次」
+
+- 产品修正：不按用户限次。youth2 有 5 张券则 5 张都能换回时长；换回所得
+  时长可随时再次兑换新券。限制落在券实例上：券换回时长即作废（每张券
+  自然只有一次），时长换券恢复原有行为（余额足够即可兑换）。
+- 后端：删除 `exchange_records` 表、`ExchangeRecord` 模型、迁移
+  `b4e8f21c9a73`、`services/exchange.py` 与两端点的按用户限次检查；
+  exchange-back 的并发安全由券状态条件更新单胜者兜底（与核销同模式）；
+  options 响应去掉双向已用标志，只返回可换清单。
+  开发库已 downgrade 回 `d8f2a06c4b11`，迁移 head 同步回退。
+- 前端 `views/user/Points.vue`：去掉兑换/换回按钮的限次禁用与「每人限
+  一次」文案；券换时长卡片说明改为「每张券限一次」。
+- 测试：test_points.py 删除三个按用户限次用例，新增「多张券逐张换回」
+  「换回后可立即再次兑换」；test_mysql_concurrency.py 改为「不同券并发
+  换回两胜」「并发兑换两胜」，新增「同一张券并发换回单胜者」。
+
+**验证**
+
+- `pytest tests/ -q`：227 passed，0 skipped（MySQL 实跑 15 例）；
+  `npm run build` 通过；E2E 12 用例全绿（含换回后再兑换断言）。
+
+## 2026-09-12（第十七批：T24b 规则再修正——单向流动）
+
+### T24c：券换时长改为单向，兑换所得的券不可换回
+
+- 产品修正：单向流动。券换成时长即作废终态（不存在"换回券"）；**时长
+  换券所得的券不可再换回时长**（非退款）。仅非兑换来源（如管理员发放）
+  的未使用券可换回时长。系统不存在来回兑换环路。
+- 后端：exchange-back 新增来源检查——账本存在 ref_type=exchange 且
+  ref_id=券id 的券拒绝（400「时长兑换所得的券不能换回时长」）；options
+  可换清单批量排除兑换所得券（一次 IN 查询防 N+1）。无新表新迁移。
+- 前端：券换时长卡片文案改为「非时长兑换所得的未使用券可换回」，空态
+  说明同步；E2E 剧本改为验证兑换所得券不入清单、非兑换券可换回、时长
+  换券不受影响。
+- 测试：新增「兑换所得券不能换回且不入清单」「非兑换券成功换回」；
+  「改价按当前价折算」改用非兑换券；MySQL 三例（不同券两胜 / 同券单胜 /
+  并发兑换两胜）沿用非兑换种子券，全部保留。
+
+**验证**
+
+- `pytest tests/ -q`：228 passed，0 skipped（MySQL 实跑）；
+  `npm run build` 通过；E2E 12 用例全绿。
+- 本地冒烟：youth2（已核验）真实换回一张餐饮立减券，余额 90 → 92，
+  券作废原因「换回志愿服务时长」。

@@ -38,6 +38,29 @@
       </div>
     </div>
 
+    <div class="page-card" style="margin-bottom:16px">
+      <h2 class="page-title">券换时长</h2>
+      <p class="page-desc">非时长兑换所得的未使用券可按模板当前标价换回时长，换回后券作废（每张券限一次）</p>
+      <EmptyState
+        v-if="!backOptions.length"
+        title="暂无可换回时长的券"
+        description="仅未使用、标价大于 0 且非时长兑换所得的券可换回时长"
+      />
+      <div v-for="item in backOptions" :key="item.coupon_id" class="row">
+        <div>
+          <strong>{{ item.template_name }}</strong>
+          <div class="muted">商家：{{ item.merchant_name ?? '-' }} · 券码 {{ item.code }}</div>
+          <div class="muted">有效期至 {{ formatTime(item.expires_at) }}</div>
+        </div>
+        <div class="actions">
+          <el-tag type="success" effect="light" round>退 {{ formatHours(item.refund_hours) }} 小时</el-tag>
+          <el-button type="warning" plain @click="exchangeBack(item)">
+            换回时长
+          </el-button>
+        </div>
+      </div>
+    </div>
+
     <div class="page-card">
       <h2 class="page-title">时长流水</h2>
       <el-table :data="ledger" stripe>
@@ -76,16 +99,19 @@ const router = useRouter()
 const balance = ref(null)
 const catalog = ref([])
 const ledger = ref([])
+const backOptions = ref([])
 
 async function load() {
-  const [b, c, l] = await Promise.all([
+  const [b, c, l, o] = await Promise.all([
     api.get('/points/me'),
     api.get('/points/catalog'),
     api.get('/points/me/ledger', { params: { limit: 50 } }),
+    api.get('/points/exchange-back/options'),
   ])
   balance.value = b.data.balance
   catalog.value = c.data
   ledger.value = l.data.items
+  backOptions.value = o.data.items
 }
 
 // 同一兑换意图复用同一幂等键：超时/失败后重试由服务端重放，不会重复扣时长
@@ -125,6 +151,32 @@ async function exchange(item) {
   } else {
     load()
   }
+}
+
+// 券换时长（T24）：与兑换同一幂等键模式——同一意图复用同一 key，成功后重置
+let exchangeBackKey = ''
+
+async function exchangeBack(item) {
+  await ElMessageBox.confirm(
+    `确认将「${item.template_name}」换回 ${formatHours(item.refund_hours)} 小时？该券将作废，操作不可撤销。`,
+    '换回确认',
+    { type: 'warning', confirmButtonText: '确认换回', cancelButtonText: '取消' },
+  )
+  if (!exchangeBackKey) exchangeBackKey = newIdempotencyKey()
+  let res
+  try {
+    res = await api.post(
+      '/points/exchange-back',
+      { coupon_id: item.coupon_id },
+      { headers: idempotencyHeader(exchangeBackKey) },
+    )
+  } catch (err) {
+    // 保留 key：用户重试本次换回时复用，服务端按 key 重放原结果
+    throw err
+  }
+  exchangeBackKey = ''
+  ElMessage.success(`已换回 ${formatHours(res.data.refunded_hours)} 小时`)
+  await load()
 }
 
 onMounted(load)

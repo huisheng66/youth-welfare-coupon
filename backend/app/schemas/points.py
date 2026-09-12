@@ -98,3 +98,45 @@ class ExchangeOut(BaseModel):
 
 class CatalogItem(TemplateOut):
     pass
+
+
+class ExchangeBackIn(BaseModel):
+    coupon_id: str
+
+
+class ExchangeBackOut(BaseModel):
+    message: str
+    balance: Decimal
+    refunded_hours: Decimal
+    coupon: CouponOut
+
+    @field_validator("balance", "refunded_hours", mode="before")
+    @classmethod
+    def _bal(cls, v):
+        return quantize_hours(v)
+
+    @field_serializer("balance", "refunded_hours")
+    def _ser_bal(self, v: Decimal) -> float:
+        return _as_float_hours(v)
+
+
+class ExchangeBackOptionItem(BaseModel):
+    coupon_id: str
+    code: str
+    template_name: str | None = None
+    merchant_name: str | None = None
+    expires_at: datetime | None = None
+    refund_hours: Decimal
+
+    @field_validator("refund_hours", mode="before")
+    @classmethod
+    def _hours(cls, v):
+        return quantize_hours(v)
+
+    @field_serializer("refund_hours")
+    def _ser_hours(self, v: Decimal) -> float:
+        return _as_float_hours(v)
+
+
+class ExchangeBackOptionsOut(BaseModel):
+    items: list[ExchangeBackOptionItem] = []
