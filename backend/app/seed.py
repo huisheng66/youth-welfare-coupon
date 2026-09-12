@@ -167,6 +167,11 @@ def patch_existing_demo(db: Session) -> None:
                 operator_id=None,
                 ref_type="seed_patch",
             )
+    restaurant = db.query(Merchant).filter(Merchant.name == "示例餐饮店").first()
+    if restaurant and not restaurant.longitude:
+        restaurant.address = "示例市青年路 88 号 1 层 101 室"
+        restaurant.longitude = "116.397428"
+        restaurant.latitude = "39.909230"
     templates = db.query(CouponTemplate).filter(CouponTemplate.cost_points == 0).all()
     for t in templates:
         if "餐饮" in (t.name or "") or "演示" in (t.description or ""):
@@ -194,8 +199,11 @@ def seed_if_empty(db: Session) -> None:
         name="示例餐饮店",
         contact_name="张店长",
         contact_phone="13800000001",
-        address="示例路 1 号",
+        address="示例市青年路 88 号 1 层 101 室",
         description="青年福利合作餐饮商家（演示）",
+        # GCJ-02 示例坐标（高德拾取器格式），用户端详情页据此展示导航链接
+        longitude="116.397428",
+        latitude="39.909230",
     )
     db.add(merchant)
     db.flush()

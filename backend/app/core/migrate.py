@@ -413,6 +413,12 @@ def ensure_schema(engine: Engine) -> None:
     )
     _add_column_if_missing(engine, "coupon_instances", "template_name", "template_name VARCHAR(128)")
     _add_column_if_missing(engine, "coupon_instances", "template_description", "template_description TEXT")
+    # T25 门店详情页：门头照 + GCJ-02 坐标（生产走 alembic，开发路径在此补列）
+    _add_column_if_missing(engine, "merchants", "photo_blob", "photo_blob BLOB")
+    _add_column_if_missing(engine, "merchants", "photo_content_type", "photo_content_type VARCHAR(50) DEFAULT ''")
+    _add_column_if_missing(engine, "merchants", "photo_updated_at", "photo_updated_at DATETIME")
+    _add_column_if_missing(engine, "merchants", "longitude", "longitude VARCHAR(32) DEFAULT ''")
+    _add_column_if_missing(engine, "merchants", "latitude", "latitude VARCHAR(32) DEFAULT ''")
     _widen_email_code_column(engine)
     _migrate_hours_to_decimal(engine)
     _ensure_indexes(engine)

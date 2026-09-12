@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.deps import require_roles
-from app.models.entities import Account, Merchant, Role
+from app.core.deps import get_current_account, require_roles
+from app.models.entities import Account, Merchant, Role, utcnow
 from app.schemas.common import Page
 from app.schemas.merchant import MerchantCreate, MerchantOut, MerchantUpdate
 from app.services.audit import write_audit
@@ -77,7 +78,7 @@ def update_merchant(
 def get_merchant(
     merchant_id: str,
     db: Session = Depends(get_db),
-    account: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant)),
+    account: Account = Depends(require_roles(Role.super_admin, Role.issue_admin, Role.merchant, Role.user)),
 ) -> MerchantOut:
     merchant = db.get(Merchant, merchant_id)
     # 查询阶段限定门店范围：他店对象与不存在统一 404，避免暴露门店联系方式是否存在
@@ -86,3 +87,81 @@ def get_merchant(
     if not merchant:
         raise HTTPException(status_code=404, detail="商家不存在")
     return MerchantOut.model_validate(merchant)
+
+
+def _sniff_photo_type(data: bytes) -> str | None:
+    """按魔数识别图片类型：不信任上传方的 Content-Type 头。"""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@router.post("/{merchant_id}/photo", response_model=MerchantOut)
+def upload_merchant_photo(
+    merchant_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> MerchantOut:
+    merchant = db.get(Merchant, merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    max_bytes = get_settings().merchant_photo_max_bytes
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"图片过大，最大 {max_bytes // (1024 * 1024)}MB")
+    content_type = _sniff_photo_type(data)
+    if not content_type:
+        raise HTTPException(status_code=400, detail="仅支持 JPEG / PNG / WebP 图片")
+    merchant.photo_blob = data
+    merchant.photo_content_type = content_type
+    merchant.photo_updated_at = utcnow()
+    write_audit(db, actor_id=admin.id, action="upload_merchant_photo", target_type="merchant", target_id=merchant_id)
+    db.commit()
+    db.refresh(merchant)
+    return MerchantOut.model_validate(merchant)
+
+
+@router.delete("/{merchant_id}/photo", response_model=MerchantOut)
+def delete_merchant_photo(
+    merchant_id: str,
+    db: Session = Depends(get_db),
+    admin: Account = Depends(require_roles(Role.super_admin, Role.issue_admin)),
+) -> MerchantOut:
+    merchant = db.get(Merchant, merchant_id)
+    if not merchant:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    merchant.photo_blob = None
+    merchant.photo_content_type = ""
+    merchant.photo_updated_at = utcnow()
+    write_audit(db, actor_id=admin.id, action="delete_merchant_photo", target_type="merchant", target_id=merchant_id)
+    db.commit()
+    db.refresh(merchant)
+    return MerchantOut.model_validate(merchant)
+
+
+@router.get("/{merchant_id}/photo")
+def get_merchant_photo(
+    merchant_id: str,
+    db: Session = Depends(get_db),
+    account: Account = Depends(get_current_account),
+) -> Response:
+    """门头照二进制：任意已登录角色可见（门店公开展示信息）。
+
+    <img> 同源请求自动带认证 Cookie；带 photo_updated_at 版本参数时
+    可安全使用短 max-age，覆盖旧图后客户端无需手动清缓存。
+    """
+    merchant = db.get(Merchant, merchant_id)
+    if not merchant or not merchant.photo_blob:
+        raise HTTPException(status_code=404, detail="门头照不存在")
+    return Response(
+        content=merchant.photo_blob,
+        media_type=merchant.photo_content_type or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=300"},
+    )

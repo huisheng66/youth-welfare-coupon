@@ -715,3 +715,54 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
   `npm run build` 通过；E2E 12 用例全绿。
 - 本地冒烟：youth2（已核验）真实换回一张餐饮立减券，余额 90 → 92，
   券作废原因「换回志愿服务时长」。
+
+## 2026-09-12（第十八批：T25 商家详情页）
+
+### T25：指定商家详情页（门头照 / 位置 / 电话 / 唤起导航）
+
+- 产品：用户端券行「指定商家」可点进门店详情页，展示门头照、地址、
+  联系电话；位置可唤起地图导航。调研并确认三家地图 URI API（均为
+  https 链接，PC 开网页、移动端拉起 App，无需 key）：高德
+  `uri.amap.com/navigation?to=lng,lat,name`（GCJ-02，callnative=1）、
+  腾讯 `apis.map.qq.com/uri/v1/routeplan`（tocoord=lat,lng，默认即
+  GCJ-02）、百度 `api.map.baidu.com/direction`（coord_type=gcj02 自动
+  转 BD-09）；未填坐标退化为高德 search / 百度 geocoder 地址关键词搜索。
+- 后端：
+  - `Merchant` 新列 photo_blob（LargeBinary(16777215)，MySQL 落
+    MEDIUMBLOB）/ photo_content_type / photo_updated_at / longitude /
+    latitude（GCJ-02 文本）+ `has_photo` 属性；迁移 `c8d5e1f3a27b`
+    （down_revision=d8f2a06c4b11，临时库 upgrade/downgrade/再 upgrade
+    验证通过），dev 路径 `ensure_schema` 同步补列。
+  - `GET /api/merchants/{id}` 开放 `Role.user`（门店公开展示信息；
+    merchant 角色他店 404 不变）；新增 `POST/DELETE /{id}/photo`
+    （仅超管/发放管理员，魔数校验 JPEG/PNG/WebP、
+    MERCHANT_PHOTO_MAX_BYTES 默认 5MB、413 拒绝超限，审计
+    upload/delete_merchant_photo）与 `GET /{id}/photo`（任意已登录
+    角色，Cache-Control private, max-age=300）。
+  - `MerchantOut` 增加 longitude/latitude/has_photo/photo_updated_at；
+    Create/Update 经纬度 pydantic 正则 + 范围校验（lng ±180 / lat ±90）。
+  - seed：示例餐饮店补完整地址与 GCJ-02 示例坐标
+    （116.397428, 39.909230），patch_existing_demo 对旧演示库回填。
+- 前端（原生组件实现，遵循 DESIGN.md）：
+  - 新页 `views/user/MerchantDetail.vue`：门头照原生 `<img>`（16:9
+    cover，点击开原生全屏遮罩，Esc/点击关闭）；位置卡地址 + 复制 +
+    三家地图 `<a target=_blank rel=noopener>` 直链；电话 `tel:` 链接
+    + 复制；无照片虚线占位、无地址/电话有降级文案。
+  - `utils/geo.js`：buildNavLinks 统一拼三家 URI（src=youth-welfare）。
+  - Home.vue / user/Coupons.vue 券行「指定商家」改 router-link（保留
+    原文本不影响既有 e2e 选择器）；路由 /user/merchants/:id。
+  - admin/Merchants.vue：编辑弹窗加经纬度输入（附高德坐标拾取器链接）
+    与门头照管理（隐藏原生 `<input type=file accept=image/*>` + 按钮
+    触发、缩略图预览、删除确认；新建需先保存再传）。
+- 测试：`tests/test_merchant_detail.py` 8 用例（用户可读详情/列表与
+  写操作 403/照片上传-回读-覆盖-删除/超限 413/假魔数 400/坐标 422/
+  merchant 角色不能传照片）；E2E 新增 merchant-detail.spec.js 3 用例
+  （券行链接进详情、三家地图 href 断言、tel: 链接、空态与返回）。
+
+**验证**
+
+- `pytest tests/ -q`：215 passed，21 skipped（本机无 MySQL，MySQL 组
+  跳过）；`npm run build` 通过；E2E 15 用例全绿。
+- 本地冒烟（vite + uvicorn 实机）：管理员上传门头照后用户端详情页
+  正常展示照片与三家导航链接，管理端弹窗回显坐标与照片管理入口；
+  迁移链临时库 upgrade/downgrade 验证通过。

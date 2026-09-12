@@ -20,6 +20,7 @@ const UserHome = () => import('../views/user/Home.vue')
 const UserProfile = () => import('../views/user/Profile.vue')
 const UserCoupons = () => import('../views/user/Coupons.vue')
 const UserPoints = () => import('../views/user/Points.vue')
+const UserMerchantDetail = () => import('../views/user/MerchantDetail.vue')
 const MerchantRedeem = () => import('../views/merchant/Redeem.vue')
 const MerchantLogs = () => import('../views/merchant/Logs.vue')
 const Settings = () => import('../views/Settings.vue')
@@ -58,6 +59,7 @@ const router = createRouter({
         { path: 'profile', component: UserProfile, meta: { title: '资料核验' } },
         { path: 'coupons', component: UserCoupons, meta: { title: '我的优惠券' } },
         { path: 'points', component: UserPoints, meta: { title: '时长兑换' } },
+        { path: 'merchants/:id', component: UserMerchantDetail, meta: { title: '商家详情' } },
         { path: 'settings', component: Settings, meta: { title: '账号设置' } },
       ],
     },

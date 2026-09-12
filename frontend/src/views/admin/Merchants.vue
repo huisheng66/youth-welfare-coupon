@@ -55,6 +55,45 @@
         <el-form-item label="电话"><el-input v-model="form.contact_phone" /></el-form-item>
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
         <el-form-item label="简介"><el-input v-model="form.description" type="textarea" /></el-form-item>
+        <el-form-item label="经纬度">
+          <div class="coord-row">
+            <el-input v-model="form.longitude" placeholder="经度，如 116.397428" />
+            <el-input v-model="form.latitude" placeholder="纬度，如 39.909230" />
+          </div>
+          <div class="muted coord-hint">
+            选填（GCJ-02）；填写后用户端「商家详情」可直接唤起地图导航，坐标可从
+            <a href="https://lbs.amap.com/tools/picker" target="_blank" rel="noopener">高德坐标拾取器</a> 复制
+          </div>
+        </el-form-item>
+        <el-form-item label="门头照">
+          <div class="photo-edit">
+            <img
+              v-if="form.has_photo"
+              class="photo-thumb"
+              :src="photoPreviewUrl"
+              alt="门头照"
+            />
+            <div class="photo-actions">
+              <template v-if="form.id">
+                <el-button size="small" :loading="uploading" @click="triggerPick">
+                  {{ form.has_photo ? '更换照片' : '上传门头照' }}
+                </el-button>
+                <el-button v-if="form.has_photo" size="small" type="danger" plain @click="removePhoto">
+                  删除照片
+                </el-button>
+              </template>
+              <span v-else class="muted">先保存商家，再上传门头照</span>
+            </div>
+          </div>
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style="display: none"
+            @change="onPickFile"
+          />
+          <div class="muted coord-hint">支持 JPG / PNG / WebP，不超过 5MB；保存后在用户端详情页展示</div>
+        </el-form-item>
         <el-form-item v-if="form.id" label="启用">
           <el-switch v-model="form.is_active" />
         </el-form-item>
@@ -68,7 +107,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../../api'
 import EmptyState from '../../components/EmptyState.vue'
 import StatusTag from '../../components/StatusTag.vue'
@@ -79,6 +118,8 @@ const visible = ref(false)
 const loading = ref(false)
 const q = ref('')
 const activeOnly = ref(false)
+const fileInput = ref(null)
+const uploading = ref(false)
 const form = reactive({
   id: '',
   name: '',
@@ -86,7 +127,17 @@ const form = reactive({
   contact_phone: '',
   address: '',
   description: '',
+  longitude: '',
+  latitude: '',
+  has_photo: false,
+  photo_updated_at: null,
   is_active: true,
+})
+
+// ?v=照片更新时间：覆盖上传后立即取到新图，避开短缓存
+const photoPreviewUrl = computed(() => {
+  const v = form.photo_updated_at ? new Date(form.photo_updated_at).getTime() : ''
+  return `/api/merchants/${form.id}/photo${v ? `?v=${v}` : ''}`
 })
 
 async function load() {
@@ -112,7 +163,8 @@ function onFilter() {
 
 function openCreate() {
   Object.assign(form, {
-    id: '', name: '', contact_name: '', contact_phone: '', address: '', description: '', is_active: true,
+    id: '', name: '', contact_name: '', contact_phone: '', address: '', description: '',
+    longitude: '', latitude: '', has_photo: false, photo_updated_at: null, is_active: true,
   })
   visible.value = true
 }
@@ -134,6 +186,8 @@ async function save() {
       contact_phone: form.contact_phone,
       address: form.address,
       description: form.description,
+      longitude: form.longitude,
+      latitude: form.latitude,
       is_active: form.is_active,
     })
   } else {
@@ -143,11 +197,54 @@ async function save() {
       contact_phone: form.contact_phone,
       address: form.address,
       description: form.description,
+      longitude: form.longitude,
+      latitude: form.latitude,
     })
   }
   ElMessage.success('已保存')
   visible.value = false
   load()
+}
+
+// ---- 门头照（原生 <input type=file>，不用 el-upload）----
+
+function triggerPick() {
+  fileInput.value?.click()
+}
+
+async function onPickFile(e) {
+  const file = e.target.files?.[0]
+  e.target.value = '' // 允许再次选择同一文件
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.warning('图片不能超过 5MB')
+    return
+  }
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await api.post(`/merchants/${form.id}/photo`, fd)
+    form.has_photo = res.data.has_photo
+    form.photo_updated_at = res.data.photo_updated_at
+    ElMessage.success('门头照已更新')
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function removePhoto() {
+  try {
+    await ElMessageBox.confirm('确认删除该门店的门头照？删除后用户端详情页不再展示照片。', '提示', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  const res = await api.delete(`/merchants/${form.id}/photo`)
+  form.has_photo = res.data.has_photo
+  form.photo_updated_at = res.data.photo_updated_at
+  ElMessage.success('已删除门头照')
 }
 
 async function toggle(row) {
@@ -170,3 +267,38 @@ async function toggle(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.coord-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.coord-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.coord-hint a {
+  color: var(--brand);
+}
+
+.photo-edit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.photo-thumb {
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+</style>

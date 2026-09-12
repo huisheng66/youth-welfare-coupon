@@ -65,7 +65,7 @@
         <div>
           <strong>{{ c.template_name }}</strong>
           <el-tag v-if="isExpiring(c)" size="small" type="warning" effect="light" style="margin-left:6px">即将过期</el-tag>
-          <div class="muted">指定商家：{{ c.merchant_name }}</div>
+          <div class="muted">指定商家：<router-link class="merchant-link" :to="`/user/merchants/${c.merchant_id}`">{{ c.merchant_name }}</router-link></div>
           <div class="muted">过期 {{ formatTime(c.expires_at) }}</div>
         </div>
         <el-button type="primary" @click="$router.push({ path: '/user/coupons', query: { open: c.id } })">
@@ -153,6 +153,17 @@ onMounted(async () => {
 .coupon-row strong {
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+.merchant-link {
+  color: var(--brand);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.merchant-link:hover {
+  color: var(--brand-hover);
+  text-decoration: underline;
 }
 
 @media (max-width: 720px) {

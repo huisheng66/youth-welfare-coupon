@@ -24,7 +24,7 @@
     <div v-for="c in items" :key="c.id" class="coupon-card">
       <div>
         <strong>{{ c.template_name }}</strong>
-        <div class="muted">指定商家：{{ c.merchant_name }}</div>
+        <div class="muted">指定商家：<router-link class="merchant-link" :to="`/user/merchants/${c.merchant_id}`">{{ c.merchant_name }}</router-link></div>
         <div class="muted">
           <StatusTag :text="couponStatusText(c.status)" :type="couponStatusType(c.status)" />
           <span style="margin-left:8px">过期 {{ formatTime(c.expires_at) }}</span>
@@ -471,6 +471,15 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
 }
 .coupon-card:last-child { border-bottom: none; }
+.merchant-link {
+  color: var(--brand);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+.merchant-link:hover {
+  color: var(--brand-hover);
+  text-decoration: underline;
+}
 .live-wrap.is-stale {
   opacity: 0.72;
 }

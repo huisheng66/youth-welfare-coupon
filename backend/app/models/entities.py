@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -94,9 +94,20 @@ class Merchant(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # T25 门店详情页：门头照原图入库（MySQL 落 MEDIUMBLOB，SQLite 不限），
+    # 经纬度为高德坐标拾取器复制的 GCJ-02 文本；均为空串/NULL 表示未填写
+    photo_blob: Mapped[bytes | None] = mapped_column(LargeBinary(16777215), nullable=True)
+    photo_content_type: Mapped[str] = mapped_column(String(50), default="")
+    photo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    longitude: Mapped[str] = mapped_column(String(32), default="")
+    latitude: Mapped[str] = mapped_column(String(32), default="")
 
     accounts = relationship("Account", back_populates="merchant", foreign_keys="Account.merchant_id")
     templates = relationship("CouponTemplate", back_populates="merchant")
+
+    @property
+    def has_photo(self) -> bool:
+        return bool(self.photo_blob)
 
 
 class UserProfile(Base):
