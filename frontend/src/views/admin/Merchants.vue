@@ -67,17 +67,19 @@
         </el-form-item>
         <el-form-item label="门头照">
           <div class="photo-edit">
-            <img
-              v-if="form.has_photo"
-              class="photo-thumb"
-              :src="photoPreviewUrl"
-              alt="门头照"
-            />
+            <img v-if="form.has_photo" class="photo-thumb" :src="photoPreviewUrl" alt="门头照" />
             <div class="photo-actions">
               <template v-if="form.id">
-                <el-button size="small" :loading="uploading" @click="triggerPick">
-                  {{ form.has_photo ? '更换照片' : '上传门头照' }}
-                </el-button>
+                <!-- 原生 label+input 触发文件选择：不依赖 JS click() 的用户激活判定，各浏览器行为一致 -->
+                <label class="upload-btn" :class="{ 'is-uploading': uploading }">
+                  <input
+                    class="upload-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    @change="onPickFile"
+                  />
+                  {{ uploading ? '上传中…' : form.has_photo ? '更换照片' : '上传门头照' }}
+                </label>
                 <el-button v-if="form.has_photo" size="small" type="danger" plain @click="removePhoto">
                   删除照片
                 </el-button>
@@ -85,13 +87,6 @@
               <span v-else class="muted">先保存商家，再上传门头照</span>
             </div>
           </div>
-          <input
-            ref="fileInput"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            style="display: none"
-            @change="onPickFile"
-          />
           <div class="muted coord-hint">支持 JPG / PNG / WebP，不超过 5MB；保存后在用户端详情页展示</div>
         </el-form-item>
         <el-form-item v-if="form.id" label="启用">
@@ -118,7 +113,6 @@ const visible = ref(false)
 const loading = ref(false)
 const q = ref('')
 const activeOnly = ref(false)
-const fileInput = ref(null)
 const uploading = ref(false)
 const form = reactive({
   id: '',
@@ -206,11 +200,7 @@ async function save() {
   load()
 }
 
-// ---- 门头照（原生 <input type=file>，不用 el-upload）----
-
-function triggerPick() {
-  fileInput.value?.click()
-}
+// ---- 门头照（原生 <label>+<input type=file> 触发选择，不用 el-upload）----
 
 async function onPickFile(e) {
   const file = e.target.files?.[0]
@@ -300,5 +290,39 @@ onMounted(load)
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   flex: none;
+}
+
+/* 伪装成 el-button small 的原生 label：点击即打开系统文件选择 */
+.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 11px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.upload-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.upload-btn.is-uploading {
+  pointer-events: none;
+  color: var(--muted);
+}
+
+.upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 </style>
