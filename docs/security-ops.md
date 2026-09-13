@@ -1,36 +1,47 @@
 # 安全运维（第 4 阶段）
 
-覆盖：Token 存储风险与 Cookie 方案评估（7b）、依赖扫描（7c）、OWASP ZAP 基线（7e）。  
+覆盖：Token 存储与 HttpOnly Cookie 迁移结果（7b）、依赖扫描（7c）、OWASP ZAP 基线（7e）。  
 日常硬化（OpenAPI / CORS / 限流 / 输入净化等）见仓库根目录 [`优化.md`](../优化.md)。
 
 ---
 
-## 7b. JWT 存储与 XSS 风险
+## 7b. JWT 存储与 XSS 风险（已完成 HttpOnly Cookie 迁移）
 
-### 现状
+> 2026-09-06 起（优化1 第 2 项），JWT 已从 localStorage 迁移到 **HttpOnly Cookie**。
+> 本节描述迁移后的现状；旧的 Bearer + localStorage 方案仅作过渡回落保留。
 
-- 登录成功后，前端把 `access_token` 写入 **`localStorage`**（见 `frontend/src/auth.js`）。
-- 请求头：`Authorization: Bearer <token>`（axios 拦截器）。
-- **任意 XSS**（若用户可控 HTML 被 `v-html` 或第三方脚本注入）可直接读走 Token，冒充用户调用 API。
+### 现状（迁移后）
 
-### 已采取的缓解
+- 登录成功后，后端通过 `Set-Cookie` 下发 token：**HttpOnly + SameSite=Lax**，
+  `Secure` 随环境开关（生产 HTTPS 下开启）——见 `backend/app/core/cookie.py`，
+  Cookie 名 / 域 / SameSite 可用 `AUTH_COOKIE_*` 配置项调整。
+- 前端 **JS 不可读 token**（HttpOnly）；`frontend/src/auth.js` 的 localStorage 只存
+  脱敏的账号资料（姓名/角色等展示字段），不含 token；axios 全局
+  `withCredentials: true`（`frontend/src/api.js`）。
+- `get_current_account`（`backend/app/core/deps.py`）优先读 Cookie，过渡期回落
+  `Authorization: Bearer`（为二期小程序等非浏览器客户端保留）。
+- 登出后端清 Cookie（`clear_auth_cookie`）+ 递增 session_version 废止旧会话。
+- CSRF：写方法（POST/PUT/PATCH/DELETE）强制携带 `X-Requested-With` 头
+  （浏览器原生跨站表单不会带），配合 SameSite=Lax 双层防护——见
+  `backend/app/main.py` `CsrfProtectMiddleware`。
+
+### XSS 剩余风险与缓解
+
+迁移后即便出现 XSS，也无法**窃取 token 离站重放**；但 XSS 仍可在受害浏览器内
+直接发起同源请求（无法彻底消除），需继续压低注入面：
 
 - 服务端对姓名/组织/备注/材料等字段 **剥离 `<>`**，降低存储型 XSS。
 - 前端约定：**不对用户字段使用 `v-html`**（`tests` 中有静态扫描）。
-- 安全响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`。
+- 安全响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`；
+  CSP 由 Nginx 层下发（见 `deploy/nginx-welfare.conf`）。
 - 生产关闭 OpenAPI、收紧 CORS，减小攻击面。
 
-### HttpOnly Cookie 方案评估（可选后续）
+### 已知限制
 
-| 项 | 说明 |
-|----|------|
-| 收益 | JS 无法直接读取 Cookie，缓解「XSS 偷 Token」；可配合 `SameSite=Lax/Strict` |
-| 前置 | **全站 HTTPS**（否则 Secure Cookie 不可用或降级不安全） |
-| 改动面 | 后端 `login` 设 Cookie；前端去掉 `localStorage` token；CSRF 防护（双重 Cookie 或 CSRF token）；跨域前端需 `credentials: 'include'` + 精确 CORS |
-| 风险 | 现网若仍有 HTTP 调试/局域网扫码，Cookie 方案易踩坑；与手机扫码跨源场景需单独设计 |
-| 建议 | **维持 Bearer + localStorage**，直到生产强制 HTTPS 且前端同源部署稳定；再单独立项迁移 |
-
-**结论（本期）**：不迁移 Cookie；以文档 + 防 XSS + 安全头为主。迁移触发条件：生产 HTTPS 稳定 ≥ 1 个月，且安全评审通过。
+- CSRF 头校验是「约定头」方案，不是凭证式 CSRF token；过渡期回落的
+  `Authorization: Bearer` 请求不受 SameSite 保护（Bearer 头本身天然免疫 CSRF，
+  但前提是 token 不落 JS 可读存储——非浏览器客户端自行保管）。
+- 若未来前后端跨子域部署，需配 `AUTH_COOKIE_DOMAIN=.example.com` 并复核 CORS。
 
 ---
 
