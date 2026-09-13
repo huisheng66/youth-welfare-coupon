@@ -36,7 +36,7 @@
 3. **配置键**：在 `backend/.env` 补充（详见 `.env.example`）：
    - `PUBLIC_BASE_URL=https://你的域名`（**必须**——激活邮件链接指向它，未配置用户无法激活）；
    - `ACTIVATION_TOKEN_EXPIRE_HOURS` / `OUTBOX_POLL_SECONDS` / `OUTBOX_BATCH_SIZE` / `OUTBOX_MAX_ATTEMPTS`（有默认值，可不配）。
-4. **SMTP**：导入名单含邮箱并勾选"发送激活邮件"前，确认 SMTP 已配置（`/api/metrics` 的 `outbox_backlog.queued` 持续增长即提示未投递）。
+4. **SMTP**：导入名单含邮箱并勾选"发送激活邮件"前，确认 SMTP 已配置（`/api/metrics` 的 `outbox_backlog.queued` 持续增长即提示未投递；多 worker 下各 worker 独立分摊统计，看趋势不看绝对值）。
 5. **前端构建**：`npm ci && npm run build`，Nginx root 指向新 `dist/`。
 
 ## 3. 部署步骤（升级既有环境）
@@ -82,7 +82,9 @@ bash deploy/verify-prod.sh https://你的域名  # 可选：接口/页面探测�
   修改（本仓库内前后端与 e2e 已同批更新）。
 - **git 历史凭据泄露**（历史遗留，见 `deploy/README.md` 凭据轮换章节）：
   上线后继续推进轮换证据收集，属于独立运维动作。
-- **观察窗口**（发布后 7 天，见 `docs/开发计划.md` T23 条款 5）：
+- **观察窗口**（发布后 7 天，见 `docs/开发计划.md` T23 条款 5；注意
+  `/api/metrics` 为进程内聚合：2 worker 下数值在 worker 间分摊、重启清零，
+  看趋势与量级，勿当全局精确计数——详见 `deploy/README.md` 运维监控节）：
   - `GET /api/metrics`：`redeem_results` 失败分布（`already_used` 应主要来自
     商家重复扫码）、`errors_5xx_total` 增速、`latency_buckets` 尾部（≥3s 占比）；
   - `outbox_backlog.queued` 归零速率与 `failed` 计数；

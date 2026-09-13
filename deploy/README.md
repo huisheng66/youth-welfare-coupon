@@ -131,6 +131,12 @@ curl -s http://127.0.0.1:19001/api/metrics \  # 业务指标（需超管登录�
 异常升高 → 对应排查（`already_used` 多为重复扫码，`invalid_live_code` 多为
 券码过期后重扫）。
 
+> **多 worker 语义注意**：`/api/metrics` 为**进程内聚合**（`welfare-api.service`
+> 默认 `--workers 2`）——每个 worker 只统计自己处理过的请求，连续请求可能命中
+> 不同 worker 导致数值跳变；进程重启后清零。看趋势与量级即可，不要把绝对值当
+> 全局精确计数；需要精确全局指标时应从 journald 日志聚合（带 request_id）或接入
+> 外部监控。
+
 ## 脚本分类
 
 `deploy/` 下脚本分两类：**长期运维脚本**（保留原位，新人优先熟悉这些）与**一次性补丁脚本**（已归档至 `deploy/archive/`，仅作历史参考，**不要在新环境执行**）。
