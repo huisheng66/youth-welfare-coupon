@@ -359,6 +359,33 @@ class TestRateLimiter(unittest.TestCase):
             self.assertEqual(sum(allowed), 5)
             self.assertEqual(limiters[0].count(key), 5)
 
+    def test_global_ip_limiter_never_uses_file_backend(self) -> None:
+        """全局限流不用 file 后端：file 每请求一次 BEGIN IMMEDIATE 是吞吐串行点。
+
+        生产 RATE_LIMIT_BACKEND=file 时 login 保持 file（多 worker 精确），
+        purpose="ip" 降级为每 worker memory；显式 memory/redis 不受影响。
+        """
+        from app.services.rate_limit import FileRateLimiter, MemoryRateLimiter, build_rate_limiter
+
+        with tempfile.TemporaryDirectory() as td:
+            s = _fresh_settings(
+                APP_ENV="production",
+                SECRET_KEY="production-strong-secret-key-32b",
+                RATE_LIMIT_BACKEND="file",
+                RATE_LIMIT_FILE_PATH=str(Path(td) / "rl.db"),
+                GLOBAL_IP_MAX_REQUESTS="300",
+                GLOBAL_IP_WINDOW_SECONDS="60",
+            )
+            self.assertIsInstance(build_rate_limiter(s, purpose="login"), FileRateLimiter)
+            self.assertIsInstance(build_rate_limiter(s, purpose="ip", window_sec=60, max_hits=300), MemoryRateLimiter)
+            # 开发 auto→memory 本就如此
+            s2 = _fresh_settings(
+                APP_ENV="development",
+                RATE_LIMIT_BACKEND="auto",
+                RATE_LIMIT_FILE_PATH=str(Path(td) / "rl.db"),
+            )
+            self.assertIsInstance(build_rate_limiter(s2, purpose="ip", window_sec=60, max_hits=300), MemoryRateLimiter)
+
     def test_login_endpoint_returns_429(self) -> None:
         """Hit shipped /api/auth/login until 429; success path clears counter."""
         td = tempfile.mkdtemp()

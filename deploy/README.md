@@ -248,7 +248,9 @@ curl -s http://127.0.0.1:19001/api/health
 - [ ] `OPENAPI_ENABLED=false`；Nginx 对 `/docs` `/openapi.json` 返回 404  
 - [ ] `CORS_ALLOW_LAN=false`，`CORS_ORIGINS` 仅正式 https 域名  
 - [ ] 配置真实 SMTP，`MAIL_CONSOLE=false`  
-- [ ] 登录限流：单机用 `RATE_LIMIT_BACKEND=file`，多机用 Redis  
+- [ ] 登录限流：单机用 `RATE_LIMIT_BACKEND=file`（多 worker 精确计数），多机用 Redis。
+      注意 file 仅作用于登录限流；全局限流 `GLOBAL_IP_*` 恒为每 worker 内存计数
+      （或配置 redis 共享），不受该开关影响
 - [ ] 防火墙只开放 80/443，MySQL 不对外  
 - [ ] 定期备份：`mysqldump welfare > backup.sql`  
 - [ ] JWT 已迁至 HttpOnly Cookie；过渡期仍允许 `Authorization: Bearer`，上线 1–2 版本后关闭 `AUTH_ALLOW_BEARER=false`

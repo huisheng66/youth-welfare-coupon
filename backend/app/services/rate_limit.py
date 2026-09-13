@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Protocol
 
 from app.core.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimiter(ABC):
@@ -316,17 +319,22 @@ def build_rate_limiter(
         else:
             backend = "memory"
 
+    # 全局限流（purpose != "login"）是钝化扫描闸门，不要求跨 worker 精确计数。
+    # file 后端每个请求都要一次 BEGIN IMMEDIATE 写事务，会把全部请求串行在同一个
+    # SQLite 文件上（--workers 2 时即全局吞吐瓶颈）。故非 login 用途一律不用
+    # file：无 redis 时降级为每 worker 内存计数（实际上限放宽为「配置值 ×
+    # worker 数」，对钝化闸门可接受）；显式配置 redis 仍跨 worker/机器共享。
+    if purpose != "login" and backend == "file":
+        logger.warning("global IP rate limiter: file backend downgraded to per-worker memory (use redis to share counters)")
+        backend = "memory"
+
     if backend == "redis":
         if not redis_url:
             raise RuntimeError("rate_limit_backend=redis 需要 REDIS_URL")
         return RedisRateLimiter(redis_url, window_sec=window, max_hits=max_h, prefix=f"rl:{purpose}:")
     if backend == "file":
-        path = s.rate_limit_file_path
-        if purpose != "login":
-            # separate tables via path suffix
-            p = Path(path)
-            path = str(p.with_name(f"{p.stem}_{purpose}{p.suffix or '.db'}"))
-        return FileRateLimiter(path, window_sec=window, max_hits=max_h)
+        # 仅 login 用途会走到这里（非 login 已在上面降级为 memory）
+        return FileRateLimiter(s.rate_limit_file_path, window_sec=window, max_hits=max_h)
     return MemoryRateLimiter(window_sec=window, max_hits=max_h)
 
 
