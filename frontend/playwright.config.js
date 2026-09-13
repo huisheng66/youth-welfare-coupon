@@ -51,6 +51,9 @@ const BACKEND_ENV = {
   MAIL_FROM: '',
   AUTH_ALLOW_BEARER: 'true',
   OPENAPI_ENABLED: 'false',
+  // 显式置空：本机 backend/.env 若配了真实 AMAP_WEB_KEY 会泄漏进 E2E，
+  // 「未配置 key 返回配置提示」用例依赖未配置态
+  AMAP_WEB_KEY: '',
 }
 
 export default defineConfig({
