@@ -359,6 +359,37 @@ class TestRateLimiter(unittest.TestCase):
             self.assertEqual(sum(allowed), 5)
             self.assertEqual(limiters[0].count(key), 5)
 
+    def test_login_user_bucket_atomic_under_concurrency(self) -> None:
+        """并发打满账号桶：acquire 预占闭合 check/hit 分离的 TOCTOU（F1 回归）。"""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from fastapi import HTTPException
+
+        from app.api import auth as auth_mod
+        from app.services.rate_limit import reset_limiters
+
+        reset_limiters()
+        try:
+            from app.services.rate_limit import get_login_limiter
+
+            max_hits = getattr(get_login_limiter(), "max_hits", 8)
+            attempts = max_hits * 4
+
+            def attempt(i: int) -> int:
+                try:
+                    auth_mod._check_login_rate(f"198.51.100.{i}", "brute_target")
+                    return 0
+                except HTTPException as exc:
+                    return exc.status_code
+
+            with ThreadPoolExecutor(max_workers=attempts) as pool:
+                codes = list(pool.map(attempt, range(attempts)))
+
+            self.assertEqual(codes.count(0), max_hits)
+            self.assertEqual(codes.count(429), attempts - max_hits)
+        finally:
+            reset_limiters()
+
     def test_global_ip_limiter_never_uses_file_backend(self) -> None:
         """全局限流不用 file 后端：file 每请求一次 BEGIN IMMEDIATE 是吞吐串行点。
 

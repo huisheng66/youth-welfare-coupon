@@ -85,10 +85,13 @@ class TestLoginRateByUser(unittest.TestCase):
 
     def test_xff_cannot_reset_user_bucket(self) -> None:
         from app.api import auth as auth_mod
+        from app.services.rate_limit import get_login_limiter
 
         user = "victim_user"
-        # 3 fails under different "IPs" should still lock by username
-        for i in range(3):
+        max_hits = getattr(get_login_limiter(), "max_hits", 3)
+        # 全部失败尝试都换 IP：账号桶只认用户名，预算打满即锁定
+        for i in range(max_hits):
+            auth_mod._check_login_rate(f"203.0.113.{i}", user)
             auth_mod._record_login_fail(f"203.0.113.{i}", user)
         with self.assertRaises(Exception) as ctx:
             auth_mod._check_login_rate("198.51.100.1", user)

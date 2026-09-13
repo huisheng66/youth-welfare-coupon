@@ -52,20 +52,28 @@ def _login_ip_key(ip: str) -> str:
 
 def _check_login_rate(ip: str, username: str) -> None:
     limiter = get_login_limiter()
-    for key in (_login_user_key(username), _login_ip_key(ip)):
-        allowed, retry_after = limiter.check(key)
-        if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="登录尝试过于频繁，请 5 分钟后再试",
-                headers={"Retry-After": str(retry_after)},
-            )
+    # IP 桶只读预检：成败皆不计（失败后另记），避免 NAT 内网正常登录被挤占配额
+    allowed, retry_after = limiter.check(_login_ip_key(ip))
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录尝试过于频繁，请 5 分钟后再试",
+            headers={"Retry-After": str(retry_after)},
+        )
+    # 账号桶必须原子预占（acquire）：check/hit 分离时并发请求会全部先过 check、
+    # 之后 hit 才落地，单账号爆破预算被并发放大到全局限流上限
+    allowed, retry_after = limiter.acquire(_login_user_key(username))
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录尝试过于频繁，请 5 分钟后再试",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 def _record_login_fail(ip: str, username: str) -> None:
-    limiter = get_login_limiter()
-    limiter.hit(_login_user_key(username))
-    limiter.hit(_login_ip_key(ip))
+    # 账号桶已在 _check_login_rate 预占，这里只记 IP 桶（抑制喷洒后立刻换号）
+    get_login_limiter().hit(_login_ip_key(ip))
 
 
 def _clear_login_fail(ip: str, username: str) -> None:
