@@ -165,7 +165,9 @@ def _friendly_smtp_error(exc: BaseException) -> str:
         return "连接 SMTP 超时：请检查网络/防火墙是否放行 smtp.exmail.qq.com:465"
     if "getaddrinfo" in low or "name or service" in low or "nodename" in low:
         return "无法解析 SMTP 主机名，请检查 MAIL_SERVER"
-    return f"邮件发送失败：{text[:180]}"
+    # 未归类错误不回传原始异常：该文案可从匿名 send-code 接口触达，
+    # 原始文本可能携带内部邮件服务器标识/banner；详情已在调用点进服务端日志
+    return "邮件发送失败：请稍后重试，若持续失败请联系管理员检查邮件服务配置"
 
 
 async def issue_email_code(
@@ -398,8 +400,9 @@ def probe_imap(*, settings: Settings | None = None) -> dict:
         logger.warning("IMAP network error: %s", exc)
         raise HTTPException(
             status_code=502,
-            detail=f"无法连接 IMAP {host}:{port}（{exc}）",
+            # 原始 OSError 可能携带内网地址/栈细节，仅进日志
+            detail=f"无法连接 IMAP {host}:{port}，请检查网络与防火墙放行",
         ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("IMAP probe failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"IMAP 检测失败：{exc}") from exc
+        raise HTTPException(status_code=502, detail="IMAP 检测失败：请查看服务端日志获取详情") from exc
