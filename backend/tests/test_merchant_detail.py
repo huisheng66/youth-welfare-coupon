@@ -111,6 +111,51 @@ class TestMerchantPhoto(unittest.TestCase):
                 r6 = c.get(f"/api/merchants/{m1}/photo", headers=ta.bearer(user))
                 self.assertEqual(r6.status_code, 404)
 
+    def test_list_and_detail_never_load_photo_blob(self) -> None:
+        """photo_blob 为 deferred 列：列表/详情响应不得触发 blob 查询。
+
+        has_photo 用 photo_content_type 判定（上传/删除两字段总是同写同清），
+        若有人改回读 photo_blob 会引入逐行懒加载，此用例以 SQL 语句指纹拦截。
+        """
+        from sqlalchemy import event
+
+        with TempApp() as ta:
+            m1 = _m1_id(ta)
+            admin = ta.login("admin", "admin123")
+            png = base64.b64decode(PNG_B64)
+            with ta.client() as c:
+                up = c.post(
+                    f"/api/merchants/{m1}/photo",
+                    headers=ta.bearer(admin),
+                    files={"file": ("photo.png", png, "image/png")},
+                )
+                self.assertEqual(up.status_code, 200, up.text)
+
+            statements: list[str] = []
+
+            def _record(conn, cursor, statement, parameters, context, executemany):
+                statements.append(statement)
+
+            event.listen(ta.engine, "before_cursor_execute", _record)
+            try:
+                with ta.client() as c:
+                    lst = c.get("/api/merchants", headers=ta.bearer(admin))
+                    self.assertEqual(lst.status_code, 200, lst.text)
+                    detail = c.get(f"/api/merchants/{m1}", headers=ta.bearer(admin))
+                    self.assertEqual(detail.status_code, 200, detail.text)
+            finally:
+                event.remove(ta.engine, "before_cursor_execute", _record)
+
+            self.assertTrue(any(i["has_photo"] for i in lst.json()["items"]), lst.text)
+            self.assertTrue(detail.json()["has_photo"])
+            blob_stmts = [s for s in statements if "photo_blob" in s]
+            self.assertEqual(blob_stmts, [], f"列表/详情加载了 photo_blob：{blob_stmts}")
+
+            # /photo 端点仍走显式列查询返回完整字节
+            r = c.get(f"/api/merchants/{m1}/photo", headers=ta.bearer(admin))
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.content, png)
+
     def test_upload_requires_admin_role(self) -> None:
         """商家角色与未登录者都不能上传/删除门头照。"""
         with TempApp() as ta:

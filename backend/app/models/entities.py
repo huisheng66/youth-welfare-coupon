@@ -95,8 +95,11 @@ class Merchant(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # T25 门店详情页：门头照原图入库（MySQL 落 MEDIUMBLOB，SQLite 不限），
-    # 经纬度为高德坐标拾取器复制的 GCJ-02 文本；均为空串/NULL 表示未填写
-    photo_blob: Mapped[bytes | None] = mapped_column(LargeBinary(16777215), nullable=True)
+    # 经纬度为高德坐标拾取器复制的 GCJ-02 文本；均为空串/NULL 表示未填写。
+    # blob 设为 deferred：列表/详情查询不随行加载 5MB 二进制，读取走
+    # /photo 端点的显式列查询；has_photo 用 photo_content_type 判定，
+    # 避免访问属性触发逐行懒加载（N+1）。
+    photo_blob: Mapped[bytes | None] = mapped_column(LargeBinary(16777215), nullable=True, deferred=True)
     photo_content_type: Mapped[str] = mapped_column(String(50), default="")
     photo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     longitude: Mapped[str] = mapped_column(String(32), default="")
@@ -107,7 +110,7 @@ class Merchant(Base):
 
     @property
     def has_photo(self) -> bool:
-        return bool(self.photo_blob)
+        return bool(self.photo_content_type)
 
 
 class UserProfile(Base):

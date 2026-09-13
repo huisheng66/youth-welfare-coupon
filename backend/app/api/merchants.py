@@ -3,6 +3,7 @@ import urllib.parse
 import urllib.request
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -35,7 +36,9 @@ def list_merchants(
         query = query.filter(Merchant.is_active.is_(True))
     if q:
         query = query.filter(Merchant.name.ilike(f"%{q}%"))
-    total = query.count()
+    # count 用纯 count(id)：Query.count() 会把完整实体 SELECT（含 deferred 的
+    # photo_blob 列）包进子查询，白白加宽语句
+    total = query.order_by(None).with_entities(func.count(Merchant.id)).scalar()
     items = query.offset(skip).limit(limit).all()
     return Page(total=total, items=[MerchantOut.model_validate(i) for i in items])
 
@@ -168,6 +171,16 @@ def upload_merchant_photo(
     if not merchant:
         raise HTTPException(status_code=404, detail="商家不存在")
     max_bytes = get_settings().merchant_photo_max_bytes
+    # 先 seek 预检大小再读入内存：超限文件直接 413，不整块进内存
+    # （Nginx client_max_body_size 只在反代链路兜底，直连 uvicorn 靠这里）
+    try:
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+    except (OSError, ValueError):
+        size = None
+    if size is not None and size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"图片过大，最大 {max_bytes // (1024 * 1024)}MB")
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
@@ -214,11 +227,16 @@ def get_merchant_photo(
     <img> 同源请求自动带认证 Cookie；带 photo_updated_at 版本参数时
     可安全使用短 max-age，覆盖旧图后客户端无需手动清缓存。
     """
-    merchant = db.get(Merchant, merchant_id)
-    if not merchant or not merchant.photo_blob:
+    # 显式列查询：photo_blob 为 deferred 列，走列查询避免整实体加载
+    row = (
+        db.query(Merchant.photo_blob, Merchant.photo_content_type)
+        .filter(Merchant.id == merchant_id)
+        .first()
+    )
+    if not row or not row.photo_blob:
         raise HTTPException(status_code=404, detail="门头照不存在")
     return Response(
-        content=merchant.photo_blob,
-        media_type=merchant.photo_content_type or "application/octet-stream",
+        content=row.photo_blob,
+        media_type=row.photo_content_type or "application/octet-stream",
         headers={"Cache-Control": "private, max-age=300"},
     )
