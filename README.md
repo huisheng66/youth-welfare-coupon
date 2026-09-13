@@ -56,8 +56,9 @@ DATABASE_URL=mysql+pymysql://welfare:密码@127.0.0.1:3306/welfare?charset=utf8m
 - 存活探针：http://127.0.0.1:19001/api/health  
 - 就绪探针：http://127.0.0.1:19001/api/ready（数据库连通 + 迁移版本一致才报就绪，503=未就绪）  
 
-表结构由 Alembic 迁移管理（开发环境启动时 `create_all` + 自动 stamp；生产由
-`deploy/migrate-release.sh` 以迁移账号执行 `alembic upgrade head`，运行账号无 DDL 权限）。
+表结构由 Alembic 迁移链统一管理（开发环境启动时自动 `alembic upgrade head`：
+空库全量建表、历史库自动 stamp 后增量；生产由 `deploy/migrate-release.sh`
+以迁移账号执行，运行账号无 DDL 权限）。给模型加列必须配套生成迁移。
 开发环境默认写入演示数据（`SEED_DEMO_ACCOUNTS`）。生产请设 `APP_ENV=production` 并关闭演示 seed。
 
 ### 2. 前端
@@ -247,7 +248,7 @@ DATABASE_URL=mysql+pymysql://user:password@host:3306/welfare
 ```
 
 并安装对应驱动（`psycopg2-binary` 或 `pymysql`）。表结构由 Alembic 迁移管理；
-开发库启动时自动建表并 stamp，生产环境必须先以迁移账号执行
+开发库启动时自动 `alembic upgrade head` 建表，生产环境必须先以迁移账号执行
 `bash deploy/migrate-release.sh`（见 `deploy/README.md`）再启动应用。
 
 ## 角色能力摘要

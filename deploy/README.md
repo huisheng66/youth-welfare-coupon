@@ -80,7 +80,7 @@ cd /opt/welfare/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# 首次启动自动建表 + 演示数据
+# 首次启动自动建表（开发环境）+ 演示数据；生产用 migrate-release.sh
 uvicorn app.main:app --host 127.0.0.1 --port 19001
 ```
 

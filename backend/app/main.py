@@ -229,7 +229,8 @@ def create_app() -> FastAPI:
 
             verify_schema_current(db.engine)
         else:
-            # 开发环境保留 create_all + ensure_schema，方便本地迭代
+            # 开发环境同样走 alembic：空库全量建表 / 历史库 stamp 后增量，
+            # schema 唯一来源是迁移链（模型加列须配套生成迁移）
             apply_migrations(db.engine, production=False)
         session = db.SessionLocal()
         try:

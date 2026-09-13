@@ -68,16 +68,47 @@ def run_alembic_upgrade() -> None:
     has_alembic_version = "alembic_version" in tables
     has_business_tables = bool(tables - {"alembic_version"})
     if not has_alembic_version and has_business_tables:
-        # 历史库（create_all 建表）首次接入 alembic：先验证表结构完整，再标记 baseline
-        _precheck_legacy_for_baseline(engine)
-        logger.info(
-            "legacy database detected — alembic stamp %s as baseline",
-            LEGACY_BASELINE_REVISION,
-        )
-        command.stamp(cfg, LEGACY_BASELINE_REVISION)
+        if _legacy_schema_is_current(engine):
+            # 完整 create_all + ensure_schema 历史库：schema 已与当前模型一致
+            # （含全部 ORM 索引）。直接 stamp head——若 stamp 到 baseline 再
+            # upgrade，增量迁移的 CREATE INDEX 会与已存在的索引冲突。
+            logger.info("legacy database is schema-complete — alembic stamp head")
+            command.stamp(cfg, get_migration_head())
+        else:
+            # 停在旧版本的历史库（如仅建到 baseline）：验证表结构完整，
+            # 标记到固定 baseline 后由增量迁移补齐
+            _precheck_legacy_for_baseline(engine)
+            logger.info(
+                "legacy database detected — alembic stamp %s as baseline",
+                LEGACY_BASELINE_REVISION,
+            )
+            command.stamp(cfg, LEGACY_BASELINE_REVISION)
 
     logger.info("running alembic upgrade head")
     command.upgrade(cfg, "head")
+
+
+def _legacy_schema_is_current(engine: Engine) -> bool:
+    """判断无 alembic_version 的历史库是否已具备当前模型全部表/列/索引。
+
+    只做包含性检查（库里允许有已废弃的遗留表/列），类型不比较（跨方言）。
+    ensure_schema 时代的开发库每次启动都会补齐列与索引，因此它们必然通过。
+    """
+    from app.core.database import Base
+    import app.models  # noqa: F401  注册模型
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names()) - {"alembic_version"}
+    for table in Base.metadata.sorted_tables:
+        if table.name not in tables:
+            return False
+        columns = {c["name"] for c in insp.get_columns(table.name)}
+        if any(c.name not in columns for c in table.columns):
+            return False
+        indexes = {i["name"] for i in insp.get_indexes(table.name)}
+        if any(idx.name not in indexes for idx in table.indexes):
+            return False
+    return True
 
 
 def _precheck_legacy_for_baseline(engine: Engine) -> None:
@@ -138,331 +169,24 @@ def verify_schema_current(engine: Engine) -> None:
     logger.info("schema verified: alembic at %s", head)
 
 
-def _add_column_if_missing(engine: Engine, table: str, column: str, ddl: str) -> None:
-    insp = inspect(engine)
-    if table not in insp.get_table_names():
-        return
-    cols = {c["name"] for c in insp.get_columns(table)}
-    if column not in cols:
-        with engine.begin() as conn:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
-
-
-def _column_type_name(engine: Engine, table: str, column: str) -> str | None:
-    insp = inspect(engine)
-    if table not in insp.get_table_names():
-        return None
-    for c in insp.get_columns(table):
-        if c["name"] == column:
-            t = c.get("type")
-            return str(t).upper() if t is not None else None
-    return None
-
-
-def _needs_decimal_upgrade(type_name: str | None) -> bool:
-    if not type_name:
-        return False
-    u = type_name.upper()
-    # Already decimal/numeric/float-ish
-    if any(x in u for x in ("DECIMAL", "NUMERIC", "NUMBER", "REAL", "FLOAT", "DOUBLE")):
-        return False
-    # INTEGER / INT / BIGINT etc.
-    if "INT" in u:
-        return True
-    return False
-
-
-def _migrate_hours_to_decimal(engine: Engine) -> None:
-    """Upgrade volunteer-hours columns from INTEGER to DECIMAL(12,2)."""
-    dialect = engine.dialect.name
-    targets = [
-        ("coupon_templates", "cost_points", "0"),
-        ("point_accounts", "balance", "0"),
-        ("point_ledgers", "change", None),
-        ("point_ledgers", "balance_after", "0"),
-    ]
-    for table, column, default in targets:
-        tname = _column_type_name(engine, table, column)
-        if tname is None:
-            continue
-        if not _needs_decimal_upgrade(tname):
-            continue
-        logger.info("migrating %s.%s %s -> DECIMAL(12,2)", table, column, tname)
-        if dialect == "mysql" or dialect == "mariadb":
-            default_sql = f" DEFAULT {default}" if default is not None else ""
-            # `change` is reserved in MySQL
-            col_sql = f"`{column}`"
-            with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE `{table}` MODIFY COLUMN {col_sql} "
-                        f"DECIMAL(12,2) NOT NULL{default_sql}"
-                    )
-                )
-        elif dialect == "sqlite":
-            # SQLite affinity: rewrite table for each unique table once
-            pass
-        else:
-            # Postgres etc.
-            with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE {table} ALTER COLUMN {column} TYPE NUMERIC(12,2) "
-                        f"USING {column}::numeric"
-                    )
-                )
-
-    if dialect == "sqlite":
-        _sqlite_rebuild_hours_tables(engine)
-
-
-def _sqlite_rebuild_hours_tables(engine: Engine) -> None:
-    """Rebuild SQLite tables when hour columns are still INTEGER affinity."""
-    need_templates = _needs_decimal_upgrade(_column_type_name(engine, "coupon_templates", "cost_points"))
-    need_accounts = _needs_decimal_upgrade(_column_type_name(engine, "point_accounts", "balance"))
-    need_ledgers = _needs_decimal_upgrade(
-        _column_type_name(engine, "point_ledgers", "change")
-    ) or _needs_decimal_upgrade(_column_type_name(engine, "point_ledgers", "balance_after"))
-
-    with engine.begin() as conn:
-        if need_templates:
-            logger.info("sqlite rebuild coupon_templates for decimal cost_points")
-            conn.execute(text("PRAGMA foreign_keys=OFF"))
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE coupon_templates__dec AS
-                    SELECT id, name, description, merchant_id, valid_days,
-                           CAST(cost_points AS REAL) AS cost_points,
-                           is_active, created_at
-                    FROM coupon_templates
-                    """
-                )
-            )
-            # Better: recreate with explicit types via temporary table matching ORM
-            conn.execute(text("DROP TABLE coupon_templates"))
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE coupon_templates (
-                        id VARCHAR(36) NOT NULL PRIMARY KEY,
-                        name VARCHAR(128) NOT NULL,
-                        description TEXT NOT NULL,
-                        merchant_id VARCHAR(36) NOT NULL,
-                        valid_days INTEGER NOT NULL,
-                        cost_points NUMERIC(12, 2) NOT NULL DEFAULT 0,
-                        is_active BOOLEAN NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        FOREIGN KEY(merchant_id) REFERENCES merchants (id)
-                    )
-                    """
-                )
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO coupon_templates
-                    (id, name, description, merchant_id, valid_days, cost_points, is_active, created_at)
-                    SELECT id, name, description, merchant_id, valid_days,
-                           ROUND(CAST(cost_points AS REAL), 2), is_active, created_at
-                    FROM coupon_templates__dec
-                    """
-                )
-            )
-            conn.execute(text("DROP TABLE coupon_templates__dec"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_coupon_templates_merchant_id ON coupon_templates (merchant_id)"))
-
-        if need_accounts:
-            logger.info("sqlite rebuild point_accounts for decimal balance")
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE point_accounts__dec AS
-                    SELECT id, user_id, CAST(balance AS REAL) AS balance, updated_at
-                    FROM point_accounts
-                    """
-                )
-            )
-            conn.execute(text("DROP TABLE point_accounts"))
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE point_accounts (
-                        id VARCHAR(36) NOT NULL PRIMARY KEY,
-                        user_id VARCHAR(36) NOT NULL UNIQUE,
-                        balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
-                        updated_at DATETIME NOT NULL,
-                        FOREIGN KEY(user_id) REFERENCES accounts (id)
-                    )
-                    """
-                )
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO point_accounts (id, user_id, balance, updated_at)
-                    SELECT id, user_id, ROUND(CAST(balance AS REAL), 2), updated_at
-                    FROM point_accounts__dec
-                    """
-                )
-            )
-            conn.execute(text("DROP TABLE point_accounts__dec"))
-
-        if need_ledgers:
-            logger.info("sqlite rebuild point_ledgers for decimal change/balance_after")
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE point_ledgers__dec AS
-                    SELECT id, user_id,
-                           CAST(change AS REAL) AS change,
-                           CAST(balance_after AS REAL) AS balance_after,
-                           reason, operator_id, ref_type, ref_id, created_at
-                    FROM point_ledgers
-                    """
-                )
-            )
-            conn.execute(text("DROP TABLE point_ledgers"))
-            conn.execute(
-                text(
-                    """
-                    CREATE TABLE point_ledgers (
-                        id VARCHAR(36) NOT NULL PRIMARY KEY,
-                        user_id VARCHAR(36) NOT NULL,
-                        change NUMERIC(12, 2) NOT NULL,
-                        balance_after NUMERIC(12, 2) NOT NULL DEFAULT 0,
-                        reason VARCHAR(255) NOT NULL,
-                        operator_id VARCHAR(36),
-                        ref_type VARCHAR(32) NOT NULL DEFAULT '',
-                        ref_id VARCHAR(36) NOT NULL DEFAULT '',
-                        created_at DATETIME NOT NULL,
-                        FOREIGN KEY(user_id) REFERENCES accounts (id),
-                        FOREIGN KEY(operator_id) REFERENCES accounts (id)
-                    )
-                    """
-                )
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO point_ledgers
-                    (id, user_id, change, balance_after, reason, operator_id, ref_type, ref_id, created_at)
-                    SELECT id, user_id,
-                           ROUND(CAST(change AS REAL), 2),
-                           ROUND(CAST(balance_after AS REAL), 2),
-                           reason, operator_id, ref_type, ref_id, created_at
-                    FROM point_ledgers__dec
-                    """
-                )
-            )
-            conn.execute(text("DROP TABLE point_ledgers__dec"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_point_ledgers_user_id ON point_ledgers (user_id)"))
-        conn.execute(text("PRAGMA foreign_keys=ON"))
-
-
-def ensure_schema(engine: Engine) -> None:
-    _add_column_if_missing(engine, "coupon_templates", "cost_points", "cost_points NUMERIC(12,2) DEFAULT 0 NOT NULL")
-    _add_column_if_missing(engine, "point_ledgers", "balance_after", "balance_after NUMERIC(12,2) DEFAULT 0 NOT NULL")
-    _add_column_if_missing(engine, "point_ledgers", "operator_id", "operator_id VARCHAR(36)")
-    _add_column_if_missing(engine, "point_ledgers", "ref_type", "ref_type VARCHAR(32) DEFAULT ''")
-    _add_column_if_missing(engine, "point_ledgers", "ref_id", "ref_id VARCHAR(36) DEFAULT ''")
-    _add_column_if_missing(engine, "accounts", "email", "email VARCHAR(128)")
-    _add_column_if_missing(engine, "accounts", "must_change_password", "must_change_password BOOLEAN DEFAULT 0 NOT NULL")
-    _add_column_if_missing(engine, "accounts", "session_version", "session_version INTEGER DEFAULT 0 NOT NULL")
-    _add_column_if_missing(
-        engine, "redemption_logs", "reason", "reason VARCHAR(32) DEFAULT '' NOT NULL"
-    )
-    _add_column_if_missing(engine, "user_profiles", "student_no", "student_no VARCHAR(64) DEFAULT ''")
-    # 旧字段 id_number_masked 保留在库中（SQLite 不便删列），业务已改用 student_no
-    _add_column_if_missing(engine, "user_profiles", "bank_card_encrypted", "bank_card_encrypted TEXT")
-    _add_column_if_missing(engine, "user_profiles", "bank_card_last4", "bank_card_last4 VARCHAR(4) DEFAULT ''")
-    _add_column_if_missing(engine, "user_profiles", "bank_card_bank_name", "bank_card_bank_name VARCHAR(64) DEFAULT ''")
-    _add_column_if_missing(engine, "user_profiles", "bank_card_bound_at", "bank_card_bound_at DATETIME")
-    _add_column_if_missing(
-        engine, "user_profiles", "profile_version", "profile_version INTEGER DEFAULT 1 NOT NULL"
-    )
-    _add_column_if_missing(
-        engine,
-        "user_verifications",
-        "snapshot_real_name",
-        "snapshot_real_name VARCHAR(64) DEFAULT '' NOT NULL",
-    )
-    _add_column_if_missing(
-        engine,
-        "user_verifications",
-        "snapshot_student_no",
-        "snapshot_student_no VARCHAR(64) DEFAULT '' NOT NULL",
-    )
-    _add_column_if_missing(
-        engine,
-        "user_verifications",
-        "snapshot_organization",
-        "snapshot_organization VARCHAR(128) DEFAULT '' NOT NULL",
-    )
-    _add_column_if_missing(
-        engine,
-        "user_verifications",
-        "snapshot_version",
-        "snapshot_version INTEGER DEFAULT 0 NOT NULL",
-    )
-    _add_column_if_missing(
-        engine,
-        "user_verifications",
-        "source",
-        "source VARCHAR(32) DEFAULT 'legacy_unknown' NOT NULL",
-    )
-    _add_column_if_missing(engine, "coupon_instances", "template_name", "template_name VARCHAR(128)")
-    _add_column_if_missing(engine, "coupon_instances", "template_description", "template_description TEXT")
-    # T25 门店详情页：门头照 + GCJ-02 坐标（生产走 alembic，开发路径在此补列）
-    _add_column_if_missing(engine, "merchants", "photo_blob", "photo_blob BLOB")
-    _add_column_if_missing(engine, "merchants", "photo_content_type", "photo_content_type VARCHAR(50) DEFAULT ''")
-    _add_column_if_missing(engine, "merchants", "photo_updated_at", "photo_updated_at DATETIME")
-    _add_column_if_missing(engine, "merchants", "longitude", "longitude VARCHAR(32) DEFAULT ''")
-    _add_column_if_missing(engine, "merchants", "latitude", "latitude VARCHAR(32) DEFAULT ''")
-    _widen_email_code_column(engine)
-    _migrate_hours_to_decimal(engine)
-    _ensure_indexes(engine)
-
-
-def _widen_email_code_column(engine: Engine) -> None:
-    """历史库 email_codes.code 需扩到 VARCHAR(128) 才能存 HMAC 摘要。
-
-    开发路径（create_all + ensure_schema）不会执行 alembic 迁移；MySQL 严格
-    校验长度，插入 64 字符摘要会直接报错，因此在此补齐。SQLite 长度仅为
-    类型亲和性，无需处理。
-    """
-    if engine.dialect.name == "sqlite":
-        return
-    tname = _column_type_name(engine, "email_codes", "code")
-    if tname and "128" not in tname:
-        logger.info("widening email_codes.code %s -> VARCHAR(128)", tname)
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE email_codes MODIFY COLUMN `code` VARCHAR(128) NOT NULL"))
-
-
-def _ensure_indexes(engine: Engine) -> None:
-    """Bring existing development databases up to ORM-declared indexes."""
-    from app.core.database import Base
-    import app.models  # noqa: F401
-
-    for table in Base.metadata.sorted_tables:
-        for index in sorted(table.indexes, key=lambda item: item.name or ""):
-            index.create(bind=engine, checkfirst=True)
-
-
 def apply_migrations(engine: Engine, *, production: bool) -> None:
     """按环境应用 schema 迁移。
 
-    - 生产：执行 `alembic upgrade head`，schema 由版本化迁移管理；
-      历史库自动标记到固定 baseline revision，再应用后续增量迁移。
-    - 开发：保留 `create_all` + `ensure_schema` 兼容空库与历史库，
-      避免本地迭代时频繁生成迁移。
+    - 生产：worker 启动只做 `verify_schema_current` 只读校验（DDL 由发布期
+      `deploy/migrate-release.sh` 以迁移账号执行，见 T08）。
+    - 开发：同样走 alembic（`run_alembic_upgrade`：空库从迁移链全量建表，
+      历史 create_all 库预检后自动 stamp baseline 再 upgrade），并在启动时
+      做只读校验兜底。schema 唯一来源是迁移链——给模型加列必须配套生成
+      alembic 迁移，不再有 create_all/手写 ALTER 的双轨漂移。
     """
     if production:
-        run_alembic_upgrade()
+        verify_schema_current(engine)
         return
-    from app.core.database import Base
-    import app.models  # noqa: F401  # 注册模型
+    # alembic env.py 固定取 app.core.database.engine 全局 engine，
+    # 因此开发路径要求先 init_engine；传入其他 engine 属调用方错误
+    import app.core.database as _db
 
-    Base.metadata.create_all(bind=engine)
-    ensure_schema(engine)
+    if engine is not _db.engine:
+        raise RuntimeError("apply_migrations 需传入 app.core.database.engine（alembic env.py 固定使用全局 engine）")
+    run_alembic_upgrade()
+    verify_schema_current(engine)
