@@ -291,15 +291,19 @@ async def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db))
 @router.post("/reset-password-by-email", response_model=MessageOut)
 def reset_password_by_email(body: ResetPasswordByEmailIn, db: Session = Depends(get_db)) -> MessageOut:
     """用邮箱验证码重置密码（无需登录）。"""
-    account = db.query(Account).filter(Account.email == body.email).first()
-    if not account or not account.is_active:
-        raise HTTPException(status_code=400, detail="验证码无效或账号不存在")
+    # 先消费验证码再查账号：issue_email_code 对未知邮箱同样建码，
+    # 未知与已注册邮箱由此走完全相同的报错分支（文案+时序），防注册邮箱枚举。
+    email = (body.email or "").strip().lower()
     consume_email_code(
         db,
-        email=body.email,
+        email=email,
         code=body.code,
         purpose=EmailCodePurpose.reset_password,
     )
+    account = db.query(Account).filter(Account.email == email).first()
+    if not account or not account.is_active:
+        # 验证码正确但账号不存在/停用：不区分原因，统一按码无效口径返回
+        raise HTTPException(status_code=400, detail="验证码无效或已过期，请重新获取")
     # 会话版本用数据库原子表达式递增：两个并发重置请求不会互相覆盖版本号
     db.query(Account).filter(Account.id == account.id).update(
         {
