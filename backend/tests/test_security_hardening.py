@@ -90,6 +90,43 @@ class TestProductionGuards(unittest.TestCase):
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json(), {"status": "ok"})
 
+    def test_csp_production_only(self) -> None:
+        # 生产：应用层下发 CSP（与 nginx 同值），uvicorn 直连也有兜底
+        _fresh_settings(
+            APP_ENV="production",
+            SECRET_KEY="production-strong-secret-key-32b",
+            OPENAPI_ENABLED="false",
+            SEED_DEMO_ACCOUNTS="false",
+            CORS_ALLOW_LAN="false",
+            GLOBAL_IP_MAX_REQUESTS="0",
+            RATE_LIMIT_BACKEND="memory",
+            DATABASE_URL="sqlite:///:memory:",
+        )
+        from app.main import create_app
+        from fastapi.testclient import TestClient
+
+        app = create_app()
+        skip_app_lifespan(app)
+        client = TestClient(app)
+        csp = client.get("/api/health").headers.get("content-security-policy")
+        self.assertIsNotNone(csp)
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+
+        # 开发：不下发——/docs（Swagger UI）依赖 CDN 脚本与内联配置
+        _fresh_settings(
+            APP_ENV="development",
+            SECRET_KEY="dev-secret-change-me-in-production",
+            OPENAPI_ENABLED="true",
+            GLOBAL_IP_MAX_REQUESTS="0",
+            RATE_LIMIT_BACKEND="memory",
+            DATABASE_URL="sqlite:///:memory:",
+        )
+        app2 = create_app()
+        skip_app_lifespan(app2)
+        client2 = TestClient(app2)
+        self.assertIsNone(client2.get("/docs").headers.get("content-security-policy"))
+
     def test_openapi_enabled_in_dev(self) -> None:
         _fresh_settings(
             APP_ENV="development",

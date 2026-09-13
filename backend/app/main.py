@@ -38,6 +38,16 @@ LAN_ORIGIN_REGEX = (
 )
 
 
+# 应用层 CSP，与 deploy/nginx-welfare.conf 的 add_header 同值：即使 uvicorn 被
+# 误暴露（绕过 Nginx 直连）也有兜底。仅生产启用——开发环境 /docs（Swagger UI）
+# 依赖 CDN 脚本与内联配置，同策略会直接破坏接口文档页。
+CSP_POLICY = (
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+    "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+    "connect-src 'self'; media-src 'self' blob:; form-action 'self'"
+)
+
+
 def apply_security_headers(response: Response) -> Response:
     """Attach baseline security headers (also used on early 429 paths)."""
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -50,6 +60,7 @@ def apply_security_headers(response: Response) -> Response:
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
+        response.headers.setdefault("Content-Security-Policy", CSP_POLICY)
     return response
 
 
