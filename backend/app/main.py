@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from app.api import auth, coupons, export, imports, merchants, outbox, points, stats, users
+from app.api import auth, client_errors, coupons, export, imports, merchants, outbox, points, stats, users
 from app.core.client_ip import get_client_ip
 from app.core.config import Settings, assert_secure_startup, get_settings
 from app.core.deps import require_roles
@@ -298,6 +298,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
     app.include_router(outbox.router, prefix="/api")
+    app.include_router(client_errors.router, prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict:

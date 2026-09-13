@@ -291,3 +291,41 @@ class TestStatsDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClientErrorReport(unittest.TestCase):
+    """前端未捕获错误上报：免登录、204、只进审计日志、字段严格截断。"""
+
+    def tearDown(self) -> None:
+        reset_env_defaults()
+
+    def test_unauthenticated_report_writes_audit(self) -> None:
+        with TempApp() as ta:
+            with ta.client() as c:
+                r = c.post(
+                    "/api/client-errors",
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                    json={"kind": "unhandledrejection", "message": "boom at home", "stack": "Error: boom\n  at x", "route": "/home"},
+                )
+                self.assertEqual(r.status_code, 204, r.text)
+
+            with ta.session() as db:
+                from sqlalchemy import text as _text
+
+                row = db.execute(
+                    _text("SELECT actor_id, detail FROM audit_logs WHERE action = 'client_error' ORDER BY created_at DESC LIMIT 1")
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertIsNone(row[0])
+                self.assertIn("boom at home", row[1])
+                self.assertIn("/home", row[1])
+
+    def test_oversized_payload_rejected(self) -> None:
+        with TempApp() as ta:
+            with ta.client() as c:
+                r = c.post(
+                    "/api/client-errors",
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                    json={"message": "x" * 501},
+                )
+                self.assertEqual(r.status_code, 422, r.text)
