@@ -220,9 +220,10 @@ def clear_settings_cache() -> None:
 
 def assert_secure_startup(settings: Settings | None = None) -> None:
     """
-    Production hard-block on default/weak SECRET_KEY.
-    Raises RuntimeError when APP_ENV=production and secret is insecure
-    (unless ALLOW_INSECURE_SECRET=true for controlled tests).
+    Production hard-block on default/weak SECRET_KEY, and on bank-card field
+    encryption falling back to SECRET_KEY. Raises RuntimeError when
+    APP_ENV=production and a check fails (unless ALLOW_INSECURE_SECRET=true
+    for controlled tests).
     """
     s = settings or get_settings()
     if not s.is_production:
@@ -233,4 +234,13 @@ def assert_secure_startup(settings: Settings | None = None) -> None:
         raise RuntimeError(
             "生产环境禁止使用默认/弱 SECRET_KEY。"
             "请在 .env 中设置足够长的随机 SECRET_KEY（建议 openssl rand -hex 32）。"
+        )
+    if s.using_secret_for_field_crypto:
+        # 银行卡密文长期有效，密钥材料不能与网站会话签名共用：
+        # SECRET_KEY 轮换会导致历史银行卡密文不可解
+        raise RuntimeError(
+            "生产环境要求配置独立的 FIELD_ENCRYPTION_KEY，"
+            "银行卡字段加密不得回退使用 SECRET_KEY。"
+            "请在 .env 中设置 FIELD_ENCRYPTION_KEY（建议 openssl rand -hex 32，须与 SECRET_KEY 不同）；"
+            "历史密文在多密钥兜底下仍可用旧 SECRET_KEY 解密，重新保存银行卡即完成轮换。"
         )
