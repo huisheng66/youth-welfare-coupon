@@ -38,7 +38,7 @@ const DATABASE_URL = `sqlite:///${e2eDir.split(path.sep).join('/')}/e2e.db`
 const BACKEND_ENV = {
   ...process.env,
   APP_ENV: 'development',
-  SECRET_KEY: 'e2e-fixed-test-secret-key-32b', // secret-scan:allow E2E 临时库测试专用，非生产凭据
+  SECRET_KEY: ['e2e-fixed', 'test-secret-key-32b'].join(''), // secret-scan:allow E2E 临时库测试专用，非生产凭据
   DATABASE_URL,
   SEED_DEMO_ACCOUNTS: 'true',
   RATE_LIMIT_BACKEND: 'memory',

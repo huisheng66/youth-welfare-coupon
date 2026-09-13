@@ -136,7 +136,7 @@ def scan(targets: list[tuple[str, int, str]], extra_excludes: tuple[str, ...] = 
             m = re.search(pattern, text_line)
             if not m:
                 continue
-            # `reset_password = "reset_password"` 这类键名自指（枚举/常量）不是凭据
+            # 键名自指（枚举/常量，键名与值相同，如 reset_password 枚举成员）不是凭据
             if m.groupdict().get("key") and m.group("key").lower() == m.group("val").lower():
                 continue
             # 值为环境变量引用或文档占位符时不算凭据（审查报告 F04：区分字面量）

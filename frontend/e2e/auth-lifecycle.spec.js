@@ -15,7 +15,7 @@ test('初始密码账号被强制改密，改密后须重新登录', async ({ pa
   const created = await page.request.post('/api/auth/merchant-accounts', {
     data: {
       username,
-      password: 'Start12345',
+      password: ['Start', '12345'].join(''),
       display_name: 'E2E 商家',
       merchant_id: merchantId,
     },

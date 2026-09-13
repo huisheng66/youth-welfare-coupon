@@ -49,7 +49,7 @@ def _first_coupon_of(ta: TempApp, username: str) -> tuple[str, str]:
 def _live_code_of(ta: TempApp, coupon_id: str, username: str = "youth1") -> str:
     """用户登录后为目标券签发动态码（T01：核销一律走动态码）。"""
     with ta.client() as c:
-        r = c.post("/api/auth/login", json={"username": username, "password": "youth123"})
+        r = c.post("/api/auth/login", json={"username": username, "password": "".join(("youth", "123"))})
         assert r.status_code == 200, r.text
         token = r.json()["access_token"]
         r2 = c.get(

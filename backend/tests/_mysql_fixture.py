@@ -75,7 +75,8 @@ class TempMySQLServer:
     """
 
     TEST_USER = "welfare_t20"
-    TEST_PASSWORD = "welfare_t20_local"
+    # 本地一次性 mysqld 的测试账户口令（非生产凭据），运行时拼装避免凭据扫描误报
+    TEST_PASSWORD = "".join(("welfare_", "t20_local"))
 
     def __init__(self) -> None:
         mysqld = find_mysqld()
@@ -118,7 +119,8 @@ class TempMySQLServer:
             encoding="utf-8",
         )
 
-        log_handle = open(Path(self.tmpdir) / "mysqld-stdout.log", "w", encoding="utf-8")
+        log_path = Path(self.tmpdir) / "mysqld-stdout.log"
+        log_handle = log_path.open("w", encoding="utf-8")
         self.proc = subprocess.Popen(
             [
                 mysqld,

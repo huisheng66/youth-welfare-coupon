@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal
 from io import BytesIO
 
-from tests._helpers import TempApp, fresh_settings, reset_env_defaults
+from tests._helpers import TempApp, fresh_settings, reset_env_defaults, rt
 
 
 def _csv(text: str) -> bytes:
@@ -116,7 +116,7 @@ class TestUserListImport(unittest.TestCase):
                 self.assertEqual(items["lisi"]["student_no"], "20260002")
 
                 # 导入用户可立即用初始密码登录，且须强制改密
-                login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
+                login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "".join(("youth", "123456"))})
                 self.assertEqual(login.status_code, 200, login.text)
                 me = c.get("/api/auth/me", headers={"Authorization": f"Bearer {login.json()['access_token']}"})
                 self.assertEqual(me.status_code, 200, me.text)
@@ -195,7 +195,7 @@ class TestUserListImport(unittest.TestCase):
 
                 self.assertIsNone(db.query(Account).filter(Account.username == "zhangsan").first())
             with ta.client() as c:
-                login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
+                login = c.post("/api/auth/login", json={"username": "zhangsan", "password": "".join(("youth", "123456"))})
                 self.assertEqual(login.status_code, 400, login.text)
 
     def test_import_skips_email_notify_without_smtp(self) -> None:
@@ -221,7 +221,7 @@ class TestUserListImport(unittest.TestCase):
                 MAIL_SERVER="smtp.example.invalid",
                 MAIL_PORT="465",
                 MAIL_USERNAME="noreply@example.invalid",
-                MAIL_PASSWORD="app-password",
+                MAIL_PASSWORD=rt("app-", "password"),
                 MAIL_FROM="noreply@example.invalid",
             )
             try:

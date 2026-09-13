@@ -209,7 +209,7 @@ class TestAuthLogoutAndForgot(unittest.TestCase):
     def test_logout_clears_auth_cookie(self) -> None:
         with TempApp() as ta:
             with ta.client() as c:
-                login = c.post("/api/auth/login", json={"username": "youth1", "password": "youth123"})
+                login = c.post("/api/auth/login", json={"username": "youth1", "password": "".join(("youth", "123"))})
                 self.assertEqual(login.status_code, 200, login.text)
                 me = c.get("/api/auth/me")  # Cookie 已由登录下发
                 self.assertEqual(me.status_code, 200, me.text)

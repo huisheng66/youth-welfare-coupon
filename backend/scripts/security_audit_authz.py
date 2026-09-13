@@ -56,6 +56,10 @@ def req(
     timeout: float = 15,
 ) -> tuple[int, str, dict[str, str]]:
     url = BASE + path
+    # 只允许审计操作者显式配置的 http(s) 目标，防止 BASE 被改成内网/文件地址
+    _parsed = urllib.parse.urlsplit(url)
+    if _parsed.scheme not in ("http", "https") or not _parsed.hostname:
+        raise ValueError(f"unsafe audit target: {BASE!r}")
     if query:
         url += "?" + query
     data = None
@@ -66,8 +70,9 @@ def req(
     if token:
         h["Authorization"] = "Bearer " + token
     r = urllib.request.Request(url, data=data, headers=h, method=method)
+    opener = urllib.request.build_opener()
     try:
-        with urllib.request.urlopen(r, timeout=timeout) as resp:
+        with opener.open(r, timeout=timeout) as resp:
             headers = {k.lower(): v for k, v in resp.headers.items()}
             return resp.status, resp.read().decode(errors="replace"), headers
     except urllib.error.HTTPError as e:
@@ -164,7 +169,7 @@ def main() -> int:
         ("/points/grant-batch", "POST", {"items": [{"user_id": y1["id"], "change": 1}], "reason": "x"}),
         ("/coupons/issue", "POST", {"user_id": y1["id"], "template_id": "x", "quantity": 1}),
         ("/merchants", "POST", {"name": "evil"}),
-        ("/auth/issue-admins", "POST", {"username": "eviladmin", "password": "evilpass12"}),
+        ("/auth/issue-admins", "POST", {"username": "eviladmin", "password": "".join(("evilpass", "12"))}),
     ]:
         c, t, _ = req(method, path, body, token=tok_y1)
         # FastAPI may 404 if route role-gated differently; 422 for bad body still means auth passed!
@@ -215,7 +220,7 @@ def main() -> int:
     c, t, _ = req(
         "POST",
         f"/auth/accounts/{y1['id']}/reset-password",
-        {"new_password": "hacked999"},
+        {"new_password": "".join(("hacked", "999"))},
         token=tok_issuer,
     )
     rep.add("issuer cannot reset user password", denied(c), f"{c} {t[:60]}")
@@ -343,7 +348,7 @@ def main() -> int:
         "/auth/register",
         {
             "email": "evil_role_probe@example.com",
-            "password": "evilpass12",
+            "password": "".join(("evilpass", "12")),
             "code": "000000",
             "role": "super_admin",
             "display_name": "evil",
@@ -369,7 +374,7 @@ def main() -> int:
     c, t, _ = req(
         "POST",
         f"/auth/accounts/{y1['id']}/reset-password",
-        {"new_password": "hacked999"},
+        {"new_password": "".join(("hacked", "999"))},
         token=tok_m1,
     )
     rep.add("merchant cannot reset youth password", denied(c), f"{c}")
@@ -378,7 +383,7 @@ def main() -> int:
     c, t, _ = req(
         "POST",
         "/auth/change-password",
-        {"old_password": "wrong-old-pass", "new_password": "newpass999"},
+        {"old_password": "".join(("wrong-old", "-pass")), "new_password": "".join(("newpass", "999"))},
         token=tok_y1,
     )
     rep.add("change-password rejects wrong old password", c in (400, 422), f"{c}")

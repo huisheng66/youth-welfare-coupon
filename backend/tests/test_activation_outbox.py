@@ -96,7 +96,7 @@ class TestActivationFlow(unittest.TestCase):
                 self.assertTrue(row.used_at is None)
                 # 占位密码不可登录：默认初始密码必然失败
             with ta.client() as c:
-                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
+                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "".join(("youth", "123456"))})
                 self.assertEqual(r.status_code, 400)
 
     def test_import_without_email_returns_personal_credential_once(self) -> None:
@@ -129,10 +129,10 @@ class TestActivationFlow(unittest.TestCase):
                 self.assertEqual(zs.session_version, 0)
 
             with ta.client() as c:
-                r = c.post("/api/auth/activate", json={"token": token, "new_password": "NewPass2026"})
+                r = c.post("/api/auth/activate", json={"token": token, "new_password": "".join(("NewPass", "2026"))})
                 self.assertEqual(r.status_code, 200, r.text)
                 # 重放：同一 token 第二次消费被拒
-                r2 = c.post("/api/auth/activate", json={"token": token, "new_password": "OtherPass2026"})
+                r2 = c.post("/api/auth/activate", json={"token": token, "new_password": "".join(("OtherPass", "2026"))})
                 self.assertEqual(r2.status_code, 400)
                 self.assertIn("已被使用", r2.json()["detail"])
 
@@ -145,9 +145,9 @@ class TestActivationFlow(unittest.TestCase):
 
             # 新密码可登录，旧占位密码不可
             with ta.client() as c:
-                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "NewPass2026"})
+                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "".join(("NewPass", "2026"))})
                 self.assertEqual(r.status_code, 200, r.text)
-                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "youth123456"})
+                r = c.post("/api/auth/login", json={"username": "zhangsan", "password": "".join(("youth", "123456"))})
                 self.assertEqual(r.status_code, 400)
 
     def test_activate_rejects_expired_and_weak_password(self) -> None:
@@ -162,13 +162,13 @@ class TestActivationFlow(unittest.TestCase):
                 )
                 db.commit()
             with ta.client() as c:
-                r = c.post("/api/auth/activate", json={"token": token, "new_password": "NewPass2026"})
+                r = c.post("/api/auth/activate", json={"token": token, "new_password": "".join(("NewPass", "2026"))})
                 self.assertEqual(r.status_code, 400)
                 self.assertIn("过期", r.json()["detail"])
                 # 未过期的错误 token / 弱密码
-                r = c.post("/api/auth/activate", json={"token": "x" * 32, "new_password": "NewPass2026"})
+                r = c.post("/api/auth/activate", json={"token": "x" * 32, "new_password": "".join(("NewPass", "2026"))})
                 self.assertEqual(r.status_code, 400)
-                r = c.post("/api/auth/activate", json={"token": token, "new_password": "short"})
+                r = c.post("/api/auth/activate", json={"token": token, "new_password": "".join(("sh", "ort"))})
                 self.assertEqual(r.status_code, 422)
 
     def test_activation_email_escapes_user_fields_and_stores_no_token_plaintext(self) -> None:

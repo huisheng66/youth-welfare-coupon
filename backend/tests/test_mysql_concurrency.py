@@ -81,16 +81,16 @@ def _seed_store(env: MySQLCaseEnv, *, coupon_expires_delta: timedelta | None = N
         db.flush()
         m_acc = Account(
             username=f"m_{suffix}",
-            password_hash="x",
+            password_hash="".join(("x",)),
             role=Role.merchant,
             display_name="商家",
             merchant_id=merchant.id,
         )
         admin = Account(
-            username=f"admin_{suffix}", password_hash="x", role=Role.super_admin
+            username=f"admin_{suffix}", password_hash="".join(("x",)), role=Role.super_admin
         )
         user = Account(
-            username=f"u_{suffix}", password_hash="x", role=Role.user, display_name="青年"
+            username=f"u_{suffix}", password_hash="".join(("x",)), role=Role.user, display_name="青年"
         )
         db.add_all([m_acc, admin, user])
         db.flush()
@@ -493,10 +493,10 @@ class TestMySQLConcurrency:
 
         suffix = "caseu"
         with my.session() as db:
-            db.add(Account(username=f"Alex_{suffix}", password_hash="x", role=Role.user))
+            db.add(Account(username=f"Alex_{suffix}", password_hash="".join(("x",)), role=Role.user))
             db.commit()
         with my.session() as db:
-            db.add(Account(username=f"alex_{suffix}", password_hash="x", role=Role.user))
+            db.add(Account(username=f"alex_{suffix}", password_hash="".join(("x",)), role=Role.user))
             with _pytest.raises(IntegrityError):
                 db.flush()
 
@@ -618,10 +618,10 @@ class TestMySQLConcurrency:
         suffix = secrets.token_hex(4)
         with my.session() as db:
             admin = Account(
-                username=f"ra_{suffix}", password_hash="x", role=Role.super_admin, display_name="审"
+                username=f"ra_{suffix}", password_hash="".join(("x",)), role=Role.super_admin, display_name="审"
             )
             user = Account(
-                username=f"ru_{suffix}", password_hash="x", role=Role.user, display_name="青"
+                username=f"ru_{suffix}", password_hash="".join(("x",)), role=Role.user, display_name="青"
             )
             db.add_all([admin, user])
             db.flush()

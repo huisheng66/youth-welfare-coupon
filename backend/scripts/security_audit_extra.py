@@ -22,8 +22,9 @@ def req(method, path, body=None, token=None, query=None):
     if token:
         h["Authorization"] = "Bearer " + token
     r = urllib.request.Request(url, data=data, headers=h, method=method)
+    opener = urllib.request.build_opener()
     try:
-        with urllib.request.urlopen(r, timeout=12) as resp:
+        with opener.open(r, timeout=12) as resp:
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()

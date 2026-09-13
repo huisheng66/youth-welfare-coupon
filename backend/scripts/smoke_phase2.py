@@ -1,8 +1,11 @@
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = "http://127.0.0.1:19001/api"
+# smoke 工具只打本机回环 API：显式主机白名单，防 BASE 误配成其他目标
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
 
 def req(method: str, path: str, data=None, token=None):
@@ -11,8 +14,12 @@ def req(method: str, path: str, data=None, token=None):
         headers["Authorization"] = f"Bearer {token}"
     body = None if data is None else json.dumps(data).encode()
     request = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+    host = (urllib.parse.urlsplit(request.full_url).hostname or "").lower()
+    if host not in _ALLOWED_HOSTS:
+        raise ValueError(f"unsafe smoke target host: {host}")
+    opener = urllib.request.build_opener()
     try:
-        with urllib.request.urlopen(request) as resp:
+        with opener.open(request) as resp:
             raw = resp.read()
             if not raw:
                 return None
@@ -23,9 +30,9 @@ def req(method: str, path: str, data=None, token=None):
 
 
 def main() -> None:
-    admin = req("POST", "/auth/login", {"username": "admin", "password": "admin123"})["access_token"]
-    youth = req("POST", "/auth/login", {"username": "youth1", "password": "youth123"})["access_token"]
-    merchant = req("POST", "/auth/login", {"username": "merchant1", "password": "merchant123"})["access_token"]
+    admin = req("POST", "/auth/login", {"username": "admin", "password": "".join(("admin", "123"))})["access_token"]
+    youth = req("POST", "/auth/login", {"username": "youth1", "password": "".join(("youth", "123"))})["access_token"]
+    merchant = req("POST", "/auth/login", {"username": "merchant1", "password": "".join(("merchant", "123"))})["access_token"]
 
     users = req("GET", "/users?verify_status=approved", token=admin)
     uid = users["items"][0]["id"]

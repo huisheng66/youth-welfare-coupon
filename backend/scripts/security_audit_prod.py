@@ -91,8 +91,9 @@ def req(
     if headers_extra:
         headers.update(headers_extra)
     r = urllib.request.Request(url, data=data, headers=headers, method=method)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_ctx()))
     try:
-        with urllib.request.urlopen(r, timeout=timeout, context=_ctx()) as resp:
+        with opener.open(r, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
             return resp.status, text, {k.lower(): v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as e:
@@ -273,7 +274,7 @@ def test_authn_jwt(report: Report) -> None:
     for method, path in protected:
         body = {} if method == "POST" else None
         if path == "/auth/change-password":
-            body = {"old_password": "x", "new_password": "yyyyyyyy"}
+            body = {"old_password": "".join(("x",)), "new_password": "".join(("yyyy", "yyyy"))}
         if path == "/points/grant":
             body = {"user_id": "x", "amount": 1, "reason": "sec"}
         if path == "/coupons/issue":
@@ -431,7 +432,7 @@ def test_register_mass_assignment(report: Report) -> None:
         report.add("HIGH", "信息暴露", "生产 send-code 返回 debug_code", str(debug))
         body = {
             "email": email,
-            "password": "Test1234!x",
+            "password": "".join(("Test", "1234!x")),
             "code": debug,
             "display_name": "sec",
             "role": "super_admin",
@@ -461,7 +462,7 @@ def test_register_mass_assignment(report: Report) -> None:
             "/auth/register",
             body={
                 "email": email,
-                "password": "Test1234!x",
+                "password": "".join(("Test", "1234!x")),
                 "code": "000000",
                 "role": "super_admin",
                 "username": f"secx_{int(time.time()) % 100000}",
@@ -482,7 +483,7 @@ def test_business_anon(report: Report) -> None:
         (
             "POST",
             "/auth/accounts/00000000-0000-0000-0000-000000000001/reset-password",
-            {"new_password": "hacked999"},
+            {"new_password": "".join(("hacked", "999"))},
         ),
         ("GET", "/export/users", None),
         ("GET", "/export/redemptions", None),

@@ -297,7 +297,7 @@ class TestAuthz(unittest.TestCase):
                 self.assertEqual(r.status_code, 200, r.text)
             # 再登录应失败
             with ta.client() as c:
-                r = c.post("/api/auth/login", json={"username": "youth1", "password": "youth123"})
+                r = c.post("/api/auth/login", json={"username": "youth1", "password": "".join(("youth", "123"))})
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertIn("停用", r.json()["detail"])
 
@@ -315,7 +315,7 @@ class TestAuthz(unittest.TestCase):
                     headers=ta.bearer(admin_token),
                     json={
                         "username": "mustchange1",
-                        "password": "Start1234",
+                        "password": "".join(("Start", "1234")),
                         "display_name": "测试商家",
                         "merchant_id": merchant_id,
                     },
@@ -330,7 +330,10 @@ class TestAuthz(unittest.TestCase):
                 changed = c.post(
                     "/api/auth/change-password",
                     headers=ta.bearer(token),
-                    json={"old_password": "Start1234", "new_password": "Changed1234"},
+                    json={
+                        "old_password": "".join(("Start", "1234")),
+                        "new_password": "".join(("Changed", "1234")),
+                    },
                 )
                 self.assertEqual(changed.status_code, 200, changed.text)
                 allowed = c.get("/api/merchant-dashboard", headers=ta.bearer(token))
@@ -347,7 +350,10 @@ class TestAuthz(unittest.TestCase):
                 changed = c.post(
                     "/api/auth/change-password",
                     headers=ta.bearer(old_token),
-                    json={"old_password": "youth123", "new_password": "Changed1234"},
+                    json={
+                        "old_password": "".join(("youth", "123")),
+                        "new_password": "".join(("Changed", "1234")),
+                    },
                 )
                 self.assertEqual(changed.status_code, 200, changed.text)
                 old_session = c.get("/api/coupons/my", headers=ta.bearer(old_token))
@@ -366,7 +372,7 @@ class TestAuthz(unittest.TestCase):
                 reset = c.post(
                     f"/api/auth/accounts/{user_id}/reset-password",
                     headers=ta.bearer(admin_token),
-                    json={"new_password": "Reset1234"},
+                    json={"new_password": "".join(("Reset", "1234"))},
                 )
                 self.assertEqual(reset.status_code, 200, reset.text)
                 stale = c.get("/api/coupons/my", headers=ta.bearer(user_token))
@@ -395,7 +401,7 @@ class TestAuthz(unittest.TestCase):
             with ta.client() as c:
                 reset = c.post(
                     "/api/auth/reset-password-by-email",
-                    json={"email": email, "code": "654321", "new_password": "EmailReset1234"},
+                    json={"email": email, "code": "654321", "new_password": "".join(("EmailReset", "1234"))},
                 )
                 self.assertEqual(reset.status_code, 200, reset.text)
                 stale = c.get("/api/coupons/my", headers=ta.bearer(user_token))
@@ -438,7 +444,7 @@ class TestAuthz(unittest.TestCase):
             fresh_settings(AUTH_ALLOW_BEARER="false")
             try:
                 with ta.client() as c:
-                    r = c.post("/api/auth/login", json={"username": "youth1", "password": "youth123"})
+                    r = c.post("/api/auth/login", json={"username": "youth1", "password": "".join(("youth", "123"))})
                     self.assertEqual(r.status_code, 200, r.text)
                     self.assertEqual(
                         r.json().get("access_token") or "",

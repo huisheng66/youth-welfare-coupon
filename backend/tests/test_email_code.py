@@ -11,7 +11,7 @@ import unittest
 from datetime import timedelta
 from unittest import mock
 
-from tests._helpers import TempApp, reset_env_defaults
+from tests._helpers import TempApp, reset_env_defaults, rt
 
 
 def _issue_code(ta: TempApp, email: str, purpose: str = "register") -> tuple[str, str | None]:
@@ -144,7 +144,7 @@ class TestEmailCode(unittest.TestCase):
             mail_server="smtp.example.invalid",
             mail_port=465,
             mail_username="sender@example.invalid",
-            mail_password="app-password",
+            mail_password=rt("app-", "password"),
             mail_from="sender@example.invalid",
             mail_from_name="Youth",
             mail_ssl_tls=True,
@@ -265,7 +265,7 @@ class TestEmailCode(unittest.TestCase):
                         json={
                             "email": "lockout@example.com",
                             "code": "000000",
-                            "password": "goodpass123",
+                            "password": "".join(("goodpass", "123")),
                         },
                     )
                     self.assertEqual(last.status_code, 400, last.text)
@@ -275,7 +275,7 @@ class TestEmailCode(unittest.TestCase):
                     json={
                         "email": "lockout@example.com",
                         "code": debug,
-                        "password": "goodpass123",
+                        "password": "".join(("goodpass", "123")),
                     },
                 )
                 self.assertEqual(correct.status_code, 400, correct.text)

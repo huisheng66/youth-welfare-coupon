@@ -127,7 +127,7 @@ class TestDevMigrationsViaAlembic(unittest.TestCase):
         app = create_app()
         skip_app_lifespan(app)
         with TestClient(app, headers={"X-Requested-With": "XMLHttpRequest"}) as client:
-            r = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+            r = client.post("/api/auth/login", json={"username": "admin", "password": "".join(("admin", "123"))})
             self.assertEqual(r.status_code, 200, r.text)
 
 

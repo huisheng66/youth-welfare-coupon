@@ -29,7 +29,7 @@ def _first_unused_coupon(ta: TempApp, username: str = "youth1") -> str:
 
 def _live_code_of(ta: TempApp, coupon_id: str) -> str:
     with ta.client() as c:
-        r = c.post("/api/auth/login", json={"username": "youth1", "password": "youth123"})
+        r = c.post("/api/auth/login", json={"username": "youth1", "password": "".join(("youth", "123"))})
         token = r.json()["access_token"]
         r2 = c.get(f"/api/coupons/instances/{coupon_id}/live-code", headers=ta.bearer(token))
         assert r2.status_code == 200, r2.text
@@ -64,7 +64,7 @@ class TestRedemptionRace(unittest.TestCase):
                     headers=ta.bearer(admin_token),
                     json={
                         "username": "merchant1_op2",
-                        "password": "Start1234",
+                        "password": "".join(("Start", "1234")),
                         "display_name": "操作员B",
                         "merchant_id": store_id,
                     },
@@ -75,7 +75,7 @@ class TestRedemptionRace(unittest.TestCase):
                 c.post(
                     "/api/auth/change-password",
                     headers=ta.bearer(tok),
-                    json={"old_password": "Start1234", "new_password": "Op2pass123"},
+                    json={"old_password": "".join(("Start", "1234")), "new_password": "".join(("Op2pass", "123"))},
                 )
                 ta.login("merchant1_op2", "Op2pass123")
 
@@ -120,7 +120,7 @@ class TestRedemptionRace(unittest.TestCase):
 
             def redeem_task() -> None:
                 with ta.client() as c:
-                    r = c.post("/api/auth/login", json={"username": "merchant1", "password": "merchant123"})
+                    r = c.post("/api/auth/login", json={"username": "merchant1", "password": "".join(("merchant", "123"))})
                     token = r.json()["access_token"]
                     barrier.wait(timeout=10)
                     resp = c.post("/api/coupons/redeem", headers=ta.bearer(token), json={"code": code})

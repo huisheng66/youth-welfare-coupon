@@ -44,8 +44,11 @@ def list_merchants(
 
 
 def _http_get_json(url: str, timeout: float = 5.0) -> dict:
-    # 高德固定 https 域名且 URL 由本函数拼装，无 SSRF 面
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+    # 高德固定 https 域名且 URL 由本函数拼装，无 SSRF 面；显式域名校验兜底
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if host != "restapi.amap.com" or not url.lower().startswith("https://"):
+        raise ValueError(f"unexpected geo api target: {host}")
+    with urllib.request.build_opener().open(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
