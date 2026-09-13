@@ -796,3 +796,81 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 
 - `pytest tests/ -q`：219 passed，21 skipped（新增 test_merchant_geo.py 4 用例）；
   `npm run build` 通过；E2E 18 用例全绿。
+
+## 2026-09-13（第二十批：安全纵深 / 性能 / 测试盲区 / 错误观测收尾）
+
+继 T25 后的九项工程收尾，逐项独立提交（eb3fb1e…486344c）。
+
+### 文档与实现同步
+
+- `docs/security-ops.md` 7b 章节重写：token 已迁 HttpOnly Cookie（优化1 第 2 项
+  交付清单中漏写的文档），localStorage 仅存脱敏资料；CSRF 两层校验与 XSS 剩余
+  风险如实描述。`优化.md` 第 7 项台账修正（7b/7c/7d 实态、7e 标注 staging 未实跑）。
+- `exampledoc/`（三类批量导入示例文件 + 列说明）入库为用户文档。
+- `deploy/README.md`、`docs/release-v1.5.0.md`：`/api/metrics` 为进程内聚合，
+  2 worker 下数值分摊、重启清零——观察窗口判据改看趋势不看绝对值。
+- README「表结构由 Alembic 统一管理」说法同步（开发路径已不再 create_all）。
+
+### 安全纵深
+
+- CSRF：`CsrfProtectMiddleware` 写方法叠加 Origin/Referer 白名单校验（同源 Host
+  匹配 / `cors_origin_list` 精确匹配 / 开发 LAN 正则 `re.fullmatch`——与
+  Starlette 语义一致，封堵 `http://10.0.0.1.evil.com` 前缀拼接绕过）。
+  `test_csrf_origin.py` 12 用例。
+- 应用层 CSP：生产环境 `apply_security_headers` 下发与 Nginx 同值 CSP
+  （uvicorn 误直连仍有兜底；开发不启以免破坏 Swagger /docs）。Nginx `/api/`
+  反代 `proxy_hide_header` 避免双头。`test_csp_production_only` 覆盖两态。
+
+### 性能
+
+- 全局限流恒不用 file 后端：file 每请求一次 `BEGIN IMMEDIATE` 写事务，
+  `--workers 2` 下即全站吞吐串行点。非 login 用途降级为每 worker 内存计数
+  （实际上限 ≈ 配置值 × worker 数，钝化闸门可接受）；显式 redis 仍共享；
+  登录限流保持 file（多 worker 精确）。`.env.example` / deploy README 同步。
+- 门头照路径：`photo_blob` 模型层 `deferred`——列表/详情不再随行加载 5MB
+  二进制；`has_photo` 改用 `photo_content_type` 判定（两字段恒同写同清），
+  避免逐行懒加载；`GET /{id}/photo` 改显式 blob+content_type 列查询；
+  列表 count 改 `count(id)`（`Query.count()` 的子查询会重选全部列含 blob）；
+  上传先 `seek(0,2)/tell` 预检大小再读入内存（直连 uvicorn 无 Nginx
+  client_max_body_size 兜底）。回归用例以 SQL 语句指纹（`photo_blob` 零出现）
+  锁住列表/详情路径。
+
+### schema 迁移统一（风险最高项）
+
+- `apply_migrations(dev)` 不再 `create_all + ensure_schema`，改走
+  `alembic upgrade head` + 启动只读校验；删除约 300 行手写补丁
+  （`ensure_schema` / hours→DECIMAL 重建 / email_codes 扩宽 / `_ensure_indexes`）。
+  schema 唯一来源是迁移链：给模型加列必须配套生成迁移。
+- 历史 create_all 库 stamp 目标按 schema 完备性判定：与当前 metadata
+  （表/列/索引，包含性检查）一致 → 直接 stamp head；stamp baseline 再重放
+  增量会撞已存在的 ORM 索引（`ix_accounts_role_created_at` 已存在，新回归
+  用例实证）。停在中途的库保持 stamp baseline 后增量。
+- 新增 `test_dev_migrations.py` 3 用例：空库迁移链建表与 ORM metadata 表集合
+  完全相等；历史库 stamp+upgrade 后关键列在位；迁移建库→seed→登录全链路。
+
+### 测试盲区与观测
+
+- `test_export_points_auth.py` 12 用例：redemptions/points-ledger CSV 导出
+  （角色 403 / 行结构 / result·user_id 过滤）、批量时长（仅已核验可入账 /
+  部分失败逐条原因 / Idempotency-Key 首请求语义）、logout 清 Cookie、
+  忘记密码不泄露未注册邮箱、仪表盘结构与角色。dashboard 实际路径为
+  `/api/dashboard`（无 stats 前缀）。
+- 前端全局错误兜底：`app.config.errorHandler` + window `error`
+  （元素 target = 资源加载，跳过）+ `unhandledrejection` →
+  `utils/errorReport.js`（控制台全栈 + 上报去重、单会话上限 10 条、自身异常
+  全吞）；新增免登录 `POST /api/client-errors`（204，字段严格截断，写
+  `audit_logs` action=client_error，滥用面由全局限流约束），不弹窗避免干扰
+  核销等既有错误处理 UX。
+- 测试环境隔离根治：`tests/conftest.py` 在任何测试模块 import 前固定
+  `APP_SETTINGS_ENV_FILE`——`test_activation_outbox` 先 import app 后 import
+  `_helpers` 曾使 config 的 `_ENV_FILE` 定格为真实 `.env`，本机新增真实
+  `AMAP_WEB_KEY` 后 geo 测试命中真实高德 API（先在缺陷，非本次回归）；
+  geo 用例另加 `AMAP_WEB_KEY=""` 双保险。E2E 后端环境同样显式置空该 key。
+
+**验证**
+
+- `pytest tests/ -q`：249 passed，21 skipped（本机无 MySQL 常驻实例，MySQL 组
+  跳过，CI 真实运行）；`npm run build` 通过；E2E 18 用例全绿
+  （含新 dev-alembic 冷启动路径）。
+- 待运维：staging/生产实机角色验收、T21 真机（摄像头+HTTPS 信任）、
+  发布后 7 天观察窗口——与本批无关，维持 release-v1.5.0.md 计划。
