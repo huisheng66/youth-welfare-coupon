@@ -7,14 +7,16 @@ import uuid
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from app.api import auth, coupons, export, imports, merchants, outbox, points, stats, users
 from app.core.client_ip import get_client_ip
-from app.core.config import assert_secure_startup, get_settings
+from app.core.config import Settings, assert_secure_startup, get_settings
 from app.core.deps import require_roles
 from app.models.entities import Account, Role
 import app.core.database as db
@@ -86,16 +88,48 @@ class GlobalIpRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class CsrfProtectMiddleware(BaseHTTPMiddleware):
-    """基于 X-Requested-With 的 CSRF 防护（配合 SameSite=Lax Cookie）。
+    """CSRF 防护（配合 SameSite=Lax Cookie），对写方法（POST/PUT/PATCH/DELETE）两层校验：
 
-    浏览器原生表单不会带 X-Requested-With，前端 axios 全局加上后即可区分 AJAX 与跨站提交。
-    仅对写方法（POST/PUT/PATCH/DELETE）校验；GET/HEAD/OPTIONS 跳过。
+    1. 约定头：浏览器原生跨站表单不会带 X-Requested-With，前端 axios 全局加上后
+       即可区分 AJAX 与跨站提交。
+    2. 来源校验：浏览器在跨站请求中无法伪造 Origin / Referer；若请求携带任一，
+       来源必须与 Host 同源、命中 CORS 白名单或开发 LAN 正则之一。非浏览器
+       客户端（脚本）不带这两个头，由第 1 层把关。
     """
 
     WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+    def __init__(self, app: ASGIApp, settings: Settings | None = None) -> None:
+        super().__init__(app)
+        self._settings = settings
+
+    def _origin_allowed(self, origin: str) -> bool:
+        s = self._settings or get_settings()
+        if origin in s.cors_origin_list:
+            return True
+        # fullmatch 与 Starlette allow_origin_regex 语义一致，避免前缀匹配放行
+        # http://10.0.0.1.evil.com 这类拼接域
+        if s.effective_cors_allow_lan and re.fullmatch(LAN_ORIGIN_REGEX, origin):
+            return True
+        return False
+
+    @staticmethod
+    def _origin_from_headers(headers) -> str | None:
+        origin = headers.get("origin")
+        if origin:
+            return origin
+        referer = headers.get("referer")
+        if referer:
+            parts = urlsplit(referer)
+            if parts.scheme and parts.netloc:
+                return f"{parts.scheme}://{parts.netloc}"
+        return None
+
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.method in self.WRITE_METHODS and "x-requested-with" not in {k.lower() for k in request.headers.keys()}:
+        if request.method not in self.WRITE_METHODS:
+            return await call_next(request)
+        headers = request.headers
+        if "x-requested-with" not in headers:
             return apply_security_headers(
                 Response(
                     content='{"detail":"缺少 CSRF 校验头（X-Requested-With）"}',
@@ -103,6 +137,18 @@ class CsrfProtectMiddleware(BaseHTTPMiddleware):
                     media_type="application/json",
                 )
             )
+        origin = self._origin_from_headers(headers)
+        if origin:
+            host = headers.get("host", "")
+            same_origin = bool(host) and urlsplit(origin).netloc == host
+            if not same_origin and not self._origin_allowed(origin):
+                return apply_security_headers(
+                    Response(
+                        content='{"detail":"CSRF 校验失败：请求来源不在允许列表"}',
+                        status_code=403,
+                        media_type="application/json",
+                    )
+                )
         return await call_next(request)
 
 

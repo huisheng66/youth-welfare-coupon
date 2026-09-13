@@ -33,16 +33,22 @@ class TestMerchantGeoSearch(unittest.TestCase):
 
     def test_requires_configured_key(self) -> None:
         """未配置 AMAP_WEB_KEY：返回带配置指引的 400，而非静默失败。"""
-        with TempApp() as ta:
-            token = ta.login("admin", "admin123")
-            with ta.client() as c:
-                r = c.get(
-                    "/api/merchants/geo-search",
-                    headers=ta.bearer(token),
-                    params={"keywords": "蜜雪冰城"},
-                )
-                self.assertEqual(r.status_code, 400, r.text)
-                self.assertIn("AMAP_WEB_KEY", r.json()["detail"])
+        # 双保险：即便进程仍读得到真实 .env（import 时序回退），也强制视为未配置，
+        # 避免该用例打到真实高德 API
+        os.environ["AMAP_WEB_KEY"] = ""
+        try:
+            with TempApp() as ta:
+                token = ta.login("admin", "admin123")
+                with ta.client() as c:
+                    r = c.get(
+                        "/api/merchants/geo-search",
+                        headers=ta.bearer(token),
+                        params={"keywords": "蜜雪冰城"},
+                    )
+                    self.assertEqual(r.status_code, 400, r.text)
+                    self.assertIn("AMAP_WEB_KEY", r.json()["detail"])
+        finally:
+            os.environ.pop("AMAP_WEB_KEY", None)
 
     def test_user_role_forbidden(self) -> None:
         """在线解析仅管理员可用（user/merchant 角色 403）。"""
