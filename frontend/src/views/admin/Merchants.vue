@@ -70,6 +70,7 @@
           </div>
           <div class="coord-row">
             <el-input v-model="geoKeywords" placeholder="门店搜索关键词，默认取商家名称" @keyup.enter="geoSearch" />
+            <el-input v-model="geoCity" placeholder="城市（选填）" style="max-width: 110px; flex: none" />
             <el-button style="flex: none" :loading="geoLoading" @click="geoSearch">搜索坐标</el-button>
           </div>
           <div v-if="geoResults.length" class="geo-results">
@@ -137,6 +138,7 @@ const activeOnly = ref(false)
 const uploading = ref(false)
 const coordPaste = ref('')
 const geoKeywords = ref('')
+const geoCity = ref('')
 const geoLoading = ref(false)
 const geoResults = ref([])
 const form = reactive({
@@ -187,6 +189,7 @@ function openCreate() {
   })
   coordPaste.value = ''
   geoKeywords.value = ''
+  geoCity.value = ''
   geoResults.value = []
   visible.value = true
 }
@@ -195,6 +198,7 @@ function openEdit(row) {
   Object.assign(form, row)
   coordPaste.value = ''
   geoKeywords.value = row.name || ''
+  geoCity.value = ''
   geoResults.value = []
   visible.value = true
 }
@@ -250,9 +254,11 @@ async function geoSearch() {
   }
   geoLoading.value = true
   try {
-    const res = await api.get('/merchants/geo-search', { params: { keywords: kw } })
+    const res = await api.get('/merchants/geo-search', {
+      params: { keywords: kw, city: geoCity.value || undefined },
+    })
     geoResults.value = res.data
-    if (!res.data.length) ElMessage.info('没有匹配的地点，试试更完整的关键词')
+    if (!res.data.length) ElMessage.info('没有匹配的地点，试试补全城市或更完整的关键词')
   } finally {
     geoLoading.value = false
   }
