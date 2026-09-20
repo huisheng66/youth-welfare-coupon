@@ -37,7 +37,7 @@
         </el-form-item>
       </el-form>
       <div v-else style="margin-bottom:8px">
-        <el-checkbox v-model="notify">向含邮箱的用户发送激活邮件（一次性链接设置密码，需已配置 SMTP）</el-checkbox>
+        <el-checkbox v-model="notify">向含邮箱的用户发送激活邮件（一次性链接设置密码）</el-checkbox>
       </div>
       <el-upload
         drag

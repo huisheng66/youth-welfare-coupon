@@ -32,7 +32,7 @@ class TestMerchantGeoSearch(unittest.TestCase):
         reset_env_defaults()
 
     def test_requires_configured_key(self) -> None:
-        """未配置 AMAP_WEB_KEY：返回带配置指引的 400，而非静默失败。"""
+        """未配置 AMAP_WEB_KEY：返回面向操作者的 400，而非静默失败或暴露部署细节。"""
         # 双保险：即便进程仍读得到真实 .env（import 时序回退），也强制视为未配置，
         # 避免该用例打到真实高德 API
         os.environ["AMAP_WEB_KEY"] = ""
@@ -46,7 +46,7 @@ class TestMerchantGeoSearch(unittest.TestCase):
                         params={"keywords": "蜜雪冰城"},
                     )
                     self.assertEqual(r.status_code, 400, r.text)
-                    self.assertIn("AMAP_WEB_KEY", r.json()["detail"])
+                    self.assertIn("在线搜索", r.json()["detail"])
         finally:
             os.environ.pop("AMAP_WEB_KEY", None)
 

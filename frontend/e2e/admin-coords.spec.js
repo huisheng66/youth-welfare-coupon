@@ -1,4 +1,4 @@
-// 商家坐标编辑（T25 补充）：整串粘贴自动分列、在线搜索入口（未配 key 时给出配置提示），
+// 商家坐标编辑（T25 补充）：整串粘贴自动分列、在线搜索入口（未配 key 时给出可用提示），
 // 坐标保存后用户端详情页从地址搜索兜底升级为三家地图精确导航。
 
 import { expect, test } from '@playwright/test'
@@ -39,12 +39,12 @@ test('粘贴坐标自动分列，保存后用户端出现三家导航直链', as
   await expect(page.getByRole('link', { name: '高德地图搜索' })).toBeHidden()
 })
 
-test('未配置 AMAP_WEB_KEY 时在线搜索返回配置提示', async ({ page }) => {
+test('未配置 AMAP_WEB_KEY 时在线搜索给出可用提示', async ({ page }) => {
   await uiLogin(page, ...ACC.admin)
   await page.goto('/admin/merchants')
   await page.locator('.el-table__row', { hasText: '示例餐饮店' }).first().getByRole('button', { name: '编辑' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: '搜索坐标' }).click()
-  await expect(page.locator('.el-message').first()).toContainText('AMAP_WEB_KEY', { timeout: 10_000 })
+  await expect(page.locator('.el-message').first()).toContainText('在线搜索', { timeout: 10_000 })
 })

@@ -85,12 +85,6 @@
               <span class="muted">{{ r.address }}</span>
             </button>
           </div>
-          <div class="muted coord-hint">
-            「搜索坐标」需在 backend/.env 配置 AMAP_WEB_KEY（高德开放平台免费申请「Web服务」key），
-            搜索结果点选即填入。也可从坐标工具复制整串粘贴（GCJ-02，自动分列）。
-            注意：高德坐标拾取器游客模式仅显示 2 位小数，无法直接使用（需登录并完成个人开发者认证）。
-            填好后用户端「商家详情」可唤起地图导航。
-          </div>
         </el-form-item>
         <el-form-item label="门头照">
           <div class="photo-edit">
@@ -346,10 +340,6 @@ onMounted(load)
   line-height: 1.6;
   margin-top: 4px;
   width: 100%;
-}
-
-.coord-hint a {
-  color: var(--brand);
 }
 
 .photo-edit {

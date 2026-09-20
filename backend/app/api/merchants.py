@@ -65,10 +65,8 @@ def geo_search(
     """
     key = get_settings().amap_web_key
     if not key:
-        raise HTTPException(
-            status_code=400,
-            detail="未配置 AMAP_WEB_KEY，无法在线搜索；可在 backend/.env 配置后使用，或手动粘贴坐标",
-        )
+        # 面向操作者的提示：不暴露 AMAP_WEB_KEY / backend/.env 等部署细节
+        raise HTTPException(status_code=400, detail="在线搜索暂不可用，请手动填写坐标")
     params = {"key": key, "keywords": keywords, "offset": "5", "page": "1", "extensions": "base"}
     if city:
         params["city"] = city
