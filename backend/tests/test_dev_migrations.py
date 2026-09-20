@@ -106,6 +106,49 @@ class TestDevMigrationsViaAlembic(unittest.TestCase):
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         self.assertEqual(revision, _head())
 
+    def test_ensure_schema_era_db_at_old_revision_upgrades(self) -> None:
+        """回归：ensure_schema 时代开发库停在 d8f2a06c4b11，但 photo/坐标列已存在。
+
+        旧启动路径（create_all + ensure_schema）ALTER 了列却不推进 alembic_version，
+        迁移链改为唯一来源后 upgrade 会 duplicate column 崩溃，开发库无法启动。
+        迁移必须幂等：列已在则跳过，只把版本推进到 head。
+        """
+        import app.core.database as dbmod
+        import app.models  # noqa: F401
+        from sqlalchemy import inspect, text
+
+        from app.core.migrate import apply_migrations, verify_schema_current
+
+        self._init_engine_at_temp_db()
+        # 建到 d8f2a06c4b11，再手工补上下一迁移的列（模拟 ensure_schema 的副作用）
+        self._stamp_and_upgrade_to("d8f2a06c4b11")
+        with dbmod.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE merchants ADD COLUMN photo_blob BLOB"))
+            conn.execute(
+                text("ALTER TABLE merchants ADD COLUMN photo_content_type VARCHAR(50) NOT NULL DEFAULT ''")
+            )
+            conn.execute(text("ALTER TABLE merchants ADD COLUMN photo_updated_at DATETIME"))
+            conn.execute(text("ALTER TABLE merchants ADD COLUMN longitude VARCHAR(32) NOT NULL DEFAULT ''"))
+            conn.execute(text("ALTER TABLE merchants ADD COLUMN latitude VARCHAR(32) NOT NULL DEFAULT ''"))
+
+        apply_migrations(dbmod.engine, production=False)
+        verify_schema_current(dbmod.engine)
+
+        cols = {c["name"] for c in inspect(dbmod.engine).get_columns("merchants")}
+        self.assertIn("photo_blob", cols)
+        with dbmod.engine.connect() as conn:
+            revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        self.assertEqual(revision, _head())
+
+    def _stamp_and_upgrade_to(self, revision: str) -> None:
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config(str(BACKEND_ROOT / "alembic.ini"))
+        cfg.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
+        cfg.set_main_option("prepend_sys_path", str(BACKEND_ROOT))
+        command.upgrade(cfg, revision)
+
     def test_dev_startup_seeds_and_serves(self) -> None:
         """迁移建库后走完整启动路径（seed + 接口可用），模拟 dev uvicorn 冷启动。"""
         import app.core.database as dbmod

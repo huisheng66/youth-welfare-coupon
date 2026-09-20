@@ -23,20 +23,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("merchants", sa.Column("photo_blob", sa.LargeBinary(16777215), nullable=True))
-    op.add_column(
-        "merchants",
+    # 幂等：ensure_schema 时代的开发库在旧启动路径下已把这几列 ALTER 进来，
+    # 但 alembic_version 仍停在上一个 revision（d8f2a06c4b11）。此时直接
+    # add_column 会因 duplicate column 崩溃，导致开发库无法启动。
+    # 逐列检查后再加，历史库与全新库都能平滑 upgrade。
+    existing = {c["name"] for c in sa.inspect(op.get_bind()).get_columns("merchants")}
+    columns = [
+        sa.Column("photo_blob", sa.LargeBinary(16777215), nullable=True),
         sa.Column("photo_content_type", sa.String(length=50), nullable=False, server_default=""),
-    )
-    op.add_column("merchants", sa.Column("photo_updated_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column(
-        "merchants",
+        sa.Column("photo_updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("longitude", sa.String(length=32), nullable=False, server_default=""),
-    )
-    op.add_column(
-        "merchants",
         sa.Column("latitude", sa.String(length=32), nullable=False, server_default=""),
-    )
+    ]
+    for column in columns:
+        if column.name not in existing:
+            op.add_column("merchants", column)
 
 
 def downgrade() -> None:
