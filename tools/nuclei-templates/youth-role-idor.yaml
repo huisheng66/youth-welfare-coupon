@@ -12,8 +12,8 @@ http:
   - method: GET
     path:
       - "{{BaseURL}}/api/auth/accounts"
-      - "{{BaseURL}}/api/stats/dashboard"
-      - "{{BaseURL}}/api/stats/audit-logs"
+      - "{{BaseURL}}/api/dashboard"
+      - "{{BaseURL}}/api/audit-logs"
       - "{{BaseURL}}/api/auth/email/smtp-status"
 
     matchers:
