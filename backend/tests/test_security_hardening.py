@@ -594,6 +594,13 @@ class TestSecurityHeadersAndHealth(unittest.TestCase):
         self.assertEqual(auth.headers.get("cache-control"), "no-store")
         self.assertEqual(auth.headers.get("pragma"), "no-cache")
 
+        # 列表类 API 也必须禁缓存：否则浏览器启发式缓存 GET 列表，停用/启用后
+        # 列表仍返回旧值，表现为“停用失败”（生产实证）。
+        listing = client.get("/api/merchants")
+        self.assertEqual(listing.status_code, 401)
+        self.assertEqual(listing.headers.get("cache-control"), "no-store")
+        self.assertEqual(listing.headers.get("pragma"), "no-cache")
+
 
 class TestCsvExportSafety(unittest.TestCase):
     def test_formula_prefixes_are_neutralized(self) -> None:

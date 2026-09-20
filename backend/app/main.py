@@ -67,7 +67,11 @@ def apply_security_headers(response: Response) -> Response:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
-        if request.url.path.startswith("/api/auth") or "/bank-card" in request.url.path:
+        # 所有 API 响应默认禁缓存：列表类 GET（/api/merchants、/api/coupons/templates 等）
+        # 原先不带任何 Cache-Control，浏览器按启发式缓存，停用/启用后列表仍返回旧值，
+        # 表现为“停用失败”。setdefault 保留路由显式声明的缓存策略（如门头照
+        # private, max-age=300）。
+        if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
             response.headers.setdefault("Pragma", "no-cache")
         return apply_security_headers(response)
