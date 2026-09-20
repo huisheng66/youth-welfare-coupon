@@ -80,6 +80,9 @@ def req(
     headers = {
         "Accept": "application/json",
         "User-Agent": "welfare-security-audit-prod/1.0",
+        # 与真实前端一致：写接口需 X-Requested-With 过 CSRF 中间件，否则
+        # POST/PUT 会在业务逻辑前被 403，弱口令/限流等用例全部假 PASS。
+        "X-Requested-With": "XMLHttpRequest",
     }
     if body is not None:
         data = json.dumps(body).encode("utf-8")
