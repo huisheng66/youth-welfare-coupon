@@ -241,6 +241,7 @@ systemctl enable --now welfare-api.service
 systemctl restart welfare-api.service
 
 echo "==> Nginx"
+install -D -m 644 "${APP_ROOT}/deploy/nginx-location-headers.conf" /etc/nginx/snippets/welfare-location-headers.conf
 cp "${APP_ROOT}/deploy/nginx-welfare.conf" /etc/nginx/sites-available/welfare
 if [[ "${DOMAIN}" == "_" || -z "${DOMAIN}" ]]; then
   sed -i "s|your-domain.com|_|g" /etc/nginx/sites-available/welfare

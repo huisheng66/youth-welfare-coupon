@@ -943,3 +943,39 @@ MySQL 用例自动跳过，CI 已配置 mysql:8.4 service 常驻运行。
 - 前端无改动（playwright/e2e 仅哑值拼装）；F1-F4 修复状态已回写审计报告
   findings.md。
 
+
+## 2026-09-21（第二十二批：TODO 收尾——exampledoc 回归 + 全新部署 nginx 片段）
+
+### 1. exampledoc 批量导入回归用例固化
+
+- 新增 `backend/tests/test_exampledoc_import.py`（2 用例，`TempApp` 临时 SQLite）：
+  - `TestExampledocFormatParity`：3 类 × 4 格式（csv/xlsx/txt/docx）预检后的
+    `(row, identifier, status, reason)` 两两一致；行数 users 6 / issue 4 / points 4；
+    用户未导入时 issue/points 逐行 `precheck_failed`（原因「用户不存在或无法唯一识别」）。
+  - `TestExampledocFullSequence`：users 6/6（`email_queued=3`，一次性凭证
+    `20260103`/`20260105`/`zhaoxy`）→ issue 4/4（用户名/邮箱/手机/学号 各命中一次）
+    → points 3 成功 / 1 失败（第 4 行「时长余额不足」）；重复 execute 幂等
+    （`point_ledgers` 4→4）；重复导 users 6 行全「用户名已存在」；`/rows` 与
+    `/rows.csv`（UTF-8 BOM）可读。
+- `exampledoc/README.md` 注明：points 第 4 行是对 0 余额用户扣减，按顺序执行必然
+  被拦截，属刻意保留的扣减/拦截演示（不改示例数据）。
+
+### 2. 全新部署 nginx 头片段缺失修复
+
+- `deploy/install-ubuntu.sh` Nginx 段补 `install -D -m 644` 安装
+  `deploy/nginx-location-headers.conf` → `/etc/nginx/snippets/`，与
+  `nginx-welfare.conf` 的 `include` 对齐；全新装机 `nginx -t` 不再中断。
+- `bash -n` 通过。
+
+### 3. TODO 2/3 评估结论（暂不做）
+
+- CSP `style-src 'unsafe-inline'`：Element Plus 运行时注入 `<style>` 元素且大量
+  使用内联 `style="..."` 属性；纯 nonce 管不了 style 属性，需 `style-src-elem`
+  nonce + `style-src-attr 'unsafe-inline'`，收益低、风险高（易搞崩 UI）。`script-src`
+  已无 `unsafe-inline`（真正要紧项已达标），建议维持现状。
+- 阿里云 ESA/WAF cookie `Secure`/`SameSite`：需在云控制台操作，非代码可改。
+
+**验证**
+
+- `pytest tests/test_exampledoc_import.py -q`：2 passed。
+- `pytest tests/test_imports.py -q`：10 passed（无回归）。
