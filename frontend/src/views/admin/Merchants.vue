@@ -22,7 +22,7 @@
         <el-button type="primary" plain @click="openCreate">新增商家</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe>
+    <el-table v-loading="loading" :data="items" stripe row-key="id">
       <template #empty>
         <EmptyState title="暂无商家" description="没有符合条件的商家；可调整搜索条件，或直接新增">
           <el-button type="primary" @click="openCreate">新增商家</el-button>

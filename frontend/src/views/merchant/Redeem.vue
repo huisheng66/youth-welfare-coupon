@@ -93,7 +93,7 @@
         </div>
         <el-button link type="primary" @click="$router.push('/merchant/logs')">全部记录</el-button>
       </div>
-      <el-table :data="recent" size="small" stripe empty-text="暂无记录">
+      <el-table :data="recent" size="small" stripe empty-text="暂无记录" row-key="id">
         <el-table-column prop="code" label="券码" min-width="120" show-overflow-tooltip />
         <el-table-column prop="username" label="用户" width="100" />
         <el-table-column label="结果" width="80">

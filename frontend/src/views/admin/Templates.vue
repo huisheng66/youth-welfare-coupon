@@ -15,7 +15,7 @@
         <el-button type="primary" @click="openCreate">新建模板</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe>
+    <el-table v-loading="loading" :data="items" stripe row-key="id">
       <template #empty>
         <EmptyState title="暂无模板" description="创建模板后即可为已通过用户发券，或开放时长兑换">
           <el-button type="primary" @click="openCreate">新建模板</el-button>

@@ -57,7 +57,7 @@
         stripe
         max-height="280"
         @selection-change="onPendingSelect"
-      >
+       row-key="id">
         <el-table-column type="selection" width="48" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="display_name" label="昵称" width="110" show-overflow-tooltip />
@@ -77,7 +77,7 @@
       </el-table>
     </div>
 
-    <el-table v-loading="loading" :data="items" stripe @selection-change="onSelect">
+    <el-table v-loading="loading" :data="items" stripe @selection-change="onSelect" row-key="id">
       <template #empty>
         <EmptyState title="暂无用户" description="没有符合条件的用户；可调整筛选条件，或直接导入名单">
           <el-button type="primary" @click="openImportUsers">导入名单</el-button>
@@ -166,7 +166,7 @@
         <el-descriptions-item label="最近材料">{{ current.latest_material_note || '-' }}</el-descriptions-item>
       </el-descriptions>
       <h3 style="margin:16px 0 8px;font-size:1rem">核验历史</h3>
-      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240">
+      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240" row-key="id">
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />
@@ -231,7 +231,7 @@
         </el-descriptions-item>
       </el-descriptions>
       <h3 class="review-section-title">历史申请与审核记录</h3>
-      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240">
+      <el-table :data="detailHistory" size="small" stripe empty-text="暂无记录" max-height="240" row-key="id">
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <StatusTag :text="verifyStatusText(row.status)" :type="verifyStatusType(row.status)" />

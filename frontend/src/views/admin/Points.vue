@@ -67,7 +67,7 @@
         </div>
         <el-button @click="loadLedger" :loading="ledgerLoading">刷新</el-button>
       </div>
-      <el-table v-loading="ledgerLoading" :data="ledger" stripe>
+      <el-table v-loading="ledgerLoading" :data="ledger" stripe row-key="id">
         <template #empty>
           <EmptyState title="暂无流水" description="入账、扣减、兑换变动都会记录在这里" />
         </template>

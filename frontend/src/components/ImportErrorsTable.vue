@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="errors" size="small" max-height="300" border>
+  <el-table :data="errors" size="small" max-height="300" border row-key="id">
     <el-table-column prop="row" label="行号" width="70" />
     <el-table-column prop="identifier" label="标识" min-width="120" show-overflow-tooltip />
     <el-table-column v-if="showStatus" label="状态" width="110">

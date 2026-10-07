@@ -304,8 +304,13 @@ async function checkRedeemed() {
 
 function startTick() {
   if (tickTimer) clearInterval(tickTimer)
+  // 每 500ms 触发一次响应式更新会持续占用主线程。这里做「值变化才写入」
+  // 的收敛：remain 实际每秒仅变化 1 次，无变化时不触发 Vue 更新与重渲染。
+  remain.value = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000))
   tickTimer = setInterval(() => {
-    remain.value = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000))
+    const next = Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000))
+    if (next === remain.value) return
+    remain.value = next
   }, 500)
 }
 

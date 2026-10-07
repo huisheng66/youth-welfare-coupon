@@ -24,7 +24,7 @@
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="items" stripe>
+      <el-table v-loading="loading" :data="items" stripe row-key="id">
         <template #empty>
           <EmptyState title="暂无账号" description="没有符合条件的账号；可在下方创建发券管理员或商家账号" />
         </template>

@@ -67,6 +67,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
+import { dedupe } from '../../utils/requestDedup'
 import { formatTime } from '../../utils/format'
 
 const data = ref(null)
@@ -100,7 +101,9 @@ const activities = computed(() => data.value?.recent_activity || [])
 async function load() {
   loading.value = true
   try {
-    const res = await api.get('/dashboard')
+    // 与 AdminLayout 使用同一去重键：布局为侧栏徽标拉同一份数据，
+    // 两者并发时合并为一次请求，避免首屏重复往返。
+    const res = await dedupe('GET /dashboard', () => api.get('/dashboard'))
     data.value = res.data
   } finally {
     loading.value = false

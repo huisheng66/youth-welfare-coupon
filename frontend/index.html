@@ -10,9 +10,35 @@
     <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>youth</title>
+    <style>
+      /* 首屏骨架底色：在入口 JS 解析完成前先铺好底色与居中提示，
+         避免白屏 + 内容突然跳入造成的「卡顿感」。体积仅数百字节，
+         内联以免多一次往返。 */
+      html, body, #app { height: 100%; margin: 0; }
+      body { background: #f5f7f8; }
+      #app:empty::before {
+        content: '加载中…';
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6b7a80;
+        font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #101416; }
+        #app:empty::before { color: #9aa7ad; }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <noscript>
+      <p style="padding:24px;font:14px/1.6 system-ui,sans-serif">
+        本系统需要启用 JavaScript 才能使用，请在浏览器设置中开启后重试。
+      </p>
+    </noscript>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

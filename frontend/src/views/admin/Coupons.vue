@@ -37,7 +37,7 @@
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe>
+    <el-table v-loading="loading" :data="items" stripe row-key="id">
       <template #empty>
         <EmptyState title="暂无优惠券" description="没有符合条件的券；可在用户核验页为已通过用户发券">
           <el-button type="primary" @click="$router.push('/admin/users')">去用户核验</el-button>

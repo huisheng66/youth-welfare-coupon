@@ -141,6 +141,7 @@ import {
 } from '@element-plus/icons-vue'
 import { logout, useAuth } from '../auth'
 import api from '../api'
+import { dedupe } from '../utils/requestDedup'
 import { roleLabel as mapRole } from '../utils/format'
 
 const route = useRoute()
@@ -175,7 +176,10 @@ const pageTitle = computed(() => {
 
 async function loadPending() {
   try {
-    const res = await api.get('/dashboard')
+    // 去重：进入仪表盘时，Dashboard.vue 自身也会拉 /dashboard。
+    // 此前两者并发会发出两次相同请求（首屏白等一拍），这里让在途请求共享同一个
+    // Promise。请求结束后去重自动失效，徽标数仍随每次路由切换真实刷新。
+    const res = await dedupe('GET /dashboard', () => api.get('/dashboard'))
     pendingCount.value = res.data.pending_verifications || 0
   } catch {
     pendingCount.value = 0

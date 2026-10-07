@@ -90,7 +90,7 @@
     <div class="page-card">
       <h2 class="page-title">核验历史</h2>
       <p class="page-desc">含审核备注（驳回原因会显示在此）</p>
-      <el-table :data="history" stripe>
+      <el-table :data="history" stripe row-key="id">
         <template #empty>
           <EmptyState title="暂无提交记录" description="提交核验后，审核进度与备注会显示在这里" />
         </template>

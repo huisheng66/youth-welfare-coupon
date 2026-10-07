@@ -63,7 +63,7 @@
 
     <div class="page-card">
       <h2 class="page-title">时长流水</h2>
-      <el-table :data="ledger" stripe>
+      <el-table :data="ledger" stripe row-key="id">
         <template #empty>
           <EmptyState title="暂无流水" description="管理员入账或自助兑换后，变动会记录在这里" />
         </template>

@@ -22,7 +22,7 @@
         <el-button @click="onExport">导出 CSV</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe>
+    <el-table v-loading="loading" :data="items" stripe row-key="id">
       <template #empty>
         <EmptyState title="暂无核销记录" description="完成一次核销后，成功与失败记录都会出现在这里" />
       </template>

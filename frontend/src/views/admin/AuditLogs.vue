@@ -30,7 +30,7 @@
         <el-button type="primary" @click="onFilter">查询</el-button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="items" stripe>
+    <el-table v-loading="loading" :data="items" stripe row-key="id">
       <template #empty>
         <EmptyState title="暂无审计记录" description="发券、审核、核销等敏感操作发生后自动记录；当前筛选条件下暂无数据" />
       </template>
