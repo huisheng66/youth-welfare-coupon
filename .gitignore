@@ -23,6 +23,9 @@ Thumbs.db
 # Local tooling
 .impeccable/
 
+# 本机代码索引产物（codebase-memory MCP，2.5 MB 二进制，按需本地重建）
+.codebase-memory/
+
 # Security scan reports (ZAP / local audits)
 reports/
 backend/data/rate_limit*.db
@@ -33,6 +36,9 @@ tools/**/__pycache__/
 
 # ZCode workspace state
 .zcode/
+
+# WorkBuddy 项目记忆（本地工作日志，按需生成，不入库）
+.workbuddy/
 
 # Playwright E2E artifacts
 test-results/
