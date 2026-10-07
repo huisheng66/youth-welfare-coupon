@@ -111,6 +111,28 @@ function hashedAssetsCachePlugin() {
   }
 }
 
+/** 构建号注入：把 index.html 里的 __BUILD_ID__ 换成真实构建标识。
+ *
+ * 用途：配合 index.html 中的旧页面自愈脚本——发版后用户若仍开着
+ * 旧标签页，切回页面时能发现构建号变化并自动刷新，避免旧 JS 按
+ * 旧接口约定发请求导致 Axios 400 这类难定位的报错。
+ *
+ * 取值优先用环境变量 BUILD_ID（CI 可显式指定），否则用本次构建时间戳；
+ * 只取 12 位十六进制，够区分相邻两次发版。
+ */
+function buildIdPlugin() {
+  return {
+    name: 'youth-build-id',
+    apply: 'build',
+    transformIndexHtml(html) {
+      const id = (
+        process.env.BUILD_ID || Date.now().toString(16)
+      ).slice(-12);
+      return html.replace(/__BUILD_ID__/g, id);
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     vue(),
@@ -122,6 +144,8 @@ export default defineConfig({
     // 预压缩 + Nginx 缓存片段：均为构建收尾产物，不影响打包语义
     compressionPlugin(),
     hashedAssetsCachePlugin(),
+    // 构建号注入：供 index.html 的旧页面自愈脚本比对
+    buildIdPlugin(),
   ],
   server: {
     host: '0.0.0.0',

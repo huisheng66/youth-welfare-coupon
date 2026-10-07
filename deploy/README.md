@@ -2,6 +2,9 @@
 
 本系统开发机可用 **SQLite**；上线 Ubuntu 推荐 **MySQL 8 + Nginx + systemd**。
 
+> **更新已部署的服务器请看 → [`docs/存量服务器更新指南.md`](../docs/存量服务器更新指南.md)**
+> （含 brotli 指令陷阱、`add_header` 覆盖导致安全头丢失、原子替换与回滚步骤）
+
 ## 架构
 
 ```

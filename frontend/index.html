@@ -40,5 +40,57 @@
       </p>
     </noscript>
     <script type="module" src="/src/main.js"></script>
+    <script>
+      /* 发版后旧页面自愈：检测运行中的代码是否已过期。
+       *
+       * 为什么需要：`index.html` 虽然由 Nginx 设为 no-cache，但它只在新开
+       * 页面时生效——**发版前就已打开的标签页**仍会执行内存里的旧 JS，继续
+       * 按旧接口约定发请求，表现为 Axios 400 / 404 这类难以定位的报错。
+       *
+       * 做法：把构建号（__BUILD_ID__，构建期由 Vite 替换）写进 sessionStorage，
+       * 页面隐藏时（切走/关标签）静默 fetch 当前 index.html，比对其中的构建号；
+       * 不一致说明期间发过版，刷新一次即可。fetch 用 no-store 且失败静默，
+       * 不影响正常流程；构建号一致时不做任何事。
+       *
+       * 保持在 inline 中是刻意的：入口 JS 可能已是旧版，不能依赖它来检测。
+       */
+      (function () {
+        var BUILD = '__BUILD_ID__';
+        // 开发模式下 vite dev 不做替换，构建号仍是占位符 → 不启用检测。
+        // 注意不能写成 BUILD === '__BUILD_ID__'：构建期该占位符已被替换
+        // 成真实构建号，守卫会变成恒真的自反比较，导致逻辑全部短路。
+        if (!BUILD || BUILD.charAt(0) === '_') return;
+        var KEY = 'youth.build';
+        try {
+          if (sessionStorage.getItem(KEY) === BUILD) {
+            // 首次落地新构建号后，后续只在页面被隐藏时复查
+            document.addEventListener('visibilitychange', onHide);
+            return;
+          }
+          sessionStorage.setItem(KEY, BUILD);
+        } catch (e) {
+          /* 隐私模式等场景下sessionStorage 不可用，退化为不做检测 */
+          return;
+        }
+
+        function onHide() {
+          if (document.visibilityState !== 'hidden') return;
+          document.removeEventListener('visibilitychange', onHide);
+          try {
+            fetch('/index.html', { cache: 'no-store', credentials: 'same-origin' })
+              .then(function (r) { return r.ok ? r.text() : null; })
+              .then(function (html) {
+                if (!html) return;
+                var m = html.match(/var BUILD = '([0-9a-f]{6,})'/);
+                var server = m && m[1] ? m[1] : null;
+                // 未取到服务端构建号（尚未部署新版本）则不打扰用户
+                if (server && server !== BUILD) location.reload();
+              })
+              .catch(function () { /* 网络异常静默 */ });
+          } catch (e) { /* 忽略 */ }
+        }
+        document.addEventListener('visibilitychange', onHide);
+      })();
+    </script>
   </body>
 </html>
